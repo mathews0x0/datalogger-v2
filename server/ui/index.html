@@ -1,0 +1,833 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Motorcycle Datalogger Companion App" />
+  <meta name="theme-color" content="#1a1a1a" />
+  <title>Datalogger Companion</title>
+  <link rel="stylesheet" href="styles.css?v=5" />
+</head>
+
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div style="display: flex; align-items: center; gap: 1rem;">
+      <h1><i class="fas fa-motorcycle"></i> MotoLog</h1> <!-- Keeping the nicer Icon title -->
+
+      <!-- Connection Status -->
+      <div id="connectionStatus" class="status-badge offline">
+        <span class="status-dot"></span> <span id="connText">Offline</span>
+        <span id="versionWarning" class="badge"
+          style="display: none; background: var(--error); color: white; margin-left: 0.5rem; cursor: pointer;"
+          title="Firmware Mismatch: Update required">
+          ⚠️ UPDATE
+        </span>
+      </div>
+
+      <!-- Storage Indicator -->
+      <div id="storageIndicator" class="storage-indicator" style="display: none;" title="ESP32 Flash Storage">
+        <i class="fas fa-database" style="font-size: 0.75rem; margin-right: 0.25rem;"></i>
+        <div class="storage-bar">
+          <div id="storageBarFill" class="storage-bar-fill" style="width: 0%"></div>
+        </div>
+        <span id="storageText" style="font-size: 0.7rem; min-width: 35px;">0%</span>
+      </div>
+
+      <!-- Active Track Status -->
+      <div id="activeTrackBadge" class="status-badge"
+        style="display: none; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text-primary);">
+        <i class="fas fa-flag-checkered" style="font-size: 0.75rem; margin-right: 0.25rem; color: var(--success);"></i>
+        <span id="activeTrackName" style="font-size: 0.75rem; font-weight: 600;">No Track</span>
+        <span id="trackIdentifiedDot" class="status-dot"
+          style="margin-left: 0.5rem; background: var(--text-muted); width: 8px; height: 8px;"
+          title="Track Identified Status"></span>
+      </div>
+
+      <!-- Recording Status (Restored) -->
+
+
+    </div>
+
+    <div style="display: flex; gap: 0.5rem; margin-left: auto">
+
+
+    </div>
+  </header>
+
+  <!-- Navigation (Restored) -->
+  <nav class="nav">
+    <button class="nav-btn active" data-view="home">Home</button>
+    <button class="nav-btn" data-view="tracks">Tracks</button>
+    <button class="nav-btn" data-view="sessions">Sessions</button>
+    <button class="nav-btn" data-view="process">Process</button>
+
+
+    <button class="nav-btn" data-view="settings">Settings</button>
+  </nav>
+  <!-- Main Content -->
+  <main class="main" id="mainContent">
+    <!-- Home View -->
+    <div class="view active" id="homeView">
+      <h2>Welcome to Datalogger Companion</h2>
+      <div class="quick-stats" id="quickStats">
+        <div class="stat-card">
+          <div class="stat-value" id="totalTracks">-</div>
+          <div class="stat-label">Tracks</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="totalSessions">-</div>
+          <div class="stat-label">Sessions</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="recentSession">-</div>
+          <div class="stat-label">Last Session</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Recent Sessions</h3>
+        <div id="recentSessionsList" class="sessions-list">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tracks View -->
+    <div class="view" id="tracksView">
+      <h2>Tracks</h2>
+      <div id="tracksList" class="tracks-grid">
+        <div class="loading">Loading tracks...</div>
+      </div>
+    </div>
+
+    <!-- Sessions View -->
+    <div class="view" id="sessionsView">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">Sessions & Trackdays</h2>
+        <button class="btn btn-primary btn-sm" onclick="showCreateTrackdayModal()">+ New Trackday</button>
+      </div>
+
+      <!-- Tab Bar -->
+      <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
+        <button class="session-tab active" data-tab="sessions" onclick="switchSessionTab('sessions')">
+          📋 Sessions
+        </button>
+        <button class="session-tab" data-tab="trackdays" onclick="switchSessionTab('trackdays')">
+          🏁 Trackdays
+        </button>
+      </div>
+
+      <!-- Sessions Panel -->
+      <div id="sessionsPanel">
+        <div class="filter-bar">
+          <select id="trackFilter" class="filter-select">
+            <option value="">All Tracks</option>
+          </select>
+        </div>
+        <div id="sessionsList" class="sessions-list">
+          <div class="loading">Loading sessions...</div>
+        </div>
+      </div>
+
+      <!-- Trackdays Panel -->
+      <div id="trackdaysPanel" style="display: none;">
+        <div id="trackdaysList" class="sessions-list">
+          <div class="loading">Loading trackdays...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Process View -->
+    <div class="view" id="processView">
+      <h2>Process New Session</h2>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <p class="help-text" style="margin: 0;">Select a CSV file from learning data to process</p>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <label class="archive-toggle-label">
+            <span>Show Archives</span>
+            <div class="toggle-switch">
+              <input type="checkbox" id="showArchivesToggle" onchange="toggleArchivesView()">
+              <span class="toggle-slider"></span>
+            </div>
+          </label>
+          <button class="btn btn-primary btn-sm" onclick="syncFromDevice()">
+            <i class="fas fa-wifi"></i> Sync from Device
+          </button>
+        </div>
+      </div>
+      <div id="learningFilesList" class="files-list">
+        <div class="loading">Loading files...</div>
+      </div>
+    </div>
+
+    <!-- LOGS VIEW -->
+
+
+
+    <!-- DIAGNOSTICS VIEW -->
+
+
+
+    <!-- Settings View -->
+    <div class="view" id="settingsView">
+      <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          ">
+        <h2>System Settings</h2>
+        <button class="btn" style="background: var(--success); color: #000" onclick="saveSettings()">
+          Save Changes
+        </button>
+      </div>
+
+      <div class="settings-grid">
+        <!-- SYSTEM CONFIG -->
+
+
+
+        <!-- NETWORK CONFIG -->
+
+
+
+        <!-- DEVICE CONFIG -->
+        <div class="card" style="border-left: 4px solid #9C27B0">
+          <h3>Device Connection</h3>
+
+          <!-- Device Connection UI -->
+          <div class="input-group">
+            <label>Status</label>
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border);">
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <div id="scanStatusBadge" class="status-dot error"></div>
+                <div style="display: flex; flex-direction: column; justify-content: center;">
+                  <span id="scanStatusText" style="font-weight: 600; color: var(--text-primary);">Disconnected</span>
+                  <span id="scanIpText"
+                    style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
+                  <i class="fas fa-search"></i> Scan
+                </button>
+              </div>
+            </div>
+
+            <!-- Hidden Input for logic compatibility -->
+            <input type="text" id="devConfigIP" style="display: none;"
+              onchange="localStorage.setItem('lastDeviceIP', this.value)" />
+
+            <p class="help-text" style="font-size: 0.75rem; margin-top: 0.5rem;">
+              <i class="fas fa-info-circle"></i> Click Scan to auto-discover the Datalogger.
+            </p>
+          </div>
+
+          <!-- Stored Networks -->
+          <div class="input-group">
+            <label>Stored WiFi Networks <button class="btn btn-sm" onclick="loadStoredNetworks()"
+                style="padding: 0.25rem 0.5rem;"><i class="fas fa-sync"></i></button></label>
+            <div id="storedNetworksList"
+              style="background: var(--bg-secondary); border-radius: 8px; padding: 0.75rem; min-height: 40px;">
+              <span style="color: var(--text-muted); font-size: 0.85rem;">Click refresh to load...</span>
+            </div>
+          </div>
+
+          <!-- Add Network -->
+          <div class="input-group">
+            <label>Add WiFi Network</label>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <input type="text" id="devConfigSSID" class="form-input" placeholder="SSID (network name)"
+                style="flex: 1; min-width: 150px;" />
+              <input type="password" id="devConfigPass" class="form-input" placeholder="Password"
+                style="flex: 1; min-width: 150px;" />
+              <button class="btn btn-primary btn-sm" onclick="addWifiNetwork()" style="white-space: nowrap;">
+                <i class="fas fa-plus"></i> Add
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ESP32 FIRMWARE CONFIG -->
+        <div class="card" style="border-left: 4px solid var(--success)">
+          <h3>ESP32 Firmware</h3>
+          <p class="help-text">Manage remote datalogger protocol version and OTA updates</p>
+
+          <div id="espFirmwareStatus" class="input-group"
+            style="padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span style="font-size: 0.9rem; color: var(--text-muted);">Current Version</span>
+              <strong id="espCurrentVersion" style="font-family: monospace;">Checking...</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <span style="font-size: 0.9rem; color: var(--text-muted);">Server Version</span>
+              <strong id="espServerVersion" style="font-family: monospace;">---</strong>
+            </div>
+
+            <button class="btn btn-secondary btn-sm" onclick="checkEspVersionManual()" style="width: 100%;">
+              <i class="fas fa-sync"></i> Refresh Version Status
+            </button>
+          </div>
+
+          <div id="espUpdateArea"
+            style="display: none; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
+            <div id="espUpdateWarning" style="color: var(--warning); font-size: 0.85rem; margin-bottom: 1rem;">
+              <i class="fas fa-exclamation-triangle"></i> Hardware version mismatch detected.
+            </div>
+
+            <button class="btn btn-primary" id="btnEspUpdate" onclick="flashLatestEspWifi()" style="width: 100%;">
+              <i class="fas fa-bolt"></i> Flash Latest (WiFi OTA)
+            </button>
+
+            <div id="espOtaProgress" style="display: none; margin-top: 1rem;">
+              <div style="height: 6px; background: #333; width: 100%; border-radius: 3px; overflow: hidden;">
+                <div id="espOtaBar"
+                  style="height: 100%; background: var(--primary); width: 0%; transition: width 0.3s;"></div>
+              </div>
+              <div id="espOtaStatus"
+                style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">Starting
+                upload...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LED CONFIG -->
+
+
+
+        <!-- Service Maintenance -->
+
+
+      </div>
+    </div>
+
+    <!-- LED Config Modal -->
+
+
+
+    <!-- Session Detail View (Dynamic) -->
+    <div class="view" id="sessionDetailView">
+      <button class="back-btn" onclick="showView('sessions')">
+        ← Back to Sessions
+      </button>
+      <div id="sessionDetailContent"></div>
+    </div>
+
+    <!-- Track Detail View (Dynamic) -->
+    <div class="view" id="trackDetailView">
+      <button class="back-btn" onclick="showView('tracks')">
+        ← Back to Tracks
+      </button>
+      <div id="trackDetailContent"></div>
+    </div>
+  </main>
+
+  <!-- Modal -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <span class="modal-close" onclick="closeModal()">&times;</span>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Rename Modal -->
+  <div class="modal" id="renameModal">
+    <div class="modal-content">
+      <span class="modal-close" onclick="closeRenameModal()">&times;</span>
+      <h3 style="margin-bottom: 1rem">Rename Track</h3>
+      <input type="text" id="renameInput" class="modal-input" placeholder="Enter new track name" />
+      <p class="help-text" style="margin-top: 0.5rem">
+        Sanitized name: <strong id="sanitizedPreview">-</strong>
+      </p>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeRenameModal()">
+          Cancel
+        </button>
+        <button class="btn" onclick="submitRename()">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Trackday Modal -->
+  <div class="modal" id="createTrackdayModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <span class="modal-close" onclick="closeCreateTrackdayModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">🏁 Create New Trackday</h3>
+
+      <div class="form-group">
+        <label for="tdName">Trackday Name</label>
+        <input type="text" id="tdName" class="form-input" placeholder="e.g., Sunday Practice">
+      </div>
+
+      <div class="form-group">
+        <label for="tdDate">Date</label>
+        <input type="date" id="tdDate" class="form-input">
+      </div>
+
+      <div class="form-group">
+        <label for="tdOrganizer">Organizer (optional)</label>
+        <input type="text" id="tdOrganizer" class="form-input" placeholder="e.g., Local Bike Club">
+      </div>
+
+      <div class="form-group">
+        <label for="tdRider">Rider Name (optional)</label>
+        <input type="text" id="tdRider" class="form-input" placeholder="e.g., John Doe">
+      </div>
+
+      <div class="form-group">
+        <label for="tdTrack">Track</label>
+        <select id="tdTrack" class="form-input">
+          <option value="">Select Track...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="tdNotes">Notes (optional)</label>
+        <textarea id="tdNotes" class="form-input" rows="3" placeholder="Weather, setup, goals..."></textarea>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeCreateTrackdayModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateTrackday()">Create Trackday</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tag to Trackday Modal -->
+  <div class="modal" id="tagTrackdayModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeTagTrackdayModal()">&times;</span>
+      <h3 style="margin-bottom: 1rem;">🏷️ Tag to Trackday</h3>
+      <p class="help-text" style="margin-bottom: 1rem;">Select a trackday to add this session to:</p>
+
+      <div id="tagTrackdayList" style="max-height: 300px; overflow-y: auto;">
+        <div class="loading">Loading trackdays...</div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 1rem;">
+        <button class="btn secondary" onclick="closeTagTrackdayModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trackday Detail View -->
+  <div class="view" id="trackdayDetailView">
+    <button class="back-btn" onclick="showView('sessions'); switchSessionTab('trackdays');">← Back to
+      Trackdays</button>
+    <div id="trackdayDetailContent">
+      <div class="loading">Loading trackday...</div>
+    </div>
+  </div>
+
+  <!-- Raw View Modal -->
+  <div class="modal" id="rawFileModal">
+    <div class="modal-content" style="
+          max-width: 800px;
+          width: 90%;
+          height: 80vh;
+          display: flex;
+          flex-direction: column;
+        ">
+      <span class="modal-close" onclick="closeRawFileModal()">&times;</span>
+      <h3 id="rawFileTitle" style="
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+          ">
+        Raw File
+      </h3>
+      <div style="
+            flex: 1;
+            overflow: auto;
+            background: #000;
+            color: #0f0;
+            padding: 1rem;
+            font-family: monospace;
+            border-radius: 4px;
+            font-size: 0.85rem;
+          " id="rawFileContent">
+        Loading...
+      </div>
+      <div style="margin-top: 1rem; text-align: right">
+        <button class="btn secondary" onclick="closeRawFileModal()">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Geo Map Modal -->
+  <div class="modal" id="geoModal">
+    <div class="modal-content" style="max-width: 600px; text-align: center">
+      <span class="modal-close" onclick="closeGeoModal()">&times;</span>
+      <h3 id="geoTitle" style="margin-bottom: 1rem">Path Visualization</h3>
+      <div id="geoContainer" style="
+            background: var(--surface-light);
+            padding: 1rem;
+            border-radius: 8px;
+          ">
+        <svg id="geoSvg" viewBox="0 0 400 300" style="
+              width: 100%;
+              height: auto;
+              max-height: 400px;
+              border: 1px solid var(--border);
+            "></svg>
+      </div>
+      <p id="geoStats" class="help-text" style="margin-top: 1rem">
+        Loading...
+      </p>
+    </div>
+  </div>
+
+  <!-- Playback Modal -->
+  <div class="modal" id="playbackModal">
+    <div class="modal-content" style="
+          max-width: 1100px;
+          width: 95%;
+          height: 90vh;
+          display: flex;
+          flex-direction: column;
+          background: #121212;
+        ">
+      <span class="modal-close" onclick="closePlaybackModal()">&times;</span>
+      <h3 style="margin-bottom: 0.5rem; color: var(--primary)">
+        Live Telemetry Playback
+      </h3>
+
+      <!-- Top Controls -->
+      <div class="playback-controls" style="
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            background: #222;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+            border: 1px solid #333;
+          ">
+        <button class="btn btn-primary" id="pbPlayPause" onclick="togglePlayback()"
+          style="width: 40px; justify-content: center">
+          ▶
+        </button>
+        <span id="pbTime" style="font-family: monospace; font-size: 1.2rem; color: #fff">00:00.00</span>
+        <input type="range" id="pbSeek" min="0" max="100" value="0" style="flex: 1"
+          oninput="seekPlayback(this.value)" />
+        <select id="pbLapSelect" class="filter-select" onchange="jumpToLap(this.value)" style="min-width: 100px">
+          <option value="all">Session Overview</option>
+        </select>
+        <button class="btn secondary" onclick="nextLapPlay()">
+          Next Lap &gt;&gt;
+        </button>
+      </div>
+
+      <!-- Dashboard Grid -->
+      <div style="
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1rem;
+            flex: 1;
+            min-height: 0;
+          ">
+        <!-- Map Container -->
+        <div style="
+              background: #000;
+              border: 1px solid #333;
+              border-radius: 8px;
+              position: relative;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              overflow: hidden;
+            ">
+          <canvas id="pbTrackCanvas" style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+              "></canvas>
+
+          <!-- Map Layer Controls -->
+          <div style="
+                position: absolute;
+                top: 10px;
+                right: 10px;
+                background: rgba(0, 0, 0, 0.7);
+                padding: 5px;
+                border-radius: 4px;
+                font-size: 0.8rem;
+              ">
+            <label style="display: block; color: #ccc"><input type="radio" name="pbMapMode" value="speed" checked
+                onchange="updateHeatmapMode()" />
+              Speed Heatmap</label>
+            <label style="display: block; color: #ccc"><input type="radio" name="pbMapMode" value="accel"
+                onchange="updateHeatmapMode()" />
+              Accel/Brake</label>
+            <label style="display: block; color: #ccc"><input type="radio" name="pbMapMode" value="clean"
+                onchange="updateHeatmapMode()" />
+              Clean Path</label>
+          </div>
+        </div>
+
+        <!-- Widgets Column (Racing Focused) -->
+        <div style="
+              display: flex;
+              flex-direction: column;
+              gap: 0.75rem;
+              overflow-y: auto;
+              padding-right: 5px;
+            ">
+          <!-- LAP TIME + DELTA -->
+          <div class="card"
+            style="text-align: center; padding: 1rem; background: #1e1e1e; border-left: 3px solid var(--primary);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div class="stat-label">LAP</div>
+              <div id="pbLapNumber" style="font-size: 0.9rem; color: #888;">-/-</div>
+            </div>
+            <div style="
+                  font-size: 2.2rem;
+                  font-weight: bold;
+                  font-family: monospace;
+                  color: #fff;
+                  margin: 5px 0;
+                ">
+              <span id="pbLapTime">--:--.---</span>
+            </div>
+            <!-- Delta Bar -->
+            <div id="pbDeltaBar" style="
+                  height: 28px;
+                  background: #2a2a2a;
+                  border-radius: 4px;
+                  margin-top: 8px;
+                  position: relative;
+                  overflow: hidden;
+                  border: 1px solid #444;
+                ">
+              <!-- Center line -->
+              <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #555; z-index: 1;">
+              </div>
+              <!-- Delta fill -->
+              <div id="pbDeltaFill" style="
+                    position: absolute;
+                    top: 2px;
+                    bottom: 2px;
+                    width: 0;
+                    left: 50%;
+                    background: #4caf50;
+                    border-radius: 2px;
+                    transition: all 0.1s ease;
+                  "></div>
+              <!-- Delta text -->
+              <span id="pbDeltaText" style="
+                    position: absolute;
+                    width: 100%;
+                    text-align: center;
+                    line-height: 28px;
+                    font-weight: bold;
+                    font-family: monospace;
+                    font-size: 1rem;
+                    color: #fff;
+                    z-index: 2;
+                    text-shadow: 1px 1px 2px #000;
+                  ">+0.0s</span>
+            </div>
+            <div style="
+                  display: flex;
+                  justify-content: space-between;
+                  font-size: 0.65rem;
+                  color: #555;
+                  margin-top: 3px;
+                ">
+              <span>-3s AHEAD</span>
+              <span>BEHIND +3s</span>
+            </div>
+          </div>
+
+          <!-- SECTOR TIMES -->
+          <div class="card" style="padding: 0.75rem; background: #1e1e1e;">
+            <div style="
+                  display: flex;
+                  justify-content: space-around;
+                  text-align: center;
+                  gap: 0.5rem;
+                ">
+              <div id="pbS1" class="sector-box" style="
+                    flex: 1;
+                    padding: 8px 4px;
+                    background: #2a2a2a;
+                    border-radius: 4px;
+                    border: 2px solid transparent;
+                  ">
+                <div style="font-size: 0.7rem; color: #888;">S1</div>
+                <div id="pbS1Time" style="
+                      font-weight: bold;
+                      font-family: monospace;
+                      font-size: 1.1rem;
+                    ">
+                  --.-
+                </div>
+              </div>
+              <div id="pbS2" class="sector-box" style="
+                    flex: 1;
+                    padding: 8px 4px;
+                    background: #2a2a2a;
+                    border-radius: 4px;
+                    border: 2px solid transparent;
+                  ">
+                <div style="font-size: 0.7rem; color: #888;">S2</div>
+                <div id="pbS2Time" style="
+                      font-weight: bold;
+                      font-family: monospace;
+                      font-size: 1.1rem;
+                    ">
+                  --.-
+                </div>
+              </div>
+              <div id="pbS3" class="sector-box" style="
+                    flex: 1;
+                    padding: 8px 4px;
+                    background: #2a2a2a;
+                    border-radius: 4px;
+                    border: 2px solid transparent;
+                  ">
+                <div style="font-size: 0.7rem; color: #888;">S3</div>
+                <div id="pbS3Time" style="
+                      font-weight: bold;
+                      font-family: monospace;
+                      font-size: 1.1rem;
+                    ">
+                  --.-
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Speed -->
+          <div class="card" style="text-align: center; padding: 0.75rem; background: #1e1e1e">
+            <div class="stat-label">SPEED</div>
+            <div style="
+                  font-size: 2.5rem;
+                  font-weight: bold;
+                  color: var(--primary);
+                  font-family: monospace;
+                ">
+              <span id="pbSpeed">0</span><span style="font-size: 1rem; color: #888; margin-left: 5px">km/h</span>
+            </div>
+            <div style="
+                  height: 6px;
+                  background: #333;
+                  border-radius: 4px;
+                  margin-top: 8px;
+                  overflow: hidden;
+                ">
+              <div id="pbSpeedBar" style="
+                    height: 100%;
+                    width: 0%;
+                    background: linear-gradient(90deg, var(--primary), #fff);
+                  "></div>
+            </div>
+          </div>
+
+          <!-- Lean Angle (Compact) -->
+          <div class="card" style="text-align: center; padding: 0.75rem; background: #1e1e1e">
+            <div class="stat-label">LEAN</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 8px;">
+              <div style="position: relative; width: 80px; height: 60px;">
+                <!-- Horizon -->
+                <div style="
+                      position: absolute;
+                      width: 100%;
+                      top: 50%;
+                      height: 1px;
+                      background: #444;
+                    "></div>
+                <!-- Bike -->
+                <div id="pbLeanBike" style="
+                      position: absolute;
+                      left: 50%;
+                      top: 10px;
+                      width: 4px;
+                      height: 45px;
+                      background: var(--secondary);
+                      transform-origin: top center;
+                      transition: transform 0.05s linear;
+                      box-shadow: 0 0 8px var(--secondary);
+                    "></div>
+              </div>
+              <div>
+                <div style="
+                      font-size: 2rem;
+                      font-weight: bold;
+                      font-family: monospace;
+                    ">
+                  <span id="pbLean">0</span>&deg;
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- G-Force (Compact) -->
+          <div class="card" style="
+                text-align: center;
+                padding: 0.75rem;
+                background: #1e1e1e;
+              ">
+            <div class="stat-label">G-FORCE</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 8px;">
+              <div style="
+                    position: relative;
+                    width: 100px;
+                    height: 100px;
+                    border: 1px solid #444;
+                    border-radius: 50%;
+                    background: radial-gradient(circle, #222 0%, #111 100%);
+                  ">
+                <div style="
+                      position: absolute;
+                      left: 50%;
+                      top: 0;
+                      bottom: 0;
+                      width: 1px;
+                      background: #333;
+                    "></div>
+                <div style="
+                      position: absolute;
+                      top: 50%;
+                      left: 0;
+                      right: 0;
+                      height: 1px;
+                      background: #333;
+                    "></div>
+                <!-- The Dot -->
+                <div id="pbGDot" style="
+                      position: absolute;
+                      top: 50%;
+                      left: 50%;
+                      width: 10px;
+                      height: 10px;
+                      background: var(--error);
+                      border-radius: 50%;
+                      transform: translate(-50%, -50%);
+                      box-shadow: 0 0 5px var(--error);
+                    "></div>
+              </div>
+              <div style="font-family: monospace; font-size: 0.85rem; color: #aaa; text-align: left;">
+                <div>Lat: <span id="pbGY">0.0</span>G</div>
+                <div>Long: <span id="pbGX">0.0</span>G</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div class="toast" id="toast"></div>
+
+  <script src="app.js?v=5"></script>
+</body>
+
+</html>

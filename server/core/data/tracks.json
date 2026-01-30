@@ -1,0 +1,24 @@
+[
+    {
+        "id": "kari_motor_speedway",
+        "name": "Kari Motor Speedway",
+        "start_line": {
+            "lat": 10.92650,
+            "lon": 77.06200,
+            "radius_m": 20.0,
+            "heading": 90.0
+        },
+        "location": "Coimbatore, TN"
+    },
+    {
+        "id": "coastt_hPc",
+        "name": "CoASTT High Performance Centre",
+        "start_line": {
+            "lat": 10.9572, 
+            "lon": 77.0336,
+            "radius_m": 25.0,
+            "heading": 0.0
+        },
+        "location": "Coimbatore, TN"
+    }
+]
