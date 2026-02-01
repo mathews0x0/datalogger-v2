@@ -26,6 +26,7 @@ def add_header(response):
 
 # Base directory
 import config
+OUTPUT_DIR = config.DATA_DIR
 
 
 import time
@@ -93,22 +94,31 @@ def get_track_folder(track_id):
 # NETWORK HELPERS
 # ============================================================================
 
-def robust_get_json(url, timeout=2.0):
+def robust_get_json(url, timeout=3.0):
     """
     Attempt to get JSON from a URL using curl (subprocess) to avoid python-requests issues.
     """
     # Fallback to subprocess curl
     try:
         # -s = silent, --connect-timeout = seconds
-        cmd = ['curl', '-s', '--connect-timeout', str(int(timeout) or 1), url]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+1)
+        # Use a slightly longer timeout for curl than the requests
+        tout = max(int(timeout), 2)
+        cmd = ['curl', '-s', '--connect-timeout', str(tout), url]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout+2)
         
         if result.returncode == 0 and result.stdout.strip():
             try:
                 return json.loads(result.stdout)
             except:
+                print(f"[Scanner] WARN: Invalid JSON from {url}")
+                pass
+        else:
+            if result.returncode != 0:
+                # Use print for debug in console
+                print(f"[Scanner] Curl failed for {url}: RC={result.returncode}. Stderr: {result.stderr}")
                 pass
     except Exception as e:
+        print(f"[Scanner] Exception checking {url}: {e}")
         pass
         
     return None
@@ -587,7 +597,7 @@ def configure_device():
         # Send to ESP32
         print(f"Configuring device at {device_ip}...")
         resp = requests.post(
-            f"http://{device_ip}/config/wifi", 
+            f"http://{device_ip}/wifi/add", 
             json={"ssid": ssid, "password": password},
             timeout=5
         )
@@ -650,7 +660,7 @@ def scan_devices():
                     
                 try:
                     # Check IP
-                    data = robust_get_json(f"http://{ip}/status", timeout=1.0)
+                    data = robust_get_json(f"http://{ip}/status", timeout=2.0)
                     if data and "storage" in data:
                         with print_lock:
                             v = data.get('version', '0.0.0')
@@ -853,7 +863,7 @@ def process_all_files():
         csv_path = OUTPUT_DIR / "learning" / filename
         try:
             # Locate script relative to project root
-            script_path = os.path.abspath(os.path.join(BASE_DIR, "../../core-analysis/datalogger_core/run_analysis.py"))
+            script_path = os.path.abspath(os.path.join(BASE_DIR, "../core/run_analysis.py"))
             
             result = subprocess.run([
                 'python3', script_path, str(csv_path)
@@ -923,7 +933,7 @@ def delete_session(session_id):
 def delete_track_endpoint(track_id):
     """Delete a track, its folder, and all associated sessions."""
     try:
-        from datalogger_core.core.registry_manager import RegistryManager
+        from src.core.registry_manager import RegistryManager
         import time
         import stat
         

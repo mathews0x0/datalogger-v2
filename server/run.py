@@ -10,6 +10,10 @@ from pathlib import Path
 # Add core to path
 CORE_PATH = Path(__file__).parent / "core"
 API_PATH = Path(__file__).parent / "api"
+ROOT_PATH = Path(__file__).parent.parent
+
+if str(ROOT_PATH) not in sys.path:
+    sys.path.insert(0, str(ROOT_PATH))
 
 if str(CORE_PATH) not in sys.path:
     sys.path.insert(0, str(CORE_PATH))

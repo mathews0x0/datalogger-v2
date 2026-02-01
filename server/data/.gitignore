@@ -1,0 +1,9 @@
+# Datalogger V2 - Local Data Storage
+# This directory contains generated sessions, tracks, and learning data.
+# They should not be committed to version control.
+
+# Ignore everything
+*
+
+# Except this file
+!.gitignore

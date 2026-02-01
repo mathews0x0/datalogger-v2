@@ -33,24 +33,24 @@ class CSVLoader:
                 try:
                     # Parse with defaults for missing columns
                     # 1. Timestamp (Required)
-                    ts = float(row.get("timestamp", 0))
+                    ts = float(row.get("timestamp") or row.get("time") or 0)
                     
                     # 2. GPS
                     gps = GPSSample(
-                        lat=float(row.get("latitude") or 0.0), # Handle '' values
-                        lon=float(row.get("longitude") or 0.0),
+                        lat=float(row.get("latitude") or row.get("lat") or 0.0), 
+                        lon=float(row.get("longitude") or row.get("lon") or 0.0),
                         speed=float(row.get("speed") or 0.0),
                         sats=int(row.get("satellites") or 0)
                     )
                     
                     # 3. IMU
                     imu = IMUSample(
-                        accel_x=float(row.get("imu_x") or row.get("accel_x") or 0.0),
-                        accel_y=float(row.get("imu_y") or row.get("accel_y") or 0.0),
-                        accel_z=float(row.get("imu_z") or row.get("accel_z") or 0.0),
-                        gyro_x=float(row.get("gyro_x") or 0.0) if row.get("gyro_x") else None,
-                        gyro_y=float(row.get("gyro_y") or 0.0) if row.get("gyro_y") else None,
-                        gyro_z=float(row.get("gyro_z") or 0.0) if row.get("gyro_z") else None
+                        accel_x=float(row.get("imu_x") or row.get("accel_x") or row.get("acc_x") or 0.0),
+                        accel_y=float(row.get("imu_y") or row.get("accel_y") or row.get("acc_y") or 0.0),
+                        accel_z=float(row.get("imu_z") or row.get("accel_z") or row.get("acc_z") or 0.0),
+                        gyro_x=float(row.get("gyro_x") or 0.0),
+                        gyro_y=float(row.get("gyro_y") or 0.0),
+                        gyro_z=float(row.get("gyro_z") or 0.0)
                     )
                     
                     # 4. Environment

@@ -3,26 +3,48 @@ import os
 import time
 
 class SessionManager:
-    def __init__(self):
-        """Initialize session storage on ESP32 internal flash"""
-        self.base_dir = '/data'
-        self.internal_dir = '/data/learning'
-        self.metadata_dir = '/data/metadata'
+    def __init__(self, sd_mounted=False):
+        """Initialize session storage on ESP32 or SD Card"""
+        self.sd_mounted = sd_mounted
         
-        # Ensure directory structure exists
+        # Paths
+        self.flash_base = '/data'
+        self.flash_sessions = '/data/learning'
+        self.flash_meta = '/data/metadata'
+        
+        if self.sd_mounted:
+            self.base_dir = '/sd'
+            self.active_dir = '/sd/sessions'
+            self.metadata_dir = '/sd/metadata' # Prefer metadata on SD if available? Or keep on Flash?
+            # Design choice: Keep critical config (WiFi) on Flash usually, but for simplicity let's mirror structure
+            # Actually, WiFi creds should stay on Flash to boot. 
+            # Let's keep metadata on Flash for reliability, only sessions on SD.
+            self.metadata_dir = self.flash_meta 
+        else:
+            self.base_dir = self.flash_base
+            self.active_dir = self.flash_sessions
+            self.metadata_dir = self.flash_meta
+        
+        # Ensure directories exist
         self._ensure_dir_exists()
-        # Migrate old data if necessary
-        self._migrate_legacy_data()
         
-        print(f"SessionManager initialized: {self.internal_dir}")
+        # If using Flash, migrate old data
+        if not self.sd_mounted:
+            self._migrate_legacy_data()
+        
+        print(f"SessionManager initialized: {self.active_dir}")
             
     def _ensure_dir_exists(self):
-        """Recursively ensure /data/learning, metadata, and tracks exist"""
-        for d in [self.base_dir, self.internal_dir, self.metadata_dir, '/data/tracks']:
-            try:
-                os.mkdir(d)
-            except OSError:
-                pass  # Already exists
+        """Recursively ensure directories exist"""
+        # Flash dirs always needed for metadata/backup
+        for d in [self.flash_base, self.flash_sessions, self.flash_meta, '/data/tracks']:
+            try: os.mkdir(d)
+            except OSError: pass
+
+        # SD dirs if mounted
+        if self.sd_mounted:
+            try: os.mkdir('/sd/sessions')
+            except OSError: pass
 
     def _migrate_legacy_data(self):
         """Move files from root-level /sessions and /track.json to new /data structure"""
@@ -44,7 +66,7 @@ class SessionManager:
         try:
             old_sessions = os.listdir('/sessions')
             for f in old_sessions:
-                os.rename('/sessions/' + f, self.internal_dir + '/' + f)
+                os.rename('/sessions/' + f, self.active_dir + '/' + f)
                 print(f"Migrated session: {f}")
             # Try to remove old dir
             try:
@@ -60,19 +82,19 @@ class SessionManager:
         # Generate filename based on timestamp
         # ESP32 time() starts from boot, but GPS will update it
         fname = f"sess_{time.time()}.csv"
-        return f"{self.internal_dir}/{fname}"
+        return f"{self.active_dir}/{fname}"
 
     def list_sessions(self):
-        """List all session files stored on flash"""
+        """List all session files stored on active storage"""
         try:
-            files = os.listdir(self.internal_dir)
+            files = os.listdir(self.active_dir)
             return [f for f in files if f.endswith('.csv')]
         except OSError:
             return []
     
     def get_session_data(self, filename):
         """Read session file content for cloud upload"""
-        fpath = f"{self.internal_dir}/{filename}"
+        fpath = f"{self.active_dir}/{filename}"
         try:
             with open(fpath, 'r') as f:
                 return f.read()
@@ -82,7 +104,7 @@ class SessionManager:
     
     def delete_session(self, filename):
         """Delete session after successful cloud sync"""
-        fpath = f"{self.internal_dir}/{filename}"
+        fpath = f"{self.active_dir}/{filename}"
         try:
             os.remove(fpath)
             print(f"Deleted synced session: {filename}")

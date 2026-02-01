@@ -34,6 +34,10 @@ class MiniServer:
         self.sock.settimeout(0.01) # Reduced from 0.1 for faster loop
         self.running = True
         print("Server listening on port " + str(port))
+        
+        while self.running:
+            self.poll()
+            time.sleep(0.01)
 
     def poll(self):
         if not self.running:
@@ -271,7 +275,7 @@ class MiniServer:
             self.send_response(cl, 500, '{"error": "' + str(e) + '"}')
 
     def handle_download(self, cl, filename):
-        filepath = self.sm.internal_dir + "/" + filename
+        filepath = self.sm.active_dir + "/" + filename
         
         try:
             size = os.stat(filepath)[6]

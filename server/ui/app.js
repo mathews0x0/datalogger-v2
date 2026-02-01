@@ -126,9 +126,13 @@ function updateConnectionStatus(connected) {
     const text = document.getElementById('connText');
 
     if (connected) {
+        statusEl.classList.remove('offline');
+        statusEl.classList.add('online');
         dot.classList.add('connected');
         text.textContent = 'Connected';
     } else {
+        statusEl.classList.remove('online');
+        statusEl.classList.add('offline');
         dot.classList.remove('connected');
         text.textContent = 'Disconnected';
     }
@@ -3261,28 +3265,101 @@ async function viewGeoPath(filename) {
         const minLon = Math.min(...lons);
         const maxLon = Math.max(...lons);
 
-        // Scaling to 400x300 box
-        const w = 400, h = 300, pad = 20;
+        // Scaling to 400x300 box with room for axes
+        const w = 400, h = 300;
+        const padL = 50, padR = 20, padT = 20, padB = 30;
+
         const latDiff = maxLat - minLat || 0.0001;
         const lonDiff = maxLon - minLon || 0.0001;
 
-        // Aspect Ratio Correction (approximate)
-        const aspect = latDiff / (lonDiff * Math.cos(minLat * Math.PI / 180));
+        // Aspect Ratio Correction
+        const avgLatRad = (minLat + maxLat) / 2 * (Math.PI / 180);
+        const mPerDegLon = 111139 * Math.cos(avgLatRad);
+        const mPerDegLat = 111139;
 
-        const scaleX = (lon) => pad + ((lon - minLon) / lonDiff) * (w - 2 * pad);
-        // Correct Y flip for Map (Top is North, but SVG y=0 is top) -> So MaxLat should be Y=pad
-        const scaleY = (lat) => pad + ((maxLat - lat) / latDiff) * (h - 2 * pad);
+        const totalWidthMeters = lonDiff * mPerDegLon;
+        const totalHeightMeters = latDiff * mPerDegLat;
+
+        // Determine drawing scale to fit in box while maintaining aspect ratio
+        const drawW = w - padL - padR;
+        const drawH = h - padT - padB;
+
+        // Scale factors (Pixels per Degree)
+        let scaleX_deg = drawW / lonDiff;
+        let scaleY_deg = drawH / latDiff;
+
+        // Correct aspect ratio by limiting the larger scale to match real world
+        // Aspect ratio of data (Width/Height in meters)
+        const dataAspect = totalWidthMeters / totalHeightMeters;
+        const screenAspect = drawW / drawH;
+
+        if (dataAspect > screenAspect) {
+            // Limited by width, reduce Y scale (add vertical padding)
+            scaleY_deg = scaleX_deg * (mPerDegLon / mPerDegLat); // Match pixel/meter ratio
+        } else {
+            // Limited by height, reduce X scale
+            scaleX_deg = scaleY_deg * (mPerDegLat / mPerDegLon);
+        }
+
+        // Project Function: Lon/Lat -> Pixels
+        const projectX = (lon) => padL + (lon - minLon) * scaleX_deg;
+        const projectY = (lat) => h - padB - (lat - minLat) * scaleY_deg; // Invert Y
 
         const pathData = points.map((p, i) => {
             const cmd = i === 0 ? 'M' : 'L';
-            return `${cmd} ${scaleX(p[1])},${scaleY(p[0])}`;
+            return `${cmd} ${projectX(p[1])},${projectY(p[0])}`;
         }).join(' ');
 
-        // Draw
+        // AXES & TICKS
+        // Select good tick interval (e.g. 10m, 50m, 100m)
+        const maxDist = Math.max(totalWidthMeters, totalHeightMeters);
+        const magnitudes = [1, 5, 10, 25, 50, 100, 200, 500, 1000, 2000, 5000];
+        let tickStep = magnitudes[0];
+        for (let m of magnitudes) {
+            if (maxDist / m < 8) { // Aim for max 8 ticks
+                tickStep = m;
+                break;
+            }
+            tickStep = m;
+        }
+
+        let axesSvg = '';
+
+        // X Steps
+        for (let m = 0; m <= totalWidthMeters; m += tickStep) {
+            const px = padL + (m / totalWidthMeters) * (totalWidthMeters / mPerDegLon) * scaleX_deg;
+            if (px > w - padR) break;
+            axesSvg += `
+                <line x1="${px}" y1="${h - padB}" x2="${px}" y2="${h - padB + 5}" stroke="#666" />
+                <text x="${px}" y="${h - padB + 16}" font-size="10" fill="#888" text-anchor="middle">${Math.round(m)}m</text>
+                <line x1="${px}" y1="${padT}" x2="${px}" y2="${h - padB}" stroke="#333" stroke-dasharray="2,4" opacity="0.3" />
+             `;
+        }
+
+        // Y Steps
+        for (let m = 0; m <= totalHeightMeters; m += tickStep) {
+            const py = h - padB - (m / totalHeightMeters) * (totalHeightMeters / mPerDegLat) * scaleY_deg;
+            if (py < padT) break;
+            axesSvg += `
+                <line x1="${padL - 5}" y1="${py}" x2="${padL}" y2="${py}" stroke="#666" />
+                <text x="${padL - 8}" y="${py + 3}" font-size="10" fill="#888" text-anchor="end">${Math.round(m)}m</text>
+                <line x1="${padL}" y1="${py}" x2="${w - padR}" y2="${py}" stroke="#333" stroke-dasharray="2,4" opacity="0.3" />
+             `;
+        }
+
+        // Draw Frame
         svg.innerHTML = `
+            <!-- Grid & Axes -->
+            ${axesSvg}
+            <line x1="${padL}" y1="${h - padB}" x2="${w - padR}" y2="${h - padB}" stroke="#666" /> <!-- X Axis -->
+            <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${h - padB}" stroke="#666" /> <!-- Y Axis -->
+
+            <!-- Path -->
             <path d="${pathData}" fill="none" stroke="var(--primary)" stroke-width="2" />
-            <circle cx="${scaleX(lons[0])}" cy="${scaleY(lats[0])}" r="4" fill="#4CAF50" title="Start" />
-            <circle cx="${scaleX(lons[lons.length - 1])}" cy="${scaleY(lats[lats.length - 1])}" r="4" fill="#F44336" title="End" />
+            
+            <!-- Endpoints -->
+            <circle cx="${projectX(lons[0])}" cy="${projectY(lats[0])}" r="4" fill="#4CAF50" title="Start" />
+            <circle cx="${projectX(lons[lons.length - 1])}" cy="${projectY(lats[lats.length - 1])}" r="4" fill="#F44336" title="End" />
         `;
 
         stats.textContent = `Points: ${points.length} (Sampled from ${res.total_recorded})`;
@@ -4058,8 +4135,8 @@ async function configureDeviceWifi() {
 
     try {
         // Try direct call to ESP32 first (works when browser is on hotspot)
-        console.log(`[WiFi Config] Trying direct call to http://${ip}/config/wifi`);
-        const directResponse = await fetch(`http://${ip}/config/wifi`, {
+        console.log(`[WiFi Config] Trying direct call to http://${ip}/wifi/add`);
+        const directResponse = await fetch(`http://${ip}/wifi/add`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ssid, password }),

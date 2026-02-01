@@ -109,20 +109,54 @@ install_libs() {
 
 sync_source() {
     echo -e "${YELLOW}Syncing Source Files...${NC}"
+    
+    # Create necessary filesystem structure
+    echo "Creating directories..."
+    $MPREMOTE_CMD connect $PORT mkdir /data
+    $MPREMOTE_CMD connect $PORT mkdir /data/metadata
+    $MPREMOTE_CMD connect $PORT mkdir /sd
+
     # Sync root files
     for f in *.py; do
-        if [ "$f" != "reset.py" ]; then
+        if [[ "$f" != "reset.py" && "$f" != "secrets.py" ]]; then
+            echo "Pushing $f..."
             $MPREMOTE_CMD connect $PORT cp $f : 
         fi
     done
     
     # Sync directories recursively
+    # Force clean remote directories first to ensure updates are applied
     if [ -d "lib" ]; then
-        echo "Syncing lib/..."
+        echo "Syncing lib/ (Force clean)..."
+        $MPREMOTE_CMD connect $PORT exec "import os; 
+try:
+    def rm(d):
+        try:
+            if os.stat(d)[0] & 0x4000:
+                for f in os.listdir(d): rm(d+'/'+f)
+                os.rmdir(d)
+            else:
+                os.remove(d)
+        except: pass
+    rm('/lib')
+except: pass"
         $MPREMOTE_CMD connect $PORT cp -r lib :
     fi
+    
     if [ -d "drivers" ]; then
-        echo "Syncing drivers/..."
+        echo "Syncing drivers/ (Force clean)..."
+        $MPREMOTE_CMD connect $PORT exec "import os; 
+try:
+    def rm(d):
+        try:
+            if os.stat(d)[0] & 0x4000:
+                for f in os.listdir(d): rm(d+'/'+f)
+                os.rmdir(d)
+            else:
+                os.remove(d)
+        except: pass
+    rm('/drivers')
+except: pass"
         $MPREMOTE_CMD connect $PORT cp -r drivers :
     fi
 }
@@ -149,7 +183,7 @@ case "$1" in
         flash_firmware
         ;;
     --libs)
-        install_libs
+        echo "No libraries to install (v2 cleanup)"
         ;;
     --sync|"")
         sync_source
@@ -159,7 +193,7 @@ case "$1" in
         flash_firmware
         echo "Waiting for reboot..."
         sleep 5
-        install_libs
+        # install_libs # Unused
         sync_source
         ;;
     --help)

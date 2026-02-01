@@ -55,11 +55,23 @@ class FileManager:
             fname = f.name
             m = meta.get(fname, {})
             
+            # Try to get timestamp from filename (sess_12345678.csv)
+            ts = stat.st_mtime
+            try:
+                if fname.startswith("sess_") and fname.endswith(".csv"):
+                    ts_str = fname[5:-4]
+                    parsed_ts = float(ts_str)
+                    # Sanity check: If > 2020 (1.5 billion), use it. 
+                    if parsed_ts > 1600000000: 
+                        ts = parsed_ts
+            except:
+                pass
+
             files.append({
                 "filename": fname,
                 "size_kb": round(stat.st_size / 1024, 2),
-                "modified_ts": stat.st_mtime,
-                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "modified_ts": ts,
+                "modified": datetime.fromtimestamp(ts).isoformat(),
                 "locked": m.get("locked", False),
                 "notes": m.get("notes", ""),
                 "archived": archived

@@ -74,8 +74,8 @@ class LEDManager:
             pos = (math.sin(t * 4.0) + 1) / 2 * (self.count - 1)
             for i in range(self.count):
                 dist = abs(pos - i)
-                if dist < 1.5:
-                    bright = int((1.0 - (dist / 1.5)) * 255)
+                if dist < 2.5: # Wider tail for 16 LEDs
+                    bright = int((1.0 - (dist / 2.5)) * 255)
                     self.np[i] = (0, 0, bright)
             self.np.write()
             

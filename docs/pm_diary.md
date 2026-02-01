@@ -1364,3 +1364,78 @@ Concurrent WiFi activities (Web Server polling, cloud sync) were identified as r
 - System is now considered "Production Grade" for high-speed use.
 
 **Current Project Status:** ✅ Deployment & 10Hz Stability Architecture Finalized.
+
+---
+
+## 22. Migration to Datalogger V2 (ESP32 Standalone)
+
+**Date:** 2026-01-30
+
+### Context
+We have fully migrated from the datalogger-on-pi availability to a new project: **datalogger v2**.
+The architecture is now **ESP32 Pure Standalone**, eliminating the Raspberry Pi entirely from the vehicle.
+
+### Core Philosophy
+- **Simple Logger:** The ESP32 is a dumb recording device. It captures truth (telemetry) and provides minimal, critical feedback.
+- **Immediate Start:** Zero boot time. Starts logging immediately when power is applied.
+- **No Distractions:** No OLED display. No complex OS. No filesystem repairs.
+- **Feedback Loop:**
+  - **LED Only:** Visual communication via the NeoPixel strip.
+  - **Sector Delta:** The *only* onboard logic matches the current location to a known track (pushed from UI) and flashes Green/Red based on sector performance vs TBL.
+
+### Connectivity
+- **Mini Server:** The ESP32 hosts a lightweight web server (`miniserver`) to handshake with the Companion App.
+- **Host-Client Model:** The UI (Analysis Engine) runs on a separate powerful device (Laptop/Phone), pulling data from the ESP32.
+
+**Status:** Migration Confirmed. Legacy Pi code archival in progress.
+
+
+---
+
+## 23. UI Refactoring & Logic Simplification (Retrospective)
+
+**Date:** 2026-01-27
+
+### Motivation
+With the strategic pivot to **ESP32 Standalone (V2)**, the Web UI was cluttered with legacy artifacts from the Raspberry Pi era and "Gap Features" (temporary bridges between the two architectures).
+
+### Decisions
+- **Focus:** The UI must serve **only** the ESP32 V2 paradigm.
+- **Cleanup:** Removed all Pi-specific controls, "Bridge" modes, and complex sync logic intended for the hybrid era.
+- **Simplification:** Codebase stripped down to the essentials required for the Dumb Logger -> Cloud workflow.
+
+### Outcome
+- A cleaner, faster, purpose-built UI.
+- Reduced cognitive load for both developers and users.
+- Clear separation: The ESP32 is the *only* data source.
+
+---
+
+## 24. Hardware Maturity & Production Layout
+
+**Date:** 2026-02-01
+
+### Milestone: The "Fist" Form Factor 👊
+We have corrected the hardware trajectory. Transitioned from breadboards and jumpers to a **fully soldered, integrated setup**.
+
+**New Physical Reality:**
+- **Size:** The entire stack (Power, ESP32, BMI323, GPS, Type-C LED Port) fits within the size of a fist.
+- **Durability:** No loose wires. Vibration-proof for the first time.
+- **Feedback:** Type-C port repurposed as a robust external output for the LED feedback module.
+
+### Sensor Integration: BMI323
+- Successfully integrated the **BMI323 IMU**.
+- **Status:** Streaming raw Gyro and Accel values effectively.
+- **Driver:** Custom MicroPython driver written and verified.
+
+### Storage Strategy: SD Card Deprecation
+- **Incident:** Spent 2 days debugging SD Card logic. Reliability was poor (likely bad module/wiring).
+- **Decision:** **Abandoned SD Card.**
+- **Pivot:** Doubling down on internal Flash + WiFi Offload. The simplicity of V2 allows us to rely on the ESP32's own flash for session buffering before offloading, eliminating the biggest mechanical failure point.
+
+### Software Enhancements
+1. **Robust Scanning:** Completely overhauled the Network Scanner logic. It is now aggressive and reliable in finding the device.
+2. **Map Visualization:** Added **Scale Bars and Metric Grids** to the path visualizer. Riders can now judge corner radii and straight lengths visibly.
+3. **Bug Fixes:** Stabilized the processing pipeline and cleared legacy import errors.
+
+**Status:** ✅ Hardware is minimal, soldered, and producing data. Software is catching up to the new form factor.
