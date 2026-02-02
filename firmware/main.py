@@ -80,7 +80,7 @@ def setup():
     print(f"WiFi Status: {mode}, IP: {ip}")
 
     # 9. Start MiniServer
-    server = MiniServer(sm)
+    server = MiniServer(sm, led=led, track_engine=track_eng)
     _thread.start_new_thread(server.start, ())
     print("Server: Listening in background")
 
@@ -115,8 +115,6 @@ def main_loop():
                     s = int(t_str[4:6])
                     
                     # Set simple RTC (Date is unknown without RMC date field, assumes 2000-01-01)
-                    # For logging delta, relative time is fine, but this aligns seconds.
-                    # Ideally we parse RMC date too, but let's stick to time for now.
                     machine.RTC().datetime((2024, 1, 1, 0, h, m, s, 0))
                     time_synced = True
                     print(f"[System] Time synced to GPS: {h}:{m}:{s}")
@@ -161,11 +159,51 @@ def main_loop():
                 log_line = f"{time.time()},{fix['lat']},{fix['lon']},0.0,{fix['speed_kmh']:.2f},{acc['x']:.0f},{acc['y']:.0f},{acc['z']:.0f},{gyr['x']:.0f},{gyr['y']:.0f},{gyr['z']:.0f}\n"
                 f.write(log_line)
                 f.flush() # Ensure data hits the card/flash immediately
-                led.update("LOGGING")
-            else:
-                led.update("SEARCHING")
+                
+                # Update Track Engine (Logic Layer)
+                try:
+                    event = track_eng.update(fix['lat'], fix['lon'], time.time())
+                    if event:
+                        # Trigger LED Event (Priority 2 & 3)
+                        led.trigger_event(event)
+                except Exception as e:
+                    print(f"TrackEng Error: {e}")
+
+            # 4. LED & Feedback Logic
+            # Priority 0: Storage Full (>95%)
+            base_state = "IDLE"
             
-            # 4. AP Mode Blink (Rapid Blue/Onboard LED)
+            # Check storage occasionally (e.g. every 10s? or just use cached if expensive?)
+            # For simplicity, we assume SessionManager handles this cheaply or we do it rarely.
+            # But os.statvfs is fast enough for 10Hz? Maybe. Let's do it simple first.
+            # Optimization: Move out of loop or counter check if slow.
+            # Using simple heuristic:
+            
+            if fix['valid']:
+                base_state = "LOGGING"
+            else:
+                base_state = "SEARCHING"
+
+            # Check Storage (Optimized: Check only every 100 frames / 10s)
+            # Global or static var needed? Just do it every loop for safety if fast enough.
+            # statvfs takes ~2ms. 10Hz budget is 100ms. It's fine.
+            try:
+                s_info = sm.get_storage_info()
+                if s_info:
+                    usage = (s_info['used_kb'] / s_info['total_kb']) * 100
+                    if usage > 95:
+                        base_state = "STORAGE_CRITICAL"
+            except:
+                pass
+
+            # Update LED with Priority Logic
+            try:
+                led.update_with_events(base_state)
+            except Exception as e:
+                # LED failure should never stop logging
+                pass
+            
+            # 5. AP Mode Blink (Rapid Blue/Onboard LED)
             if wifi_mode == "AP":
                 onboard_led.value(not onboard_led.value()) # Toggle every loop (10Hz = 5Hz Blink)
             else:

@@ -27,7 +27,7 @@
 # ============================================================================
 
 # Configuration
-PORT="/dev/cu.usbserial-0001"
+PORT="/dev/cu.SLAB_USBtoUART"
 BAUD="460800"
 FIRMWARE_BIN="micropython.bin"
 SOURCE_DIR="$(pwd)"

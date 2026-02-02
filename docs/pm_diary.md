@@ -1439,3 +1439,74 @@ We have corrected the hardware trajectory. Transitioned from breadboards and jum
 3. **Bug Fixes:** Stabilized the processing pipeline and cleared legacy import errors.
 
 **Status:** ✅ Hardware is minimal, soldered, and producing data. Software is catching up to the new form factor.
+
+---
+
+## 25. SD Card Integration: The Resurrection
+
+**Date:** 2026-02-02
+
+### Background
+
+After two days of debugging and an initial decision to "abandon SD Card" in Entry 24, we revisited the problem with fresh wiring: **directly soldering the SD card to the ESP32** (no modules/breakouts).
+
+### Wiring Configuration (Final)
+
+| ESP32 Pin | Signal | SD Card |
+|-----------|--------|---------|
+| GPIO 5 | SPI CS | Chip Select |
+| GPIO 18 | SPI SCK | Clock |
+| GPIO 23 | SPI MOSI | Data To SD |
+| GPIO 33 | SPI MISO | Data From SD |
+| 3.3V | VCC | Power |
+| GND | GND | Ground |
+
+### Root Cause Analysis
+
+The original SD card driver had multiple issues:
+
+1. **Missing MOSI High Workaround:** The official MicroPython driver sends `0xFF` before each transaction to ensure MOSI is high. Our custom driver lacked this, causing Kingston-class cards to fail randomly.
+
+2. **Incorrect OCR Handling:** The driver assumed all v2 cards were SDHC (block addressing) without checking the OCR register bit 30. This caused addressing errors on some cards.
+
+3. **Missing Trailing Clocks:** After CSD read, the driver didn't send trailing clock pulses, leaving the SPI bus in an undefined state.
+
+4. **CMD16 Failure:** SDHC cards have fixed 512-byte blocks and CMD16 isn't required, but the driver tried it anyway and failed on some cards.
+
+### Solution
+
+Replaced the custom driver with the **official MicroPython sdcard.py** from `micropython-lib`. Key differences:
+
+- Proper `write_readinto()` for full-duplex SPI
+- OCR bit 30 checking for SDHC detection
+- MOSI high workaround before every transaction
+- Cleaner `readinto()` with dummy buffer swap
+
+### Performance Benchmarks
+
+Stress tested across 7 SPI speeds (400kHz → 20MHz) and 3 block sizes:
+
+| Configuration | Write Speed | Read Speed |
+|---------------|-------------|------------|
+| Safe (4 MHz, 512B) | 148 KB/s | 118 KB/s |
+| Optimal (10 MHz, 4KB) | **278 KB/s** | 224 KB/s |
+| Maximum (20 MHz, 4KB) | 283 KB/s | 248 KB/s |
+
+### Recommendation
+
+For data logging: **10 MHz SPI with 4KB write buffers** provides the best balance of speed and reliability.
+
+### Outcome
+
+- ✅ SD Card fully operational
+- ✅ Read/Write verified ("Hello World" test passed)
+- ✅ Official driver committed to `firmware/drivers/sdcard.py`
+- ✅ Performance benchmarked and documented
+
+### Lesson Learned
+
+> **"Don't blame the hardware until you've tried the reference implementation."**
+
+The SD card module wasn't faulty — the driver was. Always start with official/reference code before writing custom implementations.
+
+**Status:** ✅ SD Card resurrected. Ready for production data logging.
