@@ -13,6 +13,7 @@ from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
 from lib.wifi_manager import connect_or_ap
 from lib.miniserver import MiniServer
+from lib.ble_provisioning import BLEProvisioning
 
 # --- MASTER PINOUT CONFIG ---
 PIN_LED_STATUS = 4   # Feedback LED
@@ -74,20 +75,28 @@ def setup():
     track_eng = TrackEngine()
     track_eng.load_track()
 
-    # 8. WiFi (DO THIS LAST - Power Hungry)
+    # 8. BLE Provisioning (Start early)
+    import lib.wifi_manager as wm
+    ble = BLEProvisioning(wifi_manager=wm, session_manager=sm)
+    ble.start()
+
+    # 9. WiFi (DO THIS LAST - Power Hungry)
     print("Starting WiFi Radio...")
     mode, ip = connect_or_ap()
     print(f"WiFi Status: {mode}, IP: {ip}")
+    
+    # Update BLE status with initial WiFi state
+    ble.notify_wifi_status(mode=="STA", "", ip, mode)
 
-    # 9. Start MiniServer
+    # 10. Start MiniServer
     server = MiniServer(sm, led=led, track_engine=track_eng)
     _thread.start_new_thread(server.start, ())
     print("Server: Listening in background")
 
-    return led, gps, imu, sm, track_eng, mode
+    return led, gps, imu, sm, track_eng, mode, ble
 
 def main_loop():
-    led, gps, imu, sm, track_eng, wifi_mode = setup()
+    led, gps, imu, sm, track_eng, wifi_mode, ble = setup()
     
     # Onboard LED for AP Mode indication
     onboard_led = machine.Pin(2, machine.Pin.OUT)
@@ -97,13 +106,29 @@ def main_loop():
     
     # Track time sync status
     time_synced = False
+    # BLE update counter
+    ble_update_tick = 0
     
     with open(log_file, 'w') as f:
         f.write("time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z\n")
         
         while True:
+            # Periodically update BLE (every 2 seconds / 20 ticks @ 10Hz)
+            ble_update_tick += 1
+            if ble_update_tick >= 20:
+                ble_update_tick = 0
+                try:
+                    s_info = sm.get_storage_info()
+                    usage = (s_info['used_kb'] / s_info['total_kb']) * 100 if s_info else 0
+                    # We'll get fix['valid'] after gps.update()
+                except:
+                    usage = 0
             # 1. Update GPS (Blocking/Synchronous)
             fix = gps.update()
+            
+            # Update BLE with fix info (tick check above handled usage)
+            if ble_update_tick == 0:
+                ble.update_device_info(gps_valid=fix['valid'], storage_pct=usage)
             
             # Sync System Time from GPS (Once)
             if not time_synced and fix['timestamp']:

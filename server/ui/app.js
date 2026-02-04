@@ -28,6 +28,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check connection
     checkConnection();
 
+    // Check BLE support
+    initBleSupportCheck();
+
     // Load initial data
     loadHomeData();
 });
@@ -4725,5 +4728,146 @@ async function flashLatestEspWifi() {
         btn.disabled = false;
         statusText.textContent = 'Update Failed';
         showToast(`Flash Failed: ${e.message}`, 'error');
+    }
+}
+
+// ============================================================================
+// BLE PROVISIONING INTEGRATION
+// ============================================================================
+
+let bleConnector = null;
+
+function initBleSupportCheck() {
+    console.log('Checking Web Bluetooth support...');
+    const warning = document.getElementById('bleSupportWarning');
+    const connectBtn = document.getElementById('btnBleConnect');
+
+    if (!DataloggerBLE.isSupported()) {
+        if (warning) warning.style.display = 'block';
+        if (connectBtn) connectBtn.disabled = true;
+    } else {
+        bleConnector = new DataloggerBLE();
+        setupBleCallbacks();
+    }
+}
+
+function setupBleCallbacks() {
+    if (!bleConnector) return;
+
+    bleConnector.onConnect = () => {
+        updateBleUiState('connected');
+        showToast('Bluetooth Connected!', 'success');
+        // Automatically scan for networks on connect
+        handleBleWifiScan();
+    };
+
+    bleConnector.onDisconnect = () => {
+        updateBleUiState('disconnected');
+        showToast('Bluetooth Disconnected', 'warning');
+    };
+
+    bleConnector.onStatusChange = (status) => {
+        console.log('[BLE] Status Change:', status);
+        if (status.connected && status.ip !== '0.0.0.0') {
+            // Update app state with device IP
+            localStorage.setItem('lastDeviceIP', status.ip);
+            const ipInput = document.getElementById('devConfigIP');
+            if (ipInput) ipInput.value = status.ip;
+
+            showToast(`WiFi Connected! Device IP: ${status.ip}`, 'success');
+
+            // Re-check connection via HTTP now
+            checkConnection();
+        }
+    };
+
+    bleConnector.onDeviceInfoChange = (info) => {
+        console.log('[BLE] Device Info:', info);
+        // Could update UI elements here
+    };
+}
+
+async function handleBleConnect() {
+    if (!bleConnector) return;
+    try {
+        await bleConnector.connect();
+    } catch (e) {
+        if (e.name !== 'NotFoundError' && e.name !== 'AbortError') {
+            showToast(`BLE Connect Failed: ${e.message}`, 'error');
+        }
+    }
+}
+
+async function handleBleWifiScan() {
+    if (!bleConnector || !bleConnector.isConnected()) return;
+
+    const select = document.getElementById('bleWifiSelect');
+    select.innerHTML = '<option value="">Scanning...</option>';
+
+    try {
+        const networks = await bleConnector.scanNetworks();
+        if (networks.length === 0) {
+            select.innerHTML = '<option value="">No networks found</option>';
+        } else {
+            select.innerHTML = networks.map(ssid => `<option value="${ssid}">${ssid}</option>`).join('');
+        }
+    } catch (e) {
+        showToast('WiFi scan failed over BLE', 'error');
+        select.innerHTML = '<option value="">Scan failed</option>';
+    }
+}
+
+async function handleBleWifiConfig() {
+    if (!bleConnector || !bleConnector.isConnected()) return;
+
+    const ssid = document.getElementById('bleWifiSelect').value;
+    const password = document.getElementById('bleWifiPass').value;
+
+    if (!ssid) {
+        showToast('Please select a network', 'warning');
+        return;
+    }
+
+    showToast(`Configuring ${ssid}...`, 'info');
+    try {
+        await bleConnector.configureWifi(ssid, password);
+    } catch (e) {
+        showToast('Failed to send WiFi config', 'error');
+    }
+}
+
+async function handleBleStartAP() {
+    if (!bleConnector || !bleConnector.isConnected()) return;
+
+    if (!confirm('Start AP mode? You will need to connect to the "Datalogger-Setup" WiFi.')) return;
+
+    try {
+        await bleConnector.startAPMode();
+        showToast('AP Mode started on device', 'success');
+        // Give heads up about Mac network behavior
+        alert('Please connect your computer to the "Datalogger-Setup" WiFi. Note: You might lose internet while connected.');
+    } catch (e) {
+        showToast('Failed to start AP', 'error');
+    }
+}
+
+function updateBleUiState(state) {
+    const dot = document.getElementById('bleStatusDot');
+    const text = document.getElementById('bleStatusText');
+    const btn = document.getElementById('btnBleConnect');
+    const setupArea = document.getElementById('bleWifiSetup');
+
+    if (state === 'connected') {
+        dot.className = 'status-dot connected';
+        text.textContent = 'Bluetooth: Connected';
+        btn.textContent = 'Disconnect';
+        btn.onclick = () => bleConnector.disconnect();
+        setupArea.style.display = 'block';
+    } else {
+        dot.className = 'status-dot offline';
+        text.textContent = 'Bluetooth: Not Connected';
+        btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Connect';
+        btn.onclick = handleBleConnect;
+        setupArea.style.display = 'none';
     }
 }
