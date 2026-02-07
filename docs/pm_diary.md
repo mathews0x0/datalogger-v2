@@ -1510,3 +1510,23 @@ For data logging: **10 MHz SPI with 4KB write buffers** provides the best balanc
 The SD card module wasn't faulty — the driver was. Always start with official/reference code before writing custom implementations.
 
 **Status:** ✅ SD Card resurrected. Ready for production data logging.
+
+---
+
+### 2026-02-07: Hardware Evolution — The "RS-Core" (S3 Pivot)
+
+**Context:** Major architecture upgrade to transition from a prototype to a commercial-grade product. Successfully moved the design to the ESP32-S3 platform.
+
+**Decisions:**
+- **MCU Pivot:** Selected **ESP32-S3-WROOM-1-N16R8**. Native USB support allows the device to act as a Mass Storage device for ultra-fast "pit lane" data offloading.
+- **IMU Selection:** Finalized **BMI160** with dedicated I2C pull-ups and optimized decoupling for low-noise telemetry.
+- **Power Intelligence:** Integrated a voltage divider for real-time **Battery Voltage Monitoring** (IO35).
+- **Safety Fixes:** Audited and fixed charging path (diode removal) and LED logic (high-side switching).
+- **Expansion Ports:** Exposed 3x GPIOs for future "Pro" features (Suspension/Brake sensors).
+
+**Outcome:**
+- Hardware design frozen and Gerbers generated (`RS-core-Gerber-final.zip`).
+- Transitioned from "Dumb Logger" to a "Smart Hardware" platform with native battery/power awareness.
+- PCBA-ready BOM with LCSC part numbers confirmed.
+
+---
