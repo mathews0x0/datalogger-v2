@@ -89,3 +89,9 @@ class TrackDayMeta(db.Model):
     name = db.Column(db.String(255))
     date = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Follow(db.Model):
+    __tablename__ = 'follows'
+    follower_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    following_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)

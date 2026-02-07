@@ -511,12 +511,330 @@ async function ensureTrackSynced(trackId, deviceIP) {
     }
 }
 
-// Start Polling
-setInterval(pollStatus, 2000);
+// ============================================================================
+// SOCIAL & COMMUNITY FEATURES
+// ============================================================================
 
-// ============================================================================
-// HOME VIEW
-// ============================================================================
+function switchCommunityTab(tab) {
+    // Update tab buttons
+    document.querySelectorAll('[data-comm-tab]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.commTab === tab);
+    });
+
+    // Show/hide panels
+    const explorePanel = document.getElementById('explorePanel');
+    const followingPanel = document.getElementById('followingPanel');
+    const leaderboardsPanel = document.getElementById('leaderboardsPanel');
+    
+    if (explorePanel) explorePanel.style.display = tab === 'explore' ? 'block' : 'none';
+    if (followingPanel) followingPanel.style.display = tab === 'following' ? 'block' : 'none';
+    if (leaderboardsPanel) leaderboardsPanel.style.display = tab === 'leaderboards' ? 'block' : 'none';
+
+    // Load data
+    if (tab === 'explore') {
+        loadCommunitySessions();
+    } else if (tab === 'following') {
+        loadFollowingFeed();
+    } else if (tab === 'leaderboards') {
+        loadLeaderboardTracks();
+    }
+}
+
+async function loadFollowingFeed() {
+    const container = document.getElementById('followingFeedList');
+    if (!container) return;
+    container.innerHTML = '<div class="loading">Loading your feed...</div>';
+
+    try {
+        const feed = await apiCall('/api/feed/following');
+
+        if (!feed || feed.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--text-dim);">
+                    <i class="fas fa-user-friends" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+                    <p>No activity from people you follow.</p>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);">Follow some riders in the Explore tab!</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = feed.map(session => `
+            <div class="session-card" onclick="viewSession('${session.session_id}', true)">
+                <div class="session-header">
+                    <div>
+                        <div class="session-title">${session.track_name}</div>
+                        <div style="font-size: 0.8rem; color: var(--primary); font-weight: 600; cursor: pointer;" onclick="event.stopPropagation(); showUserProfile(${session.owner_id})">👤 ${session.owner_name}</div>
+                    </div>
+                    <div class="session-time">${formatDateTimeAbbreviated(session.start_time)}</div>
+                </div>
+                <div class="session-stats">
+                    <div class="session-stat">
+                        <span>Laps:</span>
+                        <strong>${session.total_laps}</strong>
+                    </div>
+                    <div class="session-stat">
+                        <span>Best:</span>
+                        <strong style="color: var(--success);">${formatTime(session.best_lap_time)}</strong>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load feed</p>';
+    }
+}
+
+async function loadLeaderboardTracks() {
+    const select = document.getElementById('lbTrackSelect');
+    if (!select || select.options.length > 1) return; // Already loaded
+
+    try {
+        const data = await apiCall('/api/tracks');
+        select.innerHTML = '<option value="">Select Track...</option>' +
+            data.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
+    } catch (e) {}
+}
+
+async function loadLeaderboard() {
+    const trackId = document.getElementById('lbTrackSelect').value;
+    const period = document.getElementById('lbPeriodSelect').value;
+    const container = document.getElementById('leaderboardContent');
+
+    if (!trackId) {
+        container.innerHTML = `
+            <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--text-dim);">
+                <i class="fas fa-trophy" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+                <p>Select a track to view the leaderboard</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = '<div class="loading">Loading leaderboard...</div>';
+
+    try {
+        const leaderboard = await apiCall(`/api/leaderboards/track/${trackId}?period=${period}`);
+
+        if (!leaderboard || leaderboard.length === 0) {
+            container.innerHTML = '<p class="help-text" style="text-align: center; padding: 2rem;">No public times for this track yet.</p>';
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="table-responsive">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">#</th>
+                            <th>Rider</th>
+                            <th>Time</th>
+                            <th>Bike</th>
+                            <th class="hide-mobile">Date</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${leaderboard.map(entry => {
+                            let rankDisplay = entry.rank;
+                            if (entry.rank === 1) rankDisplay = '🥇';
+                            else if (entry.rank === 2) rankDisplay = '🥈';
+                            else if (entry.rank === 3) rankDisplay = '🥉';
+                            
+                            return `
+                            <tr onclick="viewSession('${entry.session_id}', true)" style="cursor: pointer;">
+                                <td style="font-weight: 700;">${rankDisplay}</td>
+                                <td>
+                                    <div style="display: flex; flex-direction: column;">
+                                        <span style="font-weight: 600; color: var(--primary);" onclick="event.stopPropagation(); showUserProfile(${entry.user_id})">${entry.user_name}</span>
+                                    </div>
+                                </td>
+                                <td style="font-family: monospace; font-weight: 700; color: var(--success);">${formatTime(entry.lap_time)}</td>
+                                <td style="font-size: 0.8rem; color: var(--text-dim);">${entry.bike_info || '-'}</td>
+                                <td class="hide-mobile" style="font-size: 0.75rem; color: var(--text-muted);">${formatDateShort(entry.date)}</td>
+                            </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load leaderboard</p>';
+    }
+}
+
+async function showUserProfile(userId) {
+    const view = document.getElementById('userProfileView');
+    const container = document.getElementById('userProfileContent');
+
+    if (!view || !container) return;
+
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    view.classList.add('active');
+
+    container.innerHTML = '<div class="loading">Loading profile...</div>';
+
+    try {
+        // Fetch stats and user info
+        const stats = await apiCall(`/api/users/${userId}/stats`);
+        const social = await apiCall(`/api/users/${userId}/social-counts`);
+        
+        const name = stats.name || `Rider ${userId}`;
+
+        container.innerHTML = `
+            <div class="profile-header card" style="margin-bottom: 1.5rem; text-align: center; padding: 2rem;">
+                <div style="font-size: 4rem; margin-bottom: 1rem; color: var(--primary);">
+                    <i class="fas fa-user-circle"></i>
+                </div>
+                <h2>${name}</h2>
+                <div style="display: flex; justify-content: center; gap: 2rem; margin: 1.5rem 0;">
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.5rem; font-weight: 800;">${social.followers_count}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Followers</div>
+                    </div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 1.5rem; font-weight: 800;">${social.following_count}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Following</div>
+                    </div>
+                </div>
+                
+                ${currentUser && currentUser.id != userId ? `
+                    <button class="btn ${social.is_following ? 'secondary' : 'btn-primary'}" id="followBtn" onclick="toggleFollow(${userId}, ${social.is_following})">
+                        ${social.is_following ? '<i class="fas fa-user-minus"></i> Unfollow' : '<i class="fas fa-user-plus"></i> Follow'}
+                    </button>
+                ` : ''}
+            </div>
+
+            <div class="quick-stats" style="margin-bottom: 1.5rem;">
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <div class="stat-label">Total Sessions</div>
+                        <div class="stat-value">${stats.total_sessions}</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <div class="stat-label">Total Laps</div>
+                        <div class="stat-value">${stats.total_laps}</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-info">
+                        <div class="stat-label">Tracks Visited</div>
+                        <div class="stat-value">${stats.tracks_visited}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Personal Bests</h3>
+                ${!stats.personal_bests || stats.personal_bests.length === 0 ? '<p class="help-text">No public personal bests recorded.</p>' : `
+                    <div class="pb-list">
+                        ${stats.personal_bests.map(pb => `
+                            <div style="display: flex; justify-content: space-between; padding: 0.75rem 0; border-bottom: 1px solid var(--border);">
+                                <span style="font-weight: 600;">${pb.track_name}</span>
+                                <span style="font-family: monospace; font-weight: 700; color: var(--success);">${formatTime(pb.best_lap)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `}
+            </div>
+        `;
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load profile</p>';
+    }
+}
+
+async function toggleFollow(userId, currentlyFollowing) {
+    try {
+        const method = currentlyFollowing ? 'DELETE' : 'POST';
+        const result = await apiCall(`/api/users/${userId}/follow`, { method });
+        
+        if (result && result.success) {
+            showToast(currentlyFollowing ? 'Unfollowed' : 'Now following', 'success');
+            // Refresh profile view
+            showUserProfile(userId);
+        }
+    } catch (e) {
+        showToast('Action failed: ' + e.message, 'error');
+    }
+}
+
+function formatDateShort(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ----------------------------------------------------------------------------
+// TRACKDAY LEADERBOARD (M3)
+// ----------------------------------------------------------------------------
+
+async function loadTrackdayLeaderboard(trackdayId) {
+    const container = document.getElementById('trackdayLeaderboardContent');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="loading">Loading leaderboard...</div>';
+    
+    try {
+        const data = await apiCall(`/api/leaderboards/trackday/${trackdayId}`);
+        
+        if (!data.leaderboard || data.leaderboard.length === 0) {
+            container.innerHTML = '<p class="help-text">No public lap times recorded for this trackday yet.</p>';
+            return;
+        }
+        
+        container.innerHTML = `
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th style="width: 40px;">#</th>
+                        <th>Rider</th>
+                        <th>Best Lap</th>
+                        <th>Bike</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.leaderboard.map(entry => `
+                        <tr onclick="viewSession('${entry.session_id}', true)" style="cursor: pointer;">
+                            <td>${entry.rank}</td>
+                            <td>
+                                <span style="font-weight: 600; color: var(--primary);" onclick="event.stopPropagation(); showUserProfile(${entry.user_id})">${entry.user_name}</span>
+                            </td>
+                            <td style="font-family: monospace; font-weight: 700; color: var(--success);">${formatTime(entry.lap_time)}</td>
+                            <td style="font-size: 0.8rem; color: var(--text-dim);">${entry.bike_info || '-'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        `;
+    } catch (e) {
+        container.innerHTML = '<p class="help-text">Failed to load leaderboard</p>';
+    }
+}
+
+// ----------------------------------------------------------------------------
+// HELPER FUNCTIONS (Formatting)
+// ----------------------------------------------------------------------------
+
+function formatDate(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatDateTimeAbbreviated(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + 
+           d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function formatTime24h(dateStr) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+}
 
 async function loadHomeData() {
     try {
@@ -873,7 +1191,7 @@ async function loadCommunitySessions() {
                 <div class="session-header">
                     <div>
                         <div class="session-title">${session.track_name}</div>
-                        <div style="font-size: 0.8rem; color: var(--primary); font-weight: 600;">👤 ${session.owner_name}</div>
+                        <div style="font-size: 0.8rem; color: var(--primary); font-weight: 600; cursor: pointer;" onclick="event.stopPropagation(); showUserProfile(${session.owner_id})">👤 ${session.owner_name}</div>
                     </div>
                     <div class="session-time">${formatDateTimeAbbreviated(session.start_time)}</div>
                 </div>
@@ -1183,6 +1501,17 @@ async function viewTrackday(trackdayId) {
                 <p style="margin: 0; white-space: pre-wrap;">${td.notes}</p>
             </div>
             ` : ''}
+
+            <!-- Trackday Leaderboard (Phase 4) -->
+            <div class="card" style="margin-bottom: 1.5rem;">
+                <h3 style="margin: 0 0 1rem 0; display: flex; align-items: center; gap: 0.5rem;">
+                    <span style="color: var(--primary);">🥇</span> Trackday Leaderboard
+                    <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-dim);">Public times for this track & date</span>
+                </h3>
+                <div id="trackdayLeaderboardContent">
+                    <div class="loading">Loading leaderboard...</div>
+                </div>
+            </div>
             
             <!-- Sessions in Trackday (Collapsible) -->
             <div class="card" style="margin-bottom: 1.5rem;">
@@ -1338,6 +1667,9 @@ async function viewTrackday(trackdayId) {
         if (td.track_id) {
             loadTrackdayMap(td.track_id, td.track_name);
         }
+
+        // Load Trackday Leaderboard (Phase 4)
+        loadTrackdayLeaderboard(trackdayId);
 
     } catch (error) {
         container.innerHTML = '<p class="help-text">Failed to load trackday</p>';
@@ -1631,7 +1963,7 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
             ${isShared ? `
                 <div style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--primary);">
                     <div>
-                        <span style="color: var(--primary); font-weight: bold;">Rider: ${session.owner_name || 'Anonymous'}</span>
+                        <span style="color: var(--primary); font-weight: bold; cursor: pointer;" onclick="showUserProfile(${session.user_id})">Rider: ${session.owner_name || 'Anonymous'}</span>
                         <p style="margin: 0.25rem 0 0 0; font-size: 0.8rem; color: var(--text-dim);">You are viewing a shared session.</p>
                     </div>
                     ${!currentUser ? `
@@ -1826,6 +2158,7 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
                                     `).join('')}
                                     <td style="text-align: center;">
                                         ${isBest ? '<span class="best-badge">★ BEST</span>' : ''}
+                                        <button class="btn-icon no-print" onclick="event.stopPropagation(); setForComparison('${session.meta.session_id}', ${lap.lap_number})" title="Add to Compare">⚖️</button>
                                     </td>
                                 </tr>
                             `}).join('')}
@@ -2465,8 +2798,142 @@ window.openLapModal = function (mode) {
 }
 
 // ----------------------------------------------------------------------------
-// VISUALIZATION GENERATORS
+// COMPARISON FEATURE (M6)
 // ----------------------------------------------------------------------------
+
+let comparisonSlots = [null, null];
+
+function setForComparison(sessionId, lapNumber) {
+    if (!comparisonSlots[0]) {
+        comparisonSlots[0] = { sessionId, lapNumber };
+        showToast(`Lap ${lapNumber} added as Lap 1`, 'info');
+    } else if (!comparisonSlots[1]) {
+        comparisonSlots[1] = { sessionId, lapNumber };
+        showToast(`Lap ${lapNumber} added as Lap 2`, 'info');
+        // Auto-show comparison if we have both
+        showComparison();
+    } else {
+        // Shift and add
+        comparisonSlots[0] = comparisonSlots[1];
+        comparisonSlots[1] = { sessionId, lapNumber };
+        showToast(`Lap ${lapNumber} added as Lap 2`, 'info');
+        showComparison();
+    }
+}
+
+async function showComparison() {
+    if (!comparisonSlots[0] || !comparisonSlots[1]) {
+        showToast('Select two laps to compare', 'warning');
+        return;
+    }
+
+    const view = document.getElementById('comparisonView');
+    const container = document.getElementById('comparisonContent');
+
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    view.classList.add('active');
+
+    container.innerHTML = '<div class="loading">Aligning telemetry...</div>';
+
+    try {
+        const s1 = comparisonSlots[0];
+        const s2 = comparisonSlots[1];
+        
+        const data = await apiCall(`/api/compare?session1=${s1.sessionId}&lap1=${s1.lapNumber-1}&session2=${s2.sessionId}&lap2=${s2.lapNumber-1}`);
+
+        container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                <h2>Lap Comparison</h2>
+                <button class="btn btn-secondary" onclick="comparisonSlots = [null, null]; showView('sessions');">Clear & Exit</button>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem;">
+                <div class="card" style="border-left: 4px solid var(--primary);">
+                    <h3 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-dim);">LAP 1</h3>
+                    <div style="font-size: 1.5rem; font-weight: bold;">${formatTime(data.lap1.lap_info.lap_time)}</div>
+                    <div style="font-size: 0.8rem; color: var(--primary); font-weight: 600;">👤 ${data.lap1.user_name}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">${data.lap1.session_name} • Lap ${data.lap1.lap_info.lap_number}</div>
+                </div>
+                <div class="card" style="border-left: 4px solid var(--secondary);">
+                    <h3 style="margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--text-dim);">LAP 2</h3>
+                    <div style="font-size: 1.5rem; font-weight: bold;">${formatTime(data.lap2.lap_info.lap_time)}</div>
+                    <div style="font-size: 0.8rem; color: var(--secondary); font-weight: 600;">👤 ${data.lap2.user_name}</div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted);">${data.lap2.session_name} • Lap ${data.lap2.lap_info.lap_number}</div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 1.5rem;">
+                <h3>Sector Comparison</h3>
+                <div style="overflow-x: auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Sector</th>
+                                <th>Lap 1</th>
+                                <th>Lap 2</th>
+                                <th>Delta</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.lap1.lap_info.sector_times.map((s1_time, i) => {
+                                const s2_time = data.lap2.lap_info.sector_times[i];
+                                const delta = s1_time - s2_time;
+                                const deltaColor = delta > 0 ? 'var(--success)' : 'var(--error)';
+                                return `
+                                <tr>
+                                    <td>Sector ${i + 1}</td>
+                                    <td style="font-family: monospace;">${formatTime(s1_time)}</td>
+                                    <td style="font-family: monospace;">${formatTime(s2_time)}</td>
+                                    <td style="font-family: monospace; font-weight: 700; color: ${deltaColor};">
+                                        ${delta > 0 ? '+' : ''}${delta.toFixed(3)}s
+                                    </td>
+                                </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 1.5rem;">
+                <h3>Telemetry Overlay (MVP)</h3>
+                <p class="help-text">Side-by-side visualization coming in next update. For now, use sector times for comparison.</p>
+                <div style="display: flex; gap: 1rem;">
+                    <div style="flex: 1;">
+                        ${generateColorMapSVG(sliceTelemetry(data.lap1), 'speed', { small: true })}
+                        <p style="text-align: center; font-size: 0.8rem;">Lap 1 Speed Map</p>
+                    </div>
+                    <div style="flex: 1;">
+                        ${generateColorMapSVG(sliceTelemetry(data.lap2), 'speed', { small: true })}
+                        <p style="text-align: center; font-size: 0.8rem;">Lap 2 Speed Map</p>
+                    </div>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        container.innerHTML = `<p class="help-text">Failed to load comparison: ${error.message}</p>`;
+    }
+}
+
+function sliceTelemetry(lapData) {
+    const { lap_info, telemetry } = lapData;
+    // For compare API, we already sliced it on the server (if it's my new API)
+    // Wait, let's check my compare API return format.
+    // Yes, lap1_data.telemetry is the sliced list.
+    
+    // Actually, generateColorMapSVG expects { lats, lons, speeds, times }
+    // But my sliced telemetry might be a list of dicts or something.
+    // Let's assume it's a list of dicts.
+    if (Array.isArray(telemetry)) {
+        return {
+            lats: telemetry.map(p => p.lat),
+            lons: telemetry.map(p => p.lon),
+            speeds: telemetry.map(p => p.speed),
+            times: telemetry.map(p => p.time)
+        };
+    }
+    return telemetry;
+}
 
 function generateColorMapSVG(data, mode, options = {}) {
     // Mode: 'imu' | 'speed'

@@ -50,7 +50,7 @@
     <div style="display: flex; gap: 0.5rem; margin-left: auto">
       <div id="userProfileHeader" style="display: none; align-items: center; gap: 0.75rem; margin-right: 1rem;">
         <span id="tierBadge" class="tier-badge free">FREE</span>
-        <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600;"></span>
+        <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;" onclick="showUserProfile(currentUser.id)"></span>
         <button class="btn btn-sm" onclick="logout()" title="Logout" style="background: transparent; border: 1px solid var(--border); color: var(--text-dim);"><i class="fas fa-sign-out-alt"></i></button>
       </div>
       <button id="loginBtn" class="btn btn-primary btn-sm" onclick="showAuthModal()">Login / Register</button>
@@ -151,17 +151,60 @@
 
     <!-- Community View -->
     <div class="view" id="communityView">
-      <h2><i class="fas fa-users"></i> Community Feed</h2>
-      <p class="help-text">Recent public sessions from the community</p>
-      
-      <div class="filter-bar">
-        <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
-          <option value="">All Tracks</option>
-        </select>
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fas fa-users"></i> Community</h2>
       </div>
 
-      <div id="communitySessionsList" class="sessions-list">
-        <div class="loading">Loading community sessions...</div>
+      <!-- Community Sub-Tabs -->
+      <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
+        <button class="session-tab active" data-comm-tab="explore" onclick="switchCommunityTab('explore')">
+          <i class="fas fa-search"></i> Explore
+        </button>
+        <button class="session-tab" data-comm-tab="following" onclick="switchCommunityTab('following')">
+          <i class="fas fa-user-friends"></i> Following
+        </button>
+        <button class="session-tab" data-comm-tab="leaderboards" onclick="switchCommunityTab('leaderboards')">
+          <i class="fas fa-trophy"></i> Leaderboards
+        </button>
+      </div>
+      
+      <!-- Explore Panel -->
+      <div id="explorePanel">
+        <div class="filter-bar">
+          <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
+            <option value="">All Tracks</option>
+          </select>
+        </div>
+        <div id="communitySessionsList" class="sessions-list">
+          <div class="loading">Loading community sessions...</div>
+        </div>
+      </div>
+
+      <!-- Following Feed Panel -->
+      <div id="followingPanel" style="display: none;">
+        <div id="followingFeedList" class="sessions-list">
+          <div class="loading">Loading your feed...</div>
+        </div>
+      </div>
+
+      <!-- Leaderboards Panel -->
+      <div id="leaderboardsPanel" style="display: none;">
+        <div class="filter-bar" style="display: flex; gap: 0.5rem;">
+          <select id="lbTrackSelect" class="filter-select" style="flex: 2;" onchange="loadLeaderboard()">
+            <option value="">Select Track...</option>
+          </select>
+          <select id="lbPeriodSelect" class="filter-select" style="flex: 1;" onchange="loadLeaderboard()">
+            <option value="all">All Time</option>
+            <option value="month">This Month</option>
+            <option value="week">This Week</option>
+          </select>
+        </div>
+        <div id="leaderboardContent">
+          <div class="empty-state">
+            <i class="fas fa-trophy" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+            <p>Select a track to view the leaderboard</p>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -452,6 +495,22 @@
         ← Back to Tracks
       </button>
       <div id="trackDetailContent"></div>
+    </div>
+
+    <!-- User Profile View (Dynamic) -->
+    <div class="view" id="userProfileView">
+      <button class="back-btn" onclick="history.back() || showView('community')">
+        ← Back
+      </button>
+      <div id="userProfileContent"></div>
+    </div>
+
+    <!-- Comparison View (Dynamic) -->
+    <div class="view" id="comparisonView">
+      <button class="back-btn" onclick="showView('sessions')">
+        ← Back
+      </button>
+      <div id="comparisonContent"></div>
     </div>
   </main>
 
