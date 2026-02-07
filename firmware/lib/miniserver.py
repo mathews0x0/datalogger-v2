@@ -203,6 +203,19 @@ class MiniServer:
             "active_track": self.track_engine.track.get('id') if self.track_engine and self.track_engine.track else None,
             "track_identified": self.track_engine.track_identified if self.track_engine else False
         }
+
+        # Add GPS info if available
+        if self.gps_state:
+            # Support both dict and object
+            if isinstance(self.gps_state, dict):
+                gps = self.gps_state.get('gps')
+                if gps:
+                    status["gps_lat"] = gps.last_fix.get('lat')
+                    status["gps_lon"] = gps.last_fix.get('lon')
+            elif hasattr(self.gps_state, 'last_fix'):
+                status["gps_lat"] = self.gps_state.last_fix.get('lat')
+                status["gps_lon"] = self.gps_state.last_fix.get('lon')
+
         self.send_response(cl, 200, json.dumps(status))
 
     def handle_wifi_list(self, cl):
@@ -265,7 +278,7 @@ class MiniServer:
     def handle_session_list(self, cl):
         try:
             # Stop logging when sync process starts (requested by user)
-            if self.gps_state:
+            if self.gps_state and isinstance(self.gps_state, dict):
                 self.gps_state['logging_active'] = False
                 print("[Server] Sync requested: Stopping Logging Thread")
             

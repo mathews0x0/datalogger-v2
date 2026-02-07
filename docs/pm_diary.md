@@ -1551,3 +1551,70 @@ The SD card module wasn't faulty — the driver was. Always start with official/
 - Ready for final system integration testing and March track deployment.
 
 ---
+
+### 2026-02-08: UI Modernization & Visual Polish
+
+**Context:** Comprehensive UI refresh to create a premium, professional racing aesthetic.
+
+**Implementation Details:**
+- **Design System:** Implemented glassmorphism cards with `backdrop-filter: blur()` and semi-transparent backgrounds.
+- **Typography:** Integrated **Inter** from Google Fonts as the primary typeface; **JetBrains Mono** for timing data.
+- **Navigation:** Added meaningful icons to all navigation tabs with high-contrast glow effects on active state.
+- **Stat Cards:** Redesigned with premium icon-info layout and racing-specific metrics.
+- **Playback Modal:** Refined telemetry dashboard with improved grid layout and visual hierarchy.
+- **Animations:** Added `viewEnter` transitions and hover micro-animations for cards and buttons.
+
+**Outcome:**
+- Modern, racing-inspired UI that feels premium and responsive.
+- All existing functionality preserved; JS compatibility maintained.
+
+---
+
+### 2026-02-08: BLE → WiFi Automatic Handoff
+
+**Context:** Solved the "Connectivity Paradox" where phones lose internet when connecting to ESP32's WiFi.
+
+**Implementation Details:**
+- **Polling Logic:** After WiFi config via BLE, app polls status characteristic until ESP32 reports connected + IP.
+- **Auto-Detection:** Added `autoDetectDeviceIP()` that reads from BLE, falls back to localStorage, then network scan.
+- **IP Persistence:** Removed code that cleared `lastDeviceIP` on page load; IP now persists across sessions.
+- **Auto-Disconnect:** BLE disconnects automatically 3 seconds after WiFi handoff to save device power.
+- **Multi-Device Support:** Fixed scanner to detect multiple Dataloggers and prompt user selection.
+
+**Technical Fixes:**
+- Made WiFi connection non-blocking in firmware (background thread) to prevent BLE timeout.
+- Added 3x WiFi scan retry for reliability.
+- Disabled WiFi power management for faster connections.
+
+**Outcome:**
+- Seamless zero-config experience: Connect via BLE → Configure WiFi → App auto-switches to HTTP.
+- Phone keeps internet throughout the process.
+
+---
+
+### 2026-02-08: Pit Lane Auto-Pause & Per-Session IMU Calibration
+
+**Context:** Workflow-driven feature to eliminate garbage data and ensure accurate lean angle calculations.
+
+**Implementation Details:**
+- **State Machine:** New states: `PAUSED` | `CALIBRATING` | `LOGGING`.
+- **Pit Detection:** GPS geofence with 50m radius. "Mark Pit" button in app grabs current coords.
+- **Auto-Pause:** Logging suspended while inside pit geofence; LED shows slow amber pulse.
+- **Calibration Trigger:** When paused + speed < 2 km/h for 10+ seconds + bike upright (Z-axis dominant).
+- **Calibration Process:** Samples IMU for 3 seconds, computes gravity vector, stores in session memory.
+- **LED Animations:**
+    - Paused: 🟡 Slow amber pulse (1s cycle)
+    - Calibrating: 🔵 Fast blue sweep
+    - Calibrated: 🟢 3x quick green flash
+- **Auto-Resume:** Logging starts when GPS exits pit geofence AND speed > 10 km/h.
+
+**Design Decisions:**
+- Calibration is **per-session** (not persistent) since datalogger orientation may change between mounts.
+- Calibration happens when rider is sitting on bike (not on kickstand) for accurate reference.
+
+**Outcome:**
+- No more garbage data from pit lane activity.
+- Accurate lean angle calculations based on actual mounting orientation.
+- Clear visual feedback throughout the workflow.
+
+---

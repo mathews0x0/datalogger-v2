@@ -66,6 +66,20 @@ class TrackEngine:
         self._pending_event = None
         return evt
     
+    def is_in_pit(self, lat, lon):
+        """Check if current position is within the pit geofence."""
+        if not self.track:
+            return False
+        
+        pit_lat = self.track.get('pit_center_lat')
+        pit_lon = self.track.get('pit_center_lon')
+        pit_radius = self.track.get('pit_radius_m', 50) # Default 50m
+        
+        if pit_lat is not None and pit_lon is not None:
+            dist = self._haversine_m(lat, lon, pit_lat, pit_lon)
+            return dist < pit_radius
+        return False
+
     def update(self, lat, lon, timestamp):
         """
         Main update loop. Call with each GPS sample.

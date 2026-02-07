@@ -53,6 +53,13 @@ def connect_or_ap():
     """
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
+    
+    # Disable power saving for better stability
+    try:
+        wlan.config(pm=0xa11140) # Disable power management
+    except:
+        pass
+
     # Set hostname for easier discovery
     try:
         wlan.config(dhcp_hostname="datalogger")
@@ -63,48 +70,61 @@ def connect_or_ap():
     credentials = load_credentials()
     
     if not credentials:
-        print("No WiFi credentials stored. Starting AP mode...")
+        print("[WiFi] No credentials stored. Starting AP mode...")
         return start_ap_mode()
     
-    print(f"Loaded {len(credentials)} stored network(s)")
+    print(f"[WiFi] Loaded {len(credentials)} stored network(s)")
     
-    # Scan available networks
-    print("Scanning for networks...")
-    try:
-        available_networks = wlan.scan()
-        available_ssids = [n[0].decode() for n in available_networks]
-        print(f"Found networks: {available_ssids}")
-    except Exception as e:
-        print(f"Scan error: {e}")
-        return start_ap_mode()
+    # Scan available networks (Retry up to 3 times)
+    available_ssids = []
+    for attempt in range(3):
+        print(f"[WiFi] Scanning for networks (attempt {attempt+1})...")
+        try:
+            available_networks = wlan.scan()
+            available_ssids = [n[0].decode() for n in available_networks]
+            if available_ssids:
+                break
+        except Exception as e:
+            print(f"[WiFi] Scan error: {e}")
+            time.sleep(1)
+            
+    print(f"[WiFi] Found networks: {available_ssids}")
     
-    # Try to connect to any known network
-    for cred in credentials:
+    # Try to connect to any known network, prioritized by what's visible
+    matched_creds = [c for c in credentials if c.get('ssid') in available_ssids]
+    
+    # If no match in scan, try all stored ones anyway (sometimes hidden or missed)
+    if not matched_creds:
+        matched_creds = credentials
+
+    for cred in matched_creds:
         ssid = cred.get('ssid', '')
         password = cred.get('password', '')
         
-        if ssid in available_ssids:
-            print(f"Found known network: {ssid}. Connecting...")
+        print(f"[WiFi] Attempting to connect to: {ssid}")
+        
+        try:
+            wlan.disconnect()
+            time.sleep_ms(200)
+            wlan.connect(ssid, password)
             
-            try:
-                wlan.connect(ssid, password)
-                
-                # Wait for connection (10 sec timeout)
-                for i in range(10):
-                    if wlan.isconnected():
-                        ip = wlan.ifconfig()[0]
-                        print(f"Connected to {ssid}! IP: {ip}")
-                        return "STA", ip
-                    time.sleep(1)
-                    print(f"Waiting... ({i+1}/10)")
-                
-                print(f"Failed to connect to {ssid}")
-                wlan.disconnect()
-            except Exception as e:
-                print(f"Connection error: {e}")
+            # Wait for connection (20 sec timeout for slow routers)
+            for i in range(20):
+                if wlan.isconnected():
+                    ip = wlan.ifconfig()[0]
+                    print(f"[WiFi] Connected to {ssid}! IP: {ip}")
+                    return "STA", ip
+                time.sleep(1)
+                if i % 5 == 4:
+                    print(f"[WiFi] Still connecting to {ssid}... ({i+1}/20)")
+            
+            print(f"[WiFi] Failed to connect to {ssid}")
+            wlan.disconnect()
+        except Exception as e:
+            print(f"[WiFi] Connection error: {e}")
     
     # No known network worked
-    print("No known networks available. Starting AP mode...")
+    print("[WiFi] All connection attempts failed. Falling back to AP mode...")
     return start_ap_mode()
 
 def start_ap_mode():

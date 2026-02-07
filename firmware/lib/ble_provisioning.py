@@ -147,44 +147,53 @@ class BLEProvisioning:
             if value == "SCAN":
                 self._scan_networks()
             elif value == "START_AP":
-                # This usually requires reboot or manual trigger in main
-                # We notify via status that we are moving to AP
+                # Notify via status that we are moving to AP
                 self.notify_wifi_status(False, "Setup", "192.168.4.1", "AP")
                 # Triggering AP mode via wlan
                 self._wlan.active(False)
+                import network
                 ap = network.WLAN(network.AP_IF)
                 ap.active(True)
-                # Note: wifi_manager usually handles specifics, this is generic fallback
+                ap.config(essid="Datalogger-Setup", password="password123", authmode=3)
             else:
                 # Try parsing as JSON: {ssid, password}
-                data = json.loads(value)
-                ssid = data.get("ssid")
-                password = data.get("password")
-                if ssid:
-                    print(f"[BLE] Configuring WiFi: {ssid}")
-                    if self.wifi_mgr:
-                        # Save to credentials file
-                        self.wifi_mgr.add_credential(ssid, password)
-                        # Attempt connection non-blocking for the IRQ handler 
-                        # (though IRQs in MicroPython can be messy with networking)
-                        # We'll do a quick blocking attempt here but ideally this is handled in main loop
-                        self._connect_to_wifi(ssid, password)
+                try:
+                    data = json.loads(value)
+                    ssid = data.get("ssid")
+                    password = data.get("password")
+                    if ssid:
+                        print(f"[BLE] Configuring WiFi: {ssid}")
+                        if self.wifi_mgr:
+                            # Save to credentials file
+                            self.wifi_mgr.add_credential(ssid, password)
+                            # Start non-blocking connection attempt
+                            import _thread
+                            _thread.start_new_thread(self._connect_to_wifi, (ssid, password))
+                except:
+                    print(f"[BLE] Unknown command or invalid JSON: {value}")
         except Exception as e:
             print(f"[BLE] Command error: {e}")
 
     def _connect_to_wifi(self, ssid, password):
+        print(f"[BLE] Attempting WiFi connection to {ssid}...")
         self._wlan.active(True)
         self._wlan.connect(ssid, password)
-        # Quick poll for 10s
-        for _ in range(10):
+        
+        # Poll for 20s (longer timeout for stability)
+        for i in range(20):
             if self._wlan.isconnected():
                 ip = self._wlan.ifconfig()[0]
                 print(f"[BLE] WiFi connected to {ssid}, IP: {ip}")
                 self.notify_wifi_status(True, ssid, ip, "STA")
                 return
             time.sleep(1)
-        self.notify_wifi_status(False, ssid, "0.0.0.0", "STA")
+            
         print(f"[BLE] WiFi connection timeout to {ssid}")
+        self.notify_wifi_status(False, ssid, "0.0.0.0", "STA")
+        
+        # If connection fails, we don't automatically fall back to AP here 
+        # to avoid disconnecting the user's BLE session abruptly if they want to retry.
+        # The user can manually trigger "START_AP" from the UI if needed.
 
     def update_device_info(self, gps_valid: bool, storage_pct: float):
         try:
@@ -209,4 +218,7 @@ class BLEProvisioning:
         self.ble.gatts_write(self._h_status, self._status_json)
         # Notify all connected centrals
         for conn_handle in self._connections:
-            self.ble.gatts_notify(conn_handle, self._h_status)
+            try:
+                self.ble.gatts_notify(conn_handle, self._h_status)
+            except:
+                pass

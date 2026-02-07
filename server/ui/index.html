@@ -13,76 +13,80 @@
 <body>
   <!-- Header -->
   <header class="header">
-    <div style="display: flex; align-items: center; gap: 1rem;">
-      <h1><i class="fas fa-motorcycle"></i> RaceSense</h1> <!-- Renamed from MotoLog -->
+    <div style="display: flex; align-items: center; gap: 1.5rem;">
+      <h1><i class="fas fa-bolt"></i> RaceSense</h1>
 
-      <!-- Connection Status -->
-      <div id="connectionStatus" class="status-badge offline">
-        <span class="status-dot"></span> <span id="connText">Offline</span>
-        <span id="versionWarning" class="badge"
-          style="display: none; background: var(--error); color: white; margin-left: 0.5rem; cursor: pointer;"
-          title="Firmware Mismatch: Update required">
-          ⚠️ UPDATE
-        </span>
-      </div>
-
-      <!-- Storage Indicator -->
-      <div id="storageIndicator" class="storage-indicator" style="display: none;" title="ESP32 Flash Storage">
-        <i class="fas fa-database" style="font-size: 0.75rem; margin-right: 0.25rem;"></i>
-        <div class="storage-bar">
-          <div id="storageBarFill" class="storage-bar-fill" style="width: 0%"></div>
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <!-- Connection Status -->
+        <div id="connectionStatus" class="status-badge offline">
+          <span class="status-dot"></span> <span id="connText">Offline</span>
+          <span id="versionWarning" class="badge"
+            style="display: none; background: var(--error); color: white; margin-left: 0.5rem; cursor: pointer;"
+            title="Firmware Mismatch: Update required">
+            ⚠️ UPDATE
+          </span>
         </div>
-        <span id="storageText" style="font-size: 0.7rem; min-width: 35px;">0%</span>
+
+        <!-- Storage Indicator -->
+        <div id="storageIndicator" class="storage-indicator" style="display: none;" title="ESP32 Flash Storage">
+          <i class="fas fa-database" style="font-size: 0.75rem;"></i>
+          <div class="storage-bar">
+            <div id="storageBarFill" class="storage-bar-fill" style="width: 0%"></div>
+          </div>
+          <span id="storageText" style="font-size: 0.7rem; min-width: 30px;">0%</span>
+        </div>
+
+        <!-- Active Track Status -->
+        <div id="activeTrackBadge" class="status-badge" style="display: none;">
+          <i class="fas fa-flag-checkered" style="font-size: 0.75rem; color: var(--success);"></i>
+          <span id="activeTrackName" style="font-size: 0.75rem; font-weight: 600;">No Track</span>
+          <span id="trackIdentifiedDot" class="status-dot"
+            style="margin-left: 0.25rem; background: var(--text-muted); width: 6px; height: 6px;"
+            title="Track Identified Status"></span>
+        </div>
       </div>
-
-      <!-- Active Track Status -->
-      <div id="activeTrackBadge" class="status-badge"
-        style="display: none; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--text-primary);">
-        <i class="fas fa-flag-checkered" style="font-size: 0.75rem; margin-right: 0.25rem; color: var(--success);"></i>
-        <span id="activeTrackName" style="font-size: 0.75rem; font-weight: 600;">No Track</span>
-        <span id="trackIdentifiedDot" class="status-dot"
-          style="margin-left: 0.5rem; background: var(--text-muted); width: 8px; height: 8px;"
-          title="Track Identified Status"></span>
-      </div>
-
-      <!-- Recording Status (Restored) -->
-
-
     </div>
 
     <div style="display: flex; gap: 0.5rem; margin-left: auto">
-
-
+      <!-- Recording Status Placeholder -->
     </div>
   </header>
 
-  <!-- Navigation (Restored) -->
+  <!-- Navigation -->
   <nav class="nav">
-    <button class="nav-btn active" data-view="home">Home</button>
-    <button class="nav-btn" data-view="tracks">Tracks</button>
-    <button class="nav-btn" data-view="sessions">Sessions</button>
-    <button class="nav-btn" data-view="process">Process</button>
-
-
-    <button class="nav-btn" data-view="settings">Settings</button>
+    <button class="nav-btn active" data-view="home"><i class="fas fa-home"></i> Home</button>
+    <button class="nav-btn" data-view="tracks"><i class="fas fa-map-marked-alt"></i> Tracks</button>
+    <button class="nav-btn" data-view="sessions"><i class="fas fa-history"></i> Sessions</button>
+    <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
+    <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
   </nav>
+
   <!-- Main Content -->
   <main class="main" id="mainContent">
     <!-- Home View -->
     <div class="view active" id="homeView">
-      <h2>Welcome to Datalogger Companion</h2>
+      <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
       <div class="quick-stats" id="quickStats">
         <div class="stat-card">
-          <div class="stat-value" id="totalTracks">-</div>
-          <div class="stat-label">Tracks</div>
+          <div class="stat-icon"><i class="fas fa-road"></i></div>
+          <div class="stat-info">
+            <div class="stat-label">Total Tracks</div>
+            <div class="stat-value" id="totalTracks">-</div>
+          </div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="totalSessions">-</div>
-          <div class="stat-label">Sessions</div>
+          <div class="stat-icon"><i class="fas fa-flag-checkered"></i></div>
+          <div class="stat-info">
+            <div class="stat-label">Total Sessions</div>
+            <div class="stat-value" id="totalSessions">-</div>
+          </div>
         </div>
         <div class="stat-card">
-          <div class="stat-value" id="recentSession">-</div>
-          <div class="stat-label">Last Session</div>
+          <div class="stat-icon"><i class="fas fa-clock"></i></div>
+          <div class="stat-info">
+            <div class="stat-label">Last Session</div>
+            <div class="stat-value" id="recentSession" style="font-size: 1.25rem;">-</div>
+          </div>
         </div>
       </div>
 
@@ -112,10 +116,10 @@
       <!-- Tab Bar -->
       <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
         <button class="session-tab active" data-tab="sessions" onclick="switchSessionTab('sessions')">
-          📋 Sessions
+          <i class="fas fa-list"></i> Sessions
         </button>
         <button class="session-tab" data-tab="trackdays" onclick="switchSessionTab('trackdays')">
-          🏁 Trackdays
+          <i class="fas fa-flag-checkered"></i> Trackdays
         </button>
       </div>
 
@@ -201,6 +205,19 @@
             <label>Provision via Bluetooth</label>
             <div
               style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
+              
+              <!-- Auto-Share Toggle -->
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div style="display: flex; flex-direction: column;">
+                  <span style="font-size: 0.85rem; font-weight: 600;">Auto-Share WiFi</span>
+                  <span style="font-size: 0.7rem; color: var(--text-muted);">Automatically setup known networks</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="autoShareWifiToggle" onchange="toggleAutoShareWifi()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
               <div id="bleSupportWarning"
                 style="display: none; color: var(--error); font-size: 0.8rem; margin-bottom: 0.5rem;">
                 <i class="fas fa-exclamation-triangle"></i> Web Bluetooth not supported in this browser (Use Chrome).
@@ -537,62 +554,61 @@
   <!-- Playback Modal -->
   <div class="modal" id="playbackModal">
     <div class="modal-content" style="
-          max-width: 1100px;
+          max-width: 1200px;
           width: 95%;
           height: 90vh;
           display: flex;
           flex-direction: column;
-          background: #121212;
+          background: #080808;
+          border: 1px solid rgba(255,255,255,0.1);
         ">
       <span class="modal-close" onclick="closePlaybackModal()">&times;</span>
-      <h3 style="margin-bottom: 0.5rem; color: var(--primary)">
-        Live Telemetry Playback
-      </h3>
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0; color: var(--primary); display: flex; align-items: center; gap: 0.75rem;">
+          <i class="fas fa-play-circle"></i> Telemetry Analysis
+        </h3>
+        <div id="pbLapNumber" style="font-weight: 700; color: var(--text-dim); background: rgba(255,255,255,0.05); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">LAP -/-</div>
+      </div>
 
       <!-- Top Controls -->
       <div class="playback-controls" style="
             display: flex;
             gap: 1rem;
             align-items: center;
-            background: #222;
-            padding: 10px;
-            border-radius: 4px;
             margin-bottom: 1rem;
-            border: 1px solid #333;
           ">
-        <button class="btn btn-primary" id="pbPlayPause" onclick="togglePlayback()"
-          style="width: 40px; justify-content: center">
-          ▶
+        <button class="btn" id="pbPlayPause" onclick="togglePlayback()"
+          style="width: 44px; height: 44px; padding: 0; border-radius: 50%;">
+          <i class="fas fa-play"></i>
         </button>
-        <span id="pbTime" style="font-family: monospace; font-size: 1.2rem; color: #fff">00:00.00</span>
-        <input type="range" id="pbSeek" min="0" max="100" value="0" style="flex: 1"
+        <span id="pbTime" style="font-family: 'JetBrains Mono', monospace; font-size: 1.25rem; color: #fff; min-width: 100px;">00:00.00</span>
+        <input type="range" id="pbSeek" min="0" max="100" value="0" style="flex: 1; accent-color: var(--primary);"
           oninput="seekPlayback(this.value)" />
-        <select id="pbLapSelect" class="filter-select" onchange="jumpToLap(this.value)" style="min-width: 100px">
+        <select id="pbLapSelect" class="filter-select" onchange="jumpToLap(this.value)" style="min-width: 160px; padding: 0.5rem;">
           <option value="all">Session Overview</option>
         </select>
         <button class="btn secondary" onclick="nextLapPlay()">
-          Next Lap &gt;&gt;
+          Next Lap <i class="fas fa-forward"></i>
         </button>
       </div>
 
       <!-- Dashboard Grid -->
       <div style="
             display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 1rem;
+            grid-template-columns: 1fr 320px;
+            gap: 1.25rem;
             flex: 1;
             min-height: 0;
           ">
         <!-- Map Container -->
-        <div style="
-              background: #000;
-              border: 1px solid #333;
-              border-radius: 8px;
+        <div class="glass" style="
               position: relative;
               display: flex;
               align-items: center;
               justify-content: center;
               overflow: hidden;
+              border-radius: 12px;
             ">
           <canvas id="pbTrackCanvas" style="
                 position: absolute;
@@ -603,272 +619,91 @@
               "></canvas>
 
           <!-- Map Layer Controls -->
-          <div style="
-                position: absolute;
-                top: 10px;
-                right: 10px;
-                background: rgba(0, 0, 0, 0.7);
-                padding: 5px;
-                border-radius: 4px;
-                font-size: 0.8rem;
-              ">
-            <label style="display: block; color: #ccc"><input type="radio" name="pbMapMode" value="speed" checked
-                onchange="updateHeatmapMode()" />
-              Speed Heatmap</label>
-            <label style="display: block; color: #ccc"><input type="radio" name="pbMapMode" value="accel"
-                onchange="updateHeatmapMode()" />
-              Accel/Brake</label>
-            <label style="display: block; color: #ccc"><input type="radio" name="pbMapMode" value="clean"
-                onchange="updateHeatmapMode()" />
-              Clean Path</label>
+          <div class="map-controls">
+            <label><input type="radio" name="pbMapMode" value="speed" checked onchange="updateHeatmapMode()" /> Speed</label>
+            <label><input type="radio" name="pbMapMode" value="accel" onchange="updateHeatmapMode()" /> G-Force</label>
+            <label><input type="radio" name="pbMapMode" value="clean" onchange="updateHeatmapMode()" /> Line</label>
           </div>
         </div>
 
-        <!-- Widgets Column (Racing Focused) -->
+        <!-- Widgets Column -->
         <div style="
               display: flex;
               flex-direction: column;
-              gap: 0.75rem;
+              gap: 1rem;
               overflow-y: auto;
               padding-right: 5px;
             ">
           <!-- LAP TIME + DELTA -->
-          <div class="card"
-            style="text-align: center; padding: 1rem; background: #1e1e1e; border-left: 3px solid var(--primary);">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <div class="stat-label">LAP</div>
-              <div id="pbLapNumber" style="font-size: 0.9rem; color: #888;">-/-</div>
+          <div class="card" style="padding: 1.25rem; border-left: 4px solid var(--primary);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <div class="stat-label">Lap Time</div>
+              <i class="fas fa-stopwatch" style="color: var(--primary);"></i>
             </div>
-            <div style="
-                  font-size: 2.2rem;
-                  font-weight: bold;
-                  font-family: monospace;
-                  color: #fff;
-                  margin: 5px 0;
-                ">
-              <span id="pbLapTime">--:--.---</span>
-            </div>
+            <div id="pbLapTime" style="font-size: 2.5rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; letter-spacing: -1px;">--:--.---</div>
+            
             <!-- Delta Bar -->
-            <div id="pbDeltaBar" style="
-                  height: 28px;
-                  background: #2a2a2a;
-                  border-radius: 4px;
-                  margin-top: 8px;
-                  position: relative;
-                  overflow: hidden;
-                  border: 1px solid #444;
-                ">
-              <!-- Center line -->
-              <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: #555; z-index: 1;">
-              </div>
-              <!-- Delta fill -->
-              <div id="pbDeltaFill" style="
-                    position: absolute;
-                    top: 2px;
-                    bottom: 2px;
-                    width: 0;
-                    left: 50%;
-                    background: #4caf50;
-                    border-radius: 2px;
-                    transition: all 0.1s ease;
-                  "></div>
-              <!-- Delta text -->
-              <span id="pbDeltaText" style="
-                    position: absolute;
-                    width: 100%;
-                    text-align: center;
-                    line-height: 28px;
-                    font-weight: bold;
-                    font-family: monospace;
-                    font-size: 1rem;
-                    color: #fff;
-                    z-index: 2;
-                    text-shadow: 1px 1px 2px #000;
-                  ">+0.0s</span>
-            </div>
-            <div style="
-                  display: flex;
-                  justify-content: space-between;
-                  font-size: 0.65rem;
-                  color: #555;
-                  margin-top: 3px;
-                ">
-              <span>-3s AHEAD</span>
-              <span>BEHIND +3s</span>
+            <div id="pbDeltaBar" style="height: 32px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-top: 1rem; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+              <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.2); z-index: 1;"></div>
+              <div id="pbDeltaFill" style="position: absolute; top: 0; bottom: 0; width: 0; left: 50%; background: var(--success); transition: all 0.1s ease;"></div>
+              <span id="pbDeltaText" style="position: absolute; width: 100%; text-align: center; line-height: 32px; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; z-index: 2; text-shadow: 0 1px 4px rgba(0,0,0,0.5);">+0.000s</span>
             </div>
           </div>
 
           <!-- SECTOR TIMES -->
-          <div class="card" style="padding: 0.75rem; background: #1e1e1e;">
-            <div style="
-                  display: flex;
-                  justify-content: space-around;
-                  text-align: center;
-                  gap: 0.5rem;
-                ">
-              <div id="pbS1" class="sector-box" style="
-                    flex: 1;
-                    padding: 8px 4px;
-                    background: #2a2a2a;
-                    border-radius: 4px;
-                    border: 2px solid transparent;
-                  ">
-                <div style="font-size: 0.7rem; color: #888;">S1</div>
-                <div id="pbS1Time" style="
-                      font-weight: bold;
-                      font-family: monospace;
-                      font-size: 1.1rem;
-                    ">
-                  --.-
-                </div>
+          <div class="card" style="padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; gap: 0.5rem;">
+              <div id="pbS1" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
+                <div class="stat-label" style="font-size: 0.6rem;">SEC 1</div>
+                <div id="pbS1Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">--.-</div>
               </div>
-              <div id="pbS2" class="sector-box" style="
-                    flex: 1;
-                    padding: 8px 4px;
-                    background: #2a2a2a;
-                    border-radius: 4px;
-                    border: 2px solid transparent;
-                  ">
-                <div style="font-size: 0.7rem; color: #888;">S2</div>
-                <div id="pbS2Time" style="
-                      font-weight: bold;
-                      font-family: monospace;
-                      font-size: 1.1rem;
-                    ">
-                  --.-
-                </div>
+              <div id="pbS2" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
+                <div class="stat-label" style="font-size: 0.6rem;">SEC 2</div>
+                <div id="pbS2Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">--.-</div>
               </div>
-              <div id="pbS3" class="sector-box" style="
-                    flex: 1;
-                    padding: 8px 4px;
-                    background: #2a2a2a;
-                    border-radius: 4px;
-                    border: 2px solid transparent;
-                  ">
-                <div style="font-size: 0.7rem; color: #888;">S3</div>
-                <div id="pbS3Time" style="
-                      font-weight: bold;
-                      font-family: monospace;
-                      font-size: 1.1rem;
-                    ">
-                  --.-
-                </div>
+              <div id="pbS3" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
+                <div class="stat-label" style="font-size: 0.6rem;">SEC 3</div>
+                <div id="pbS3Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">--.-</div>
               </div>
             </div>
           </div>
 
           <!-- Speed -->
-          <div class="card" style="text-align: center; padding: 0.75rem; background: #1e1e1e">
-            <div class="stat-label">SPEED</div>
-            <div style="
-                  font-size: 2.5rem;
-                  font-weight: bold;
-                  color: var(--primary);
-                  font-family: monospace;
-                ">
-              <span id="pbSpeed">0</span><span style="font-size: 1rem; color: #888; margin-left: 5px">km/h</span>
+          <div class="card" style="padding: 1.25rem;">
+            <div class="stat-label">Current Speed</div>
+            <div style="display: flex; align-items: baseline; gap: 0.5rem; margin: 0.25rem 0;">
+              <span id="pbSpeed" style="font-size: 2.5rem; font-weight: 800; color: var(--primary); font-family: 'JetBrains Mono', monospace;">0</span>
+              <span style="font-size: 0.9rem; color: var(--text-dim); font-weight: 600;">KM/H</span>
             </div>
-            <div style="
-                  height: 6px;
-                  background: #333;
-                  border-radius: 4px;
-                  margin-top: 8px;
-                  overflow: hidden;
-                ">
-              <div id="pbSpeedBar" style="
-                    height: 100%;
-                    width: 0%;
-                    background: linear-gradient(90deg, var(--primary), #fff);
-                  "></div>
+            <div style="height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+              <div id="pbSpeedBar" style="height: 100%; width: 0%; background: var(--primary); box-shadow: 0 0 10px var(--primary-glow);"></div>
             </div>
           </div>
 
-          <!-- Lean Angle (Compact) -->
-          <div class="card" style="text-align: center; padding: 0.75rem; background: #1e1e1e">
-            <div class="stat-label">LEAN</div>
-            <div style="display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 8px;">
-              <div style="position: relative; width: 80px; height: 60px;">
-                <!-- Horizon -->
-                <div style="
-                      position: absolute;
-                      width: 100%;
-                      top: 50%;
-                      height: 1px;
-                      background: #444;
-                    "></div>
-                <!-- Bike -->
-                <div id="pbLeanBike" style="
-                      position: absolute;
-                      left: 50%;
-                      top: 10px;
-                      width: 4px;
-                      height: 45px;
-                      background: var(--secondary);
-                      transform-origin: top center;
-                      transition: transform 0.05s linear;
-                      box-shadow: 0 0 8px var(--secondary);
-                    "></div>
+          <!-- Lean Angle -->
+          <div class="card" style="padding: 1.25rem;">
+            <div class="stat-label">Lean Angle</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
+              <div style="position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
+                <div style="position: absolute; width: 100%; height: 1px; background: rgba(255,255,255,0.1);"></div>
+                <div id="pbLeanBike" style="width: 3px; height: 40px; background: var(--primary); border-radius: 4px; transform-origin: center; transition: transform 0.05s linear; box-shadow: 0 0 15px var(--primary-glow);"></div>
               </div>
-              <div>
-                <div style="
-                      font-size: 2rem;
-                      font-weight: bold;
-                      font-family: monospace;
-                    ">
-                  <span id="pbLean">0</span>&deg;
-                </div>
-              </div>
+              <div style="font-size: 2rem; font-weight: 800; font-family: 'JetBrains Mono', monospace;"><span id="pbLean">0</span>°</div>
             </div>
           </div>
 
-          <!-- G-Force (Compact) -->
-          <div class="card" style="
-                text-align: center;
-                padding: 0.75rem;
-                background: #1e1e1e;
-              ">
-            <div class="stat-label">G-FORCE</div>
-            <div style="display: flex; align-items: center; justify-content: center; gap: 1rem; margin-top: 8px;">
-              <div style="
-                    position: relative;
-                    width: 100px;
-                    height: 100px;
-                    border: 1px solid #444;
-                    border-radius: 50%;
-                    background: radial-gradient(circle, #222 0%, #111 100%);
-                  ">
-                <div style="
-                      position: absolute;
-                      left: 50%;
-                      top: 0;
-                      bottom: 0;
-                      width: 1px;
-                      background: #333;
-                    "></div>
-                <div style="
-                      position: absolute;
-                      top: 50%;
-                      left: 0;
-                      right: 0;
-                      height: 1px;
-                      background: #333;
-                    "></div>
-                <!-- The Dot -->
-                <div id="pbGDot" style="
-                      position: absolute;
-                      top: 50%;
-                      left: 50%;
-                      width: 10px;
-                      height: 10px;
-                      background: var(--error);
-                      border-radius: 50%;
-                      transform: translate(-50%, -50%);
-                      box-shadow: 0 0 5px var(--error);
-                    "></div>
+          <!-- G-Force -->
+          <div class="card" style="padding: 1.25rem;">
+            <div class="stat-label">Acceleration G's</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
+              <div style="position: relative; width: 80px; height: 80px; border: 1px solid rgba(255,255,255,0.1); border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.02) 0%, transparent 100%);">
+                <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.05);"></div>
+                <div style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.05);"></div>
+                <div id="pbGDot" style="position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; background: var(--error); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 10px var(--error);"></div>
               </div>
-              <div style="font-family: monospace; font-size: 0.85rem; color: #aaa; text-align: left;">
-                <div>Lat: <span id="pbGY">0.0</span>G</div>
-                <div>Long: <span id="pbGX">0.0</span>G</div>
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim);">
+                <div style="margin-bottom: 4px;">LAT <span id="pbGY" style="color: #fff; font-weight: 700;">0.0</span>G</div>
+                <div>LON <span id="pbGX" style="color: #fff; font-weight: 700;">0.0</span>G</div>
               </div>
             </div>
           </div>

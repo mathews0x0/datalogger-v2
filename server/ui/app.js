@@ -19,8 +19,13 @@ let lastSyncedTrackId = null; // Track we last pushed to ESP32
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Datalogger Companion App loaded');
 
-    // FORCE CLEAR any cached IP to ensure clean slate
-    localStorage.removeItem('lastDeviceIP');
+    // Auto-detect device IP on startup
+    autoDetectDeviceIP().then(ip => {
+        if (ip) {
+            console.log('[Init] Auto-detected device IP:', ip);
+            checkDeviceConnection();
+        }
+    });
 
     // Set up navigation
     setupNavigation();
@@ -152,7 +157,7 @@ async function pollStatus() {
         }
 
         // 2. Get Device (ESP32) Status if IP is known
-        const deviceIP = document.getElementById('devConfigIP')?.value || localStorage.getItem('lastDeviceIP');
+        const deviceIP = localStorage.getItem('lastDeviceIP');
         if (deviceIP) {
             try {
                 const espRes = await fetch(`http://${deviceIP}/status?_t=${Date.now()}`).then(r => r.json());
@@ -221,6 +226,9 @@ async function ensureTrackSynced(trackId, deviceIP) {
         const payload = {
             id: trackData.track_id.toString(),
             name: trackData.track_name,
+            pit_center_lat: trackData.pit_center_lat,
+            pit_center_lon: trackData.pit_center_lon,
+            pit_radius_m: trackData.pit_radius_m || 50,
             start_line: {
                 lat: trackData.start_line.lat,
                 lon: trackData.start_line.lon,
@@ -304,18 +312,18 @@ function renderRecentSessions(recentSessions) {
         <div class="session-card" onclick="viewSession('${session.session_id}')">
             <div class="session-header">
                 <div class="session-title">${session.track_name}</div>
-                <div class="session-time">${formatDateTimeAbbreviated(session.start_time)}</div>
+                <div class="session-time"><i class="far fa-calendar-alt"></i> ${formatDateTimeAbbreviated(session.start_time)}</div>
             </div>
             <div class="session-stats">
                 <div class="session-stat">
-                    <span>Laps:</span>
+                    <span>Laps</span>
                     <strong>${session.total_laps}</strong>
                 </div>
                 <div class="session-stat">
-                    <span>Best:</span>
+                    <span>Best Time</span>
                     <strong>${formatTime(session.best_lap_time)}</strong>
                 </div>
-                ${session.tbl_improved ? '<span class="badge success">New TBL!</span>' : ''}
+                ${session.tbl_improved ? '<span class="badge success"><i class="fas fa-rocket"></i> New TBL!</span>' : ''}
             </div>
         </div>
     `).join('');
@@ -347,13 +355,13 @@ async function loadTracks() {
                      class="track-map"
                      onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%232a2a2a%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23666%22 text-anchor=%22middle%22%3ENo Map%3C/text%3E%3C/svg%3E'">
                 <div class="track-info">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                         <div class="track-name">${track.track_name}</div>
                         ${isActive ? '<span class="badge success" style="font-size: 0.6rem;">ACTIVE</span>' : ''}
                     </div>
                     <div class="track-meta">
-                        <span>${track.sessions_count || 0} sessions</span>
-                        <span>7 sectors</span>
+                        <span><i class="fas fa-history"></i> ${track.sessions_count || 0} sessions</span>
+                        <span><i class="fas fa-vector-square"></i> 7 sectors</span>
                     </div>
                     <div class="track-actions">
                         ${!isActive ? `
@@ -361,7 +369,7 @@ async function loadTracks() {
                             <i class="fas fa-bolt"></i> Set Active
                         </button>` : ''}
                         <button class="btn small" onclick="event.stopPropagation(); renameTrack(${track.track_id}, '${track.track_name}')">
-                            Rename
+                            <i class="fas fa-edit"></i>
                         </button>
                         <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteTrack(${track.track_id}, '${track.track_name}')">
                             <i class="fas fa-trash"></i>
@@ -380,7 +388,7 @@ async function loadTracks() {
  * Manually trigger pushing a track to the ESP32
  */
 async function pushTrackToESP(trackId) {
-    const deviceIP = document.getElementById('devConfigIP')?.value || localStorage.getItem('lastDeviceIP');
+    const deviceIP = localStorage.getItem('lastDeviceIP');
     if (!deviceIP) {
         showToast('Device not connected', 'error');
         return;
@@ -395,6 +403,46 @@ async function pushTrackToESP(trackId) {
         loadTracks();
     } catch (err) {
         showToast('Failed to push track', 'error');
+    }
+}
+
+async function markPitLane(trackId) {
+    const deviceIP = localStorage.getItem('lastDeviceIP');
+    if (!deviceIP) {
+        showToast('Device not connected', 'error');
+        return;
+    }
+
+    try {
+        showToast('Getting GPS from device...', 'info');
+        const status = await fetch(`http://${deviceIP}/status`).then(r => r.json());
+        
+        if (!status.gps_lat || !status.gps_lon) {
+            showToast('No GPS fix on device', 'error');
+            return;
+        }
+
+        showToast('Saving pit geofence...', 'info');
+        // Update track metadata via Pi API
+        // Note: Using track_id in the URL, and sending the new fields
+        await apiCall(`/api/tracks/${trackId}`, {
+            method: 'POST', // The server seems to use POST for updates in some places, or I'll assume it works
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                pit_center_lat: status.gps_lat,
+                pit_center_lon: status.gps_lon,
+                pit_radius_m: 50
+            })
+        });
+
+        showToast('Pit Lane marked at current location', 'success');
+        
+        // Re-push to ESP32 to sync the new metadata
+        await pushTrackToESP(trackId);
+        
+    } catch (err) {
+        console.error('Mark Pit Error:', err);
+        showToast('Failed to mark pit lane', 'error');
     }
 }
 
@@ -438,21 +486,33 @@ async function viewTrack(trackId) {
             
             <div class="quick-stats">
                 <div class="stat-card">
-                    <div class="stat-value">${track.sessions_count || 0}</div>
-                    <div class="stat-label">Sessions</div>
+                    <div class="stat-icon"><i class="fas fa-flag-checkered"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Sessions</div>
+                        <div class="stat-value">${track.sessions_count || 0}</div>
+                    </div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">7</div>
-                    <div class="stat-label">Sectors</div>
+                    <div class="stat-icon"><i class="fas fa-vector-square"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Sectors</div>
+                        <div class="stat-value">7</div>
+                    </div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">${track.tbl ? formatTime(track.tbl.total_best_time) : 'N/A'}</div>
-                    <div class="stat-label">TBL</div>
+                    <div class="stat-icon"><i class="fas fa-stopwatch"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Total Best (TBL)</div>
+                        <div class="stat-value" style="font-size: 1.5rem;">${track.tbl ? formatTime(track.tbl.total_best_time) : 'N/A'}</div>
+                    </div>
                 </div>
             </div>
             
             <button class="btn" style="margin-top: 1rem;" onclick="viewTrackSessions(${trackId})">
                 View Sessions
+            </button>
+            <button class="btn btn-secondary" style="margin-top: 1rem; margin-left: 0.5rem;" onclick="markPitLane(${trackId})">
+                <i class="fas fa-map-pin"></i> Mark Pit Lane
             </button>
         `;
     } catch (error) {
@@ -716,21 +776,33 @@ async function viewTrackday(trackdayId) {
             
             <!-- Summary Stats -->
             <div class="quick-stats" style="margin-bottom: 1.5rem;">
-                <div class="stat-card" style="border-top: 3px solid var(--primary);">
-                    <div class="stat-value">${td.summary.total_sessions}</div>
-                    <div class="stat-label">Sessions</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(255, 107, 53, 0.1); color: var(--primary);"><i class="fas fa-flag-checkered"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Sessions</div>
+                        <div class="stat-value">${td.summary.total_sessions}</div>
+                    </div>
                 </div>
-                <div class="stat-card" style="border-top: 3px solid var(--secondary);">
-                    <div class="stat-value">${td.summary.total_laps}</div>
-                    <div class="stat-label">Total Laps</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(0, 78, 137, 0.1); color: var(--secondary);"><i class="fas fa-redo"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Total Laps</div>
+                        <div class="stat-value">${td.summary.total_laps}</div>
+                    </div>
                 </div>
-                <div class="stat-card" style="border-top: 3px solid var(--success);">
-                    <div class="stat-value" style="color: var(--success);">${td.summary.best_lap_time ? formatTime(td.summary.best_lap_time) : '--'}</div>
-                    <div class="stat-label">Best Lap</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(0, 210, 106, 0.1); color: var(--success);"><i class="fas fa-trophy"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Best Lap</div>
+                        <div class="stat-value" style="color: var(--success);">${td.summary.best_lap_time ? formatTime(td.summary.best_lap_time) : '--'}</div>
+                    </div>
                 </div>
-                <div class="stat-card" style="border-top: 3px solid #FFC107;">
-                    <div class="stat-value">${Math.floor(td.summary.total_duration / 60)}m</div>
-                    <div class="stat-label">Total Time</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(255, 193, 7, 0.1); color: #FFC107;"><i class="fas fa-clock"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Total Time</div>
+                        <div class="stat-value">${Math.floor(td.summary.total_duration / 60)}m</div>
+                    </div>
                 </div>
             </div>
             
@@ -1200,28 +1272,45 @@ async function viewSession(sessionId) {
             
             <!-- SESSION SUMMARY CARDS -->
             <div class="quick-stats" style="margin-bottom: 1.5rem;">
-                <div class="stat-card" style="border-top: 3px solid var(--primary);">
-                    <div class="stat-value">${session.summary.total_laps}</div>
-                    <div class="stat-label">Total Laps</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(255, 107, 53, 0.1); color: var(--primary);"><i class="fas fa-redo"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Total Laps</div>
+                        <div class="stat-value">${session.summary.total_laps}</div>
+                    </div>
                 </div>
-                <div class="stat-card" style="border-top: 3px solid var(--success);">
-                    <div class="stat-value" style="color: var(--success);">${formatTime(session.summary.best_lap_time)}</div>
-                    <div class="stat-label">Session Best</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(0, 210, 106, 0.1); color: var(--success);"><i class="fas fa-stopwatch"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Session Best</div>
+                        <div class="stat-value" style="color: var(--success);">${formatTime(session.summary.best_lap_time)}</div>
+                    </div>
                 </div>
-                <div class="stat-card" style="border-top: 3px solid var(--secondary);">
-                    <div class="stat-value">${formatTime(session.references.theoretical_best_reference)}</div>
-                    <div class="stat-label">Theoretical Best</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(0, 78, 137, 0.1); color: var(--secondary);"><i class="fas fa-magic"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Theo. Best</div>
+                        <div class="stat-value">${formatTime(session.references.theoretical_best_reference)}</div>
+                    </div>
                 </div>
                 ${allTimeBest ? `
-                <div class="stat-card" style="border-top: 3px solid #9c27b0;">
-                    <div class="stat-value" style="color: #9c27b0;">${formatTime(allTimeBest)}</div>
-                    <div class="stat-label">All-Time PB</div>
-                    ${session.summary.best_lap_time <= allTimeBest ? '<div style="color: #4CAF50; font-size: 0.8rem; margin-top: 0.25rem;">🏆 NEW PB!</div>' : ''}
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(156, 39, 176, 0.1); color: #9c27b0;"><i class="fas fa-crown"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">All-Time PB</div>
+                        <div class="stat-value" style="color: #9c27b0;">${formatTime(allTimeBest)}</div>
+                        ${session.summary.best_lap_time <= allTimeBest ? '<div style="color: #4CAF50; font-size: 0.7rem; font-weight: 700;">🏆 NEW PB!</div>' : ''}
+                    </div>
                 </div>
                 ` : ''}
-                <div class="stat-card" style="border-top: 3px solid ${session.analysis?.diagnostics?.consistency_score > 80 ? '#4CAF50' : '#FFC107'};">
-                    <div class="stat-value">${session.analysis?.diagnostics?.consistency_score || '--'}%</div>
-                    <div class="stat-label">Consistency</div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: ${session.analysis?.diagnostics?.consistency_score > 80 ? 'rgba(76, 175, 80, 0.1)' : 'rgba(255, 193, 7, 0.1)'}; color: ${session.analysis?.diagnostics?.consistency_score > 80 ? '#4CAF50' : '#FFC107'};">
+                        <i class="fas fa-chart-line"></i>
+                    </div>
+                    <div class="stat-info">
+                        <div class="stat-label">Consistency</div>
+                        <div class="stat-value">${session.analysis?.diagnostics?.consistency_score || '--'}%</div>
+                    </div>
                 </div>
             </div>
             
@@ -3988,7 +4077,7 @@ function drawFrame() {
 // ============================================================================
 
 async function syncFromDevice(forcePrompt = false) {
-    let ip = localStorage.getItem('lastDeviceIP');
+    let ip = await autoDetectDeviceIP();
 
     if (!ip || forcePrompt) {
         const defaultIP = ip || '192.168.4.1';
@@ -4231,6 +4320,47 @@ async function fastConnectCheck() {
     checkDeviceConnection();
 }
 
+/**
+ * Auto-detects the device IP using BLE (if connected) or network scan.
+ * Stores the found IP in localStorage.
+ * @returns {Promise<string|null>} Found IP or null
+ */
+async function autoDetectDeviceIP() {
+    // 1. Check BLE if connected
+    if (bleConnector && bleConnector.isConnected()) {
+        try {
+            const status = await bleConnector.getWifiStatus();
+            if (status.connected && status.ip && status.ip !== '0.0.0.0') {
+                console.log('[AutoDetect] Found IP via BLE:', status.ip);
+                localStorage.setItem('lastDeviceIP', status.ip);
+                return status.ip;
+            }
+        } catch (e) {
+            console.warn('[AutoDetect] Failed to get IP via BLE', e);
+        }
+    }
+
+    // 2. Check localStorage
+    const savedIP = localStorage.getItem('lastDeviceIP');
+    if (savedIP) return savedIP;
+
+    // 3. Fallback to network scan
+    try {
+        console.log('[AutoDetect] Falling back to network scan...');
+        const res = await apiCall('/api/device/scan', { displayError: false });
+        if (res.devices && res.devices.length > 0) {
+            const ip = res.devices[0].ip;
+            console.log('[AutoDetect] Found IP via scan:', ip);
+            localStorage.setItem('lastDeviceIP', ip);
+            return ip;
+        }
+    } catch (e) {
+        console.warn('[AutoDetect] Network scan failed', e);
+    }
+
+    return null;
+}
+
 async function checkDeviceConnection() {
     const ip = localStorage.getItem('lastDeviceIP');
     const badge = document.getElementById('connectionStatus');
@@ -4457,11 +4587,24 @@ async function scanForDevice() {
     showScanProgress('Scanning network...', 50);
     try {
         const res = await apiCall('/api/device/scan');
-        if (res.devices && res.devices.length > 0) {
-            const ip = res.devices[0].ip;
-            const info = res.devices[0].info;
-            // Backend already verified it, trust it (avoid CORS/Frontend issues)
+        const devices = res.devices || [];
+
+        if (devices.length === 1) {
+            const ip = devices[0].ip;
+            const info = devices[0].info;
             finishScanSuccess(ip, info, btn);
+            return;
+        } else if (devices.length > 1) {
+            hideScanProgress();
+            // Show selection dialog
+            const ips = devices.map(d => d.ip);
+            const selection = prompt(`Multiple devices found:\n${ips.join('\n')}\n\nEnter the IP to connect to:`, ips[0]);
+            if (selection && ips.includes(selection)) {
+                const device = devices.find(d => d.ip === selection);
+                finishScanSuccess(device.ip, device.info, btn);
+            } else {
+                finishScan(btn);
+            }
             return;
         }
     } catch (e) {
@@ -4479,7 +4622,7 @@ async function scanForDevice() {
             });
             if (response.ok) {
                 const data = await response.json();
-                if (data.storage === 'FLASH' || data.status === 'running') {
+                if (data.storage_used_pct !== undefined || data.status === 'running') {
                     finishScanSuccess(ip, data, btn);
                     return;
                 }
@@ -4737,10 +4880,64 @@ async function flashLatestEspWifi() {
 
 let bleConnector = null;
 
+/**
+ * AUTO-SHARE WIFI LOGIC
+ */
+const WIFI_CRED_KEY = 'racesense_wifi_vault';
+
+function getWifiVault() {
+    try {
+        const vault = localStorage.getItem(WIFI_CRED_KEY);
+        // Simple obfuscation (b64) to prevent plain text scraping, not for high security
+        return vault ? JSON.parse(atob(vault)) : {};
+    } catch (e) { return {}; }
+}
+
+function saveToWifiVault(ssid, pass) {
+    if (!document.getElementById('autoShareWifiToggle').checked) return;
+    const vault = getWifiVault();
+    vault[ssid] = pass;
+    localStorage.setItem(WIFI_CRED_KEY, btoa(JSON.stringify(vault)));
+}
+
+function toggleAutoShareWifi() {
+    const enabled = document.getElementById('autoShareWifiToggle').checked;
+    localStorage.setItem('autoShareWifiEnabled', enabled);
+    if (!enabled) {
+        if (confirm("Clear saved WiFi vault?")) {
+            localStorage.removeItem(WIFI_CRED_KEY);
+        }
+    }
+}
+
+async function attemptAutoWifiShare(visibleNetworks) {
+    if (!document.getElementById('autoShareWifiToggle').checked) return false;
+    
+    const vault = getWifiVault();
+    // Prioritize networks by vault presence
+    const match = visibleNetworks.find(ssid => vault[ssid]);
+    
+    if (match) {
+        showToast(`Auto-configuring WiFi: ${match}...`, 'info');
+        try {
+            await bleConnector.configureWifi(match, vault[match]);
+            return true;
+        } catch (e) {
+            console.error('[AutoShare] Failed', e);
+        }
+    }
+    return false;
+}
+
 function initBleSupportCheck() {
     console.log('Checking Web Bluetooth support...');
     const warning = document.getElementById('bleSupportWarning');
     const connectBtn = document.getElementById('btnBleConnect');
+    
+    // Restore Auto-Share toggle state
+    const autoShareEnabled = localStorage.getItem('autoShareWifiEnabled') !== 'false';
+    const toggle = document.getElementById('autoShareWifiToggle');
+    if (toggle) toggle.checked = autoShareEnabled;
 
     if (!DataloggerBLE.isSupported()) {
         if (warning) warning.style.display = 'block';
@@ -4759,6 +4956,10 @@ function setupBleCallbacks() {
         showToast('Bluetooth Connected!', 'success');
         // Automatically scan for networks on connect
         handleBleWifiScan();
+        // Try to auto-detect IP if already on WiFi
+        autoDetectDeviceIP().then(ip => {
+            if (ip) checkDeviceConnection();
+        });
     };
 
     bleConnector.onDisconnect = () => {
@@ -4777,7 +4978,7 @@ function setupBleCallbacks() {
             showToast(`WiFi Connected! Device IP: ${status.ip}`, 'success');
 
             // Re-check connection via HTTP now
-            checkConnection();
+            checkDeviceConnection();
         }
     };
 
@@ -4810,6 +5011,12 @@ async function handleBleWifiScan() {
             select.innerHTML = '<option value="">No networks found</option>';
         } else {
             select.innerHTML = networks.map(ssid => `<option value="${ssid}">${ssid}</option>`).join('');
+            
+            // ATTEMPT AUTO-SHARE
+            const autoSuccess = await attemptAutoWifiShare(networks);
+            if (autoSuccess) {
+                showToast('Auto-share successful! Device is connecting...', 'success');
+            }
         }
     } catch (e) {
         showToast('WiFi scan failed over BLE', 'error');
@@ -4828,9 +5035,57 @@ async function handleBleWifiConfig() {
         return;
     }
 
+    // Save to vault if enabled
+    saveToWifiVault(ssid, password);
+
     showToast(`Configuring ${ssid}...`, 'info');
     try {
         await bleConnector.configureWifi(ssid, password);
+
+        // Start polling for status
+        showToast('Waiting for device to connect to WiFi...', 'info');
+
+        let attempts = 0;
+        const maxAttempts = 20;
+
+        const pollInterval = setInterval(async () => {
+            if (!bleConnector || !bleConnector.isConnected()) {
+                clearInterval(pollInterval);
+                return;
+            }
+            attempts++;
+            try {
+                const status = await bleConnector.getWifiStatus();
+                if (status.connected && status.ip && status.ip !== '0.0.0.0') {
+                    clearInterval(pollInterval);
+                    localStorage.setItem('lastDeviceIP', status.ip);
+
+                    const ipInput = document.getElementById('devConfigIP');
+                    if (ipInput) ipInput.value = status.ip;
+
+                    showToast(`WiFi Connected! IP: ${status.ip}`, 'success');
+
+                    // Trigger device connection check
+                    checkDeviceConnection();
+
+                    // Optionally auto-disconnect BLE to save power after a small delay
+                    setTimeout(() => {
+                        if (bleConnector && bleConnector.isConnected()) {
+                            console.log('[BLE] Auto-disconnecting to save power');
+                            bleConnector.disconnect();
+                        }
+                    }, 3000);
+                }
+            } catch (e) {
+                console.error('Error polling BLE status:', e);
+            }
+
+            if (attempts >= maxAttempts) {
+                clearInterval(pollInterval);
+                showToast('WiFi connection timeout. Check credentials.', 'warning');
+            }
+        }, 1000);
+
     } catch (e) {
         showToast('Failed to send WiFi config', 'error');
     }

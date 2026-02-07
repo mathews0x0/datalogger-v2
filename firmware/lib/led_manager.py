@@ -79,6 +79,20 @@ class LEDManager:
                     self.np[i] = (0, 0, bright)
             self.np.write()
             
+        elif state == "PAUSED":
+            # Slow Amber Pulse (1s cycle)
+            val = int((math.sin(t * 6.28) + 1) / 2 * 150)
+            self.set_color(val, int(val * 0.6), 0) # Amber: (R, G*0.6, 0)
+
+        elif state == "CALIBRATING":
+            # Fast Blue Sweep
+            self.clear_buffer()
+            pos = (t * 10.0) % self.count
+            for i in range(self.count):
+                if abs(i - pos) < 2:
+                    self.np[i] = (0, 0, 255)
+            self.np.write()
+            
         else:
             # IDLE - Very Dim Green Breath
             intensity = int((math.sin(t * 1.0) + 1) / 2 * 10)
@@ -155,6 +169,27 @@ class LEDManager:
         # Priority 3: Base State Animations
         self.update(base_state)
     
+    def is_event_active(self):
+        """Check if an event animation is currently playing."""
+        if not self._event_active:
+            return False
+        if time.ticks_diff(time.ticks_ms(), self._event_end_time) >= 0:
+            self._event_active = False
+            return False
+        return True
+
+    def show_paused(self):
+        """Short-cut for main loop state"""
+        self.update_with_events("PAUSED")
+
+    def show_calibrating(self):
+        """Fast blue sweep for calibration"""
+        self.update_with_events("CALIBRATING")
+
+    def show_calibrated(self):
+        """3x quick green flash"""
+        self.trigger_event("CALIBRATED", duration_ms=1000)
+
     def _animate_event(self, now):
         """Animate the current event (flashing pattern)."""
         if self._event_type == "TRACK_FOUND":
@@ -162,6 +197,11 @@ class LEDManager:
             on = (now % 150 < 75)
             self.set_color(255 if on else 0, 255 if on else 0, 255 if on else 0)
             
+        elif self._event_type == "CALIBRATED":
+            # 3 quick green flashes
+            cycle = (now % 333) < 166
+            self.set_color(0, 255 if cycle else 0, 0)
+
         elif self._event_type in ("SECTOR_FAST", "SECTOR_NEUTRAL", "SECTOR_SLOW"):
             # 3 distinct flashes over ~600ms
             cycle = (now % 600) // 200  # 0, 1, 2

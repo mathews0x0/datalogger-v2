@@ -96,7 +96,7 @@ def setup():
     ble.notify_wifi_status(mode=="STA", "", ip, mode)
 
     # 11. Start MiniServer (Second Core)
-    server = MiniServer(sm, led=led, track_engine=track_eng)
+    server = MiniServer(sm, led=led, gps_state=gps, track_engine=track_eng)
     _thread.start_new_thread(server.start, ())
     print("Server: Listening in background (Core 1)")
 
@@ -113,6 +113,12 @@ def main_loop():
     
     time_synced = False
     ble_update_tick = 0
+    
+    # State Machine Variables
+    current_state = "LOGGING"
+    calib_wait_start = 0
+    calib_samples = []
+    session_offset = {"x": 0.0, "y": 0.0, "z": 0.0}
     
     with open(log_file, 'w') as f:
         f.write("time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,vbat\n")
@@ -171,8 +177,48 @@ def main_loop():
                 except:
                     pass
             
-            # 6. Log Data
+            # 6. State Machine & Logging
+            in_pit = False
             if fix['valid']:
+                in_pit = track_eng.is_in_pit(fix['lat'], fix['lon'])
+            
+            # State Transitions
+            if current_state == "LOGGING":
+                if in_pit:
+                    current_state = "PAUSED"
+                    print("[System] Entering Pit - PAUSED")
+            
+            elif current_state == "PAUSED":
+                if not in_pit and fix['speed_kmh'] > 10:
+                    current_state = "LOGGING"
+                    print("[System] Exiting Pit - LOGGING")
+                
+                # Calibration Trigger
+                upright = abs(acc['z']) > 0.8 and abs(acc['x']) < 0.3 and abs(acc['y']) < 0.3
+                if fix['valid'] and fix['speed_kmh'] < 2.0 and upright:
+                    if calib_wait_start == 0:
+                        calib_wait_start = time.ticks_ms()
+                    elif time.ticks_diff(time.ticks_ms(), calib_wait_start) > 10000:
+                        current_state = "CALIBRATING"
+                        calib_samples = []
+                        print("[System] Starting IMU Calibration...")
+                else:
+                    calib_wait_start = 0
+            
+            elif current_state == "CALIBRATING":
+                calib_samples.append((acc['x'], acc['y'], acc['z']))
+                if len(calib_samples) >= 30: # 3s at 10Hz
+                    avg_x = sum(s[0] for s in calib_samples) / 30
+                    avg_y = sum(s[1] for s in calib_samples) / 30
+                    avg_z = sum(s[2] for s in calib_samples) / 30
+                    session_offset = {"x": avg_x, "y": avg_y, "z": avg_z}
+                    current_state = "PAUSED"
+                    calib_wait_start = 0
+                    led.show_calibrated()
+                    print(f"[System] Calibrated! Offset: {session_offset}")
+
+            # 7. Write to Log
+            if fix['valid'] and current_state == "LOGGING":
                 log_line = f"{time.time()},{fix['lat']},{fix['lon']},0.0,{fix['speed_kmh']:.2f},{acc['x']},{acc['y']},{acc['z']},{gyr['x']},{gyr['y']},{gyr['z']},{vbat:.2f}\n"
                 f.write(log_line)
                 f.flush()
@@ -185,8 +231,8 @@ def main_loop():
                 except Exception as e:
                     print(f"TrackEng Error: {e}")
 
-            # 7. LED State Logic
-            base_state = "LOGGING" if fix['valid'] else "SEARCHING"
+            # 8. LED Update
+            base_state = current_state if fix['valid'] else "SEARCHING"
             
             # Storage Check (Priority)
             try:
@@ -198,7 +244,7 @@ def main_loop():
 
             led.update_with_events(base_state)
             
-            # 8. Status LED Blink
+            # 9. Status LED Blink
             if wifi_mode == "AP":
                 onboard_led.value(not onboard_led.value()) 
             else:

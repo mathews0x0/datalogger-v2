@@ -217,6 +217,37 @@ def get_track(track_id):
         "best_lap_time": best_lap_time
     })
 
+@app.route('/api/tracks/<int:track_id>', methods=['POST'])
+def update_track(track_id):
+    """Update track metadata"""
+    folder = get_track_folder(track_id)
+    if not folder:
+        return jsonify({"error": "Track not found"}), 404
+    
+    track_dir = config.TRACKS_DIR / folder
+    track_file = track_dir / "track.json"
+    
+    if not track_file.exists():
+        return jsonify({"error": "Track data not found"}), 404
+    
+    try:
+        with open(track_file, 'r') as f:
+            track_data = json.load(f)
+            
+        updates = request.json
+        # Only allow specific fields to be updated
+        allowed_fields = ['pit_center_lat', 'pit_center_lon', 'pit_radius_m', 'track_name']
+        for field in allowed_fields:
+            if field in updates:
+                track_data[field] = updates[field]
+                
+        with open(track_file, 'w') as f:
+            json.dump(track_data, f)
+            
+        return jsonify({"success": True, "track": track_data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/tracks/<int:track_id>/map')
 def get_track_map(track_id):
     """Get track map image"""

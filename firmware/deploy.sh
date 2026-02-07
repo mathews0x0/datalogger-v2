@@ -27,7 +27,7 @@
 # ============================================================================
 
 # Configuration
-PORT="/dev/cu.SLAB_USBtoUART"
+PORT="${PORT:-/dev/ttyUSB1}"
 BAUD="460800"
 FIRMWARE_BIN="micropython.bin"
 SOURCE_DIR="$(pwd)"
@@ -71,7 +71,7 @@ fi
 check_port() {
     if [ ! -e "$PORT" ]; then
         echo -e "${RED}ERROR: Port $PORT not found.${NC}"
-        ls /dev/cu.*
+        ls /dev/ttyUSB*
         exit 1
     fi
 }
