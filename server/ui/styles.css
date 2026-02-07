@@ -1781,3 +1781,32 @@ input:checked + .toggle-slider:before {
   background: #2a2a2a;
   color: var(--text);
 }
+
+/* Team & Profile Enhancements (Phase 5) */
+.profile-header {
+  background: linear-gradient(135deg, var(--surface) 0%, rgba(255, 107, 53, 0.1) 100%) !important;
+}
+
+.members-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.annotation-item {
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid var(--primary);
+  padding: 0.75rem;
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+  transition: all 0.2s ease;
+}
+
+.annotation-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#detailAnnotationsList, #pbAnnotationsList {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 5px;
+}

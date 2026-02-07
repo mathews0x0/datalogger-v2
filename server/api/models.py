@@ -95,3 +95,65 @@ class Follow(db.Model):
     follower_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
     following_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Team(db.Model):
+    __tablename__ = 'teams'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    logo_url = db.Column(db.String(255))
+    owner_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "logo_url": self.logo_url,
+            "owner_id": self.owner_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+class TeamMember(db.Model):
+    __tablename__ = 'team_members'
+    team_id = db.Column(db.Integer, db.ForeignKey('teams.id'), primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), primary_key=True)
+    role = db.Column(db.String(20), default='rider') # 'owner', 'coach', 'rider'
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "team_id": self.team_id,
+            "user_id": self.user_id,
+            "role": self.role,
+            "joined_at": self.joined_at.isoformat() if self.joined_at else None
+        }
+
+class TeamInvite(db.Model):
+    __tablename__ = 'team_invites'
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey('teams.id'), nullable=False)
+    token = db.Column(db.String(100), unique=True, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    used = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+class Annotation(db.Model):
+    __tablename__ = 'annotations'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.String(100), db.ForeignKey('sessions.session_id'), nullable=False)
+    author_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    lap_number = db.Column(db.Integer)
+    sector_number = db.Column(db.Integer)
+    text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "author_id": self.author_id,
+            "lap_number": self.lap_number,
+            "sector_number": self.sector_number,
+            "text": self.text,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }

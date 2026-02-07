@@ -5,7 +5,7 @@ from pathlib import Path
 # Add current directory to path so 'import main' works
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
-from main import app, db, User, SessionMeta, TrackMeta, TrackDayMeta, Follow
+from main import app, db, User, SessionMeta, TrackMeta, TrackDayMeta, Follow, Team, TeamMember, TeamInvite, Annotation
 import config
 
 def init_db():

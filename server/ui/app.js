@@ -49,6 +49,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
+    if (path.startsWith('/teams/join/')) {
+        const token = path.split('/')[3];
+        if (token) {
+            showJoinTeamModal(token);
+            // Don't return, let home data load in background
+        }
+    }
+
     // Load initial data
     loadHomeData();
 });
@@ -96,6 +104,9 @@ function showView(viewName) {
                 break;
             case 'community':
                 loadCommunitySessions();
+                break;
+            case 'teams':
+                loadTeams();
                 break;
             case 'process':
                 loadLearningFiles();
@@ -764,6 +775,489 @@ function formatDateShort(dateStr) {
     if (!dateStr) return '';
     const d = new Date(dateStr);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+// ============================================================================
+// TEAM FEATURES (Phase 5)
+// ============================================================================
+
+async function loadTeams() {
+    const container = document.getElementById('teamsList');
+    if (!container) return;
+    container.innerHTML = '<div class="loading">Loading teams...</div>';
+
+    try {
+        const teamsData = await apiCall('/api/teams');
+        
+        if (!teamsData || teamsData.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--text-dim); grid-column: 1 / -1;">
+                    <i class="fas fa-users" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+                    <p>You are not a member of any teams.</p>
+                    ${currentUser && currentUser.subscription_tier === 'team' ? 
+                        '<button class="btn btn-primary" style="margin-top: 1rem;" onclick="showCreateTeamModal()">Create Your First Team</button>' : 
+                        '<p style="font-size: 0.8rem; color: var(--text-muted);">Upgrade to Team tier to create your own team!</p>'}
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = teamsData.map(team => `
+            <div class="track-card" onclick="viewTeam(${team.id})">
+                <div style="height: 120px; background: var(--bg-secondary); display: flex; align-items: center; justify-content: center; border-radius: 8px 8px 0 0; overflow: hidden;">
+                    ${team.logo_url ? `<img src="${team.logo_url}" style="max-width: 80%; max-height: 80%; object-fit: contain;">` : `<i class="fas fa-users" style="font-size: 3rem; color: var(--border);"></i>`}
+                </div>
+                <div class="track-info">
+                    <div class="track-name">${team.name}</div>
+                    <div class="track-meta">
+                        <span><i class="fas fa-user-shield"></i> Role: ${team.my_role.toUpperCase()}</span>
+                    </div>
+                    <div class="track-actions">
+                        <button class="btn btn-primary btn-sm">View Dashboard</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load teams</p>';
+    }
+}
+
+function showCreateTeamModal() {
+    if (currentUser.subscription_tier !== 'team') {
+        showUpgradeModal('Team Creation');
+        return;
+    }
+    const modal = document.getElementById('createTeamModal');
+    if (modal) modal.classList.add('active');
+}
+
+function closeCreateTeamModal() {
+    const modal = document.getElementById('createTeamModal');
+    if (modal) modal.classList.remove('active');
+}
+
+async function submitCreateTeam() {
+    const name = document.getElementById('teamNameInput').value.trim();
+    const logo_url = document.getElementById('teamLogoInput').value.trim();
+
+    if (!name) {
+        showToast('Team name is required', 'error');
+        return;
+    }
+
+    try {
+        const result = await apiCall('/api/teams', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, logo_url })
+        });
+        if (result) {
+            showToast('Team created successfully!', 'success');
+            closeCreateTeamModal();
+            loadTeams();
+        }
+    } catch (e) {
+        showToast('Failed to create team: ' + e.message, 'error');
+    }
+}
+
+async function viewTeam(teamId) {
+    const view = document.getElementById('teamDetailView');
+    const container = document.getElementById('teamDetailContent');
+
+    if (!view || !container) return;
+
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    view.classList.add('active');
+
+    container.innerHTML = '<div class="loading">Loading team details...</div>';
+
+    try {
+        const team = await apiCall(`/api/teams/${teamId}`);
+        const isOwner = team.owner_id === currentUser.id;
+        const myMembership = team.members.find(m => m.user_id === currentUser.id);
+        const isCoachOrOwner = myMembership && ['owner', 'coach'].includes(myMembership.role);
+
+        container.innerHTML = `
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem;">
+                <div style="display: flex; gap: 1.5rem; align-items: center;">
+                    <div style="width: 80px; height: 80px; background: var(--bg-secondary); border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px solid var(--border);">
+                        ${team.logo_url ? `<img src="${team.logo_url}" style="max-width: 100%; max-height: 100%; object-fit: contain;">` : `<i class="fas fa-users" style="font-size: 2rem; color: var(--border);"></i>`}
+                    </div>
+                    <div>
+                        <h2 style="margin: 0;">${team.name}</h2>
+                        <p class="help-text" style="margin: 0.25rem 0 0 0;">Team ID: ${team.id} • Created ${formatDateShort(team.created_at)}</p>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 0.5rem;">
+                    ${isCoachOrOwner ? `<button class="btn btn-primary btn-sm" onclick="showTeamInviteModal(${team.id})"><i class="fas fa-user-plus"></i> Invite Rider</button>` : ''}
+                    ${isOwner ? `<button class="btn btn-secondary btn-sm" onclick="editTeam(${team.id})"><i class="fas fa-edit"></i> Edit</button>` : ''}
+                    ${!isOwner ? `<button class="btn btn-danger btn-sm" onclick="leaveTeam(${team.id})">Leave Team</button>` : ''}
+                </div>
+            </div>
+
+            <div class="settings-grid" style="grid-template-columns: 1fr 2fr; gap: 1.5rem;">
+                <!-- Member List -->
+                <div class="card">
+                    <h3>Members</h3>
+                    <div class="members-list">
+                        ${team.members.map(m => `
+                            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid var(--border);">
+                                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                                    <div style="width: 32px; height: 32px; background: var(--primary); color: #000; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 0.8rem;">
+                                        ${(m.name || m.email).charAt(0).toUpperCase()}
+                                    </div>
+                                    <div style="display: flex; flex-direction: column;">
+                                        <span style="font-weight: 600; font-size: 0.9rem;">${m.name || m.email}</span>
+                                        <span class="badge" style="font-size: 0.6rem; width: fit-content; margin-top: 2px;">${m.role.toUpperCase()}</span>
+                                    </div>
+                                </div>
+                                ${isCoachOrOwner && m.user_id !== currentUser.id && m.role !== 'owner' ? `
+                                    <button class="btn-icon" onclick="removeTeamMember(${team.id}, ${m.user_id})" title="Remove Member">×</button>
+                                ` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <!-- Team Sessions / Dashboard -->
+                <div class="card">
+                    <h3>Rider Sessions</h3>
+                    <div id="teamSessionsList" class="sessions-list">
+                        <div class="loading">Loading rider sessions...</div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Load sessions for team members
+        loadTeamSessions(team.members.filter(m => m.role === 'rider').map(m => m.user_id));
+
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load team details</p>';
+    }
+}
+
+async function loadTeamSessions(riderIds) {
+    const container = document.getElementById('teamSessionsList');
+    if (!container) return;
+
+    if (!riderIds || riderIds.length === 0) {
+        container.innerHTML = '<p class="help-text">No riders in this team yet.</p>';
+        return;
+    }
+
+    try {
+        // Since our API doesn't have a bulk rider session endpoint, we'll fetch community/public sessions 
+        // OR we can rely on the fact that if we are coach, we can now access their private sessions too.
+        // For now, let's fetch sessions for each rider.
+        
+        let allTeamSessions = [];
+        for (const riderId of riderIds) {
+            try {
+                // We need an endpoint to list a user's sessions if we are their coach
+                // Or we can update /api/sessions to take a user_id
+                const riderSessions = await apiCall(`/api/sessions?user_id=${riderId}`);
+                if (riderSessions) {
+                    allTeamSessions = allTeamSessions.concat(riderSessions);
+                }
+            } catch (e) {
+                console.warn(`Could not load sessions for rider ${riderId}`);
+            }
+        }
+
+        if (allTeamSessions.length === 0) {
+            container.innerHTML = '<p class="help-text">No sessions found for team riders.</p>';
+            return;
+        }
+
+        // Sort by time
+        allTeamSessions.sort((a, b) => new Date(b.start_time) - new Date(a.start_time));
+
+        container.innerHTML = allTeamSessions.slice(0, 20).map(session => `
+            <div class="session-card" onclick="viewSession('${session.session_id}')">
+                <div class="session-header">
+                    <div>
+                        <div class="session-title">${session.track_name}</div>
+                        <div style="font-size: 0.75rem; color: var(--primary);">👤 ${session.owner_name || 'Rider'}</div>
+                    </div>
+                    <div class="session-time">${formatDateTimeAbbreviated(session.start_time)}</div>
+                </div>
+                <div class="session-stats">
+                    <div class="session-stat">
+                        <span>Best:</span>
+                        <strong style="color: var(--success);">${formatTime(session.best_lap_time)}</strong>
+                    </div>
+                    ${session.is_public ? '<span class="badge" style="background: var(--primary); color: white;"><i class="fas fa-globe"></i> Public</span>' : '<span class="badge" style="background: var(--border); color: var(--text-muted);"><i class="fas fa-lock"></i> Team Only</span>'}
+                </div>
+            </div>
+        `).join('');
+
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load team sessions</p>';
+    }
+}
+
+async function showTeamInviteModal(teamId) {
+    try {
+        const result = await apiCall(`/api/teams/${teamId}/invite`, { method: 'POST' });
+        if (result) {
+            const inviteUrl = window.location.origin + result.invite_url;
+            document.getElementById('teamInviteLinkInput').value = inviteUrl;
+            document.getElementById('teamInviteModal').classList.add('active');
+        }
+    } catch (e) {
+        showToast('Failed to generate invite: ' + e.message, 'error');
+    }
+}
+
+function closeTeamInviteModal() {
+    document.getElementById('teamInviteModal').classList.remove('active');
+}
+
+function copyTeamInviteLink() {
+    const input = document.getElementById('teamInviteLinkInput');
+    input.select();
+    input.setSelectionRange(0, 99999);
+    document.execCommand('copy');
+    showToast('Invite link copied!', 'success');
+}
+
+async function removeTeamMember(teamId, userId) {
+    if (!confirm('Remove this member from the team?')) return;
+
+    try {
+        await apiCall(`/api/teams/${teamId}/members/${userId}`, { method: 'DELETE' });
+        showToast('Member removed', 'success');
+        viewTeam(teamId);
+    } catch (e) {
+        showToast('Failed to remove member: ' + e.message, 'error');
+    }
+}
+
+async function leaveTeam(teamId) {
+    if (!confirm('Are you sure you want to leave this team?')) return;
+
+    try {
+        await apiCall(`/api/teams/${teamId}/members/${currentUser.id}`, { method: 'DELETE' });
+        showToast('Left team', 'success');
+        showView('teams');
+    } catch (e) {
+        showToast('Failed to leave team: ' + e.message, 'error');
+    }
+}
+
+// ----------------------------------------------------------------------------
+// ANNOTATIONS (Phase 5)
+// ----------------------------------------------------------------------------
+
+let currentSessionAnnotations = [];
+
+async function loadAnnotations(sessionId, containerId = 'pbAnnotationsList') {
+    try {
+        const annotations = await apiCall(`/api/sessions/${sessionId}/annotations`);
+        currentSessionAnnotations = annotations || [];
+        renderAnnotations(containerId);
+    } catch (e) {
+        console.warn('Could not load annotations:', e);
+    }
+}
+
+function loadAnnotationsForDetail(sessionId) {
+    loadAnnotations(sessionId, 'detailAnnotationsList');
+}
+
+function renderAnnotations(containerId = 'pbAnnotationsList') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!currentSessionAnnotations || currentSessionAnnotations.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state" style="padding: 1rem 0;">
+                <p style="font-size: 0.75rem; color: var(--text-muted);">No notes for this session</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = currentSessionAnnotations.map(a => `
+        <div class="card" style="padding: 0.75rem; margin-bottom: 0.75rem; border-left: 3px solid var(--primary); background: rgba(255,255,255,0.02);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.25rem;">
+                <div style="font-weight: bold; color: var(--primary); font-size: 0.75rem;">
+                    ${a.author_name} ${a.lap_number ? `• Lap ${a.lap_number}` : ''} ${a.sector_number ? `• S${a.sector_number}` : ''}
+                </div>
+                ${currentUser && a.author_id === currentUser.id ? `
+                    <button class="btn-icon" onclick="deleteAnnotation(${a.id})" style="font-size: 0.7rem; opacity: 0.5;">×</button>
+                ` : ''}
+            </div>
+            <div style="font-size: 0.85rem; line-height: 1.4;">${a.text}</div>
+            <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 0.4rem; text-align: right;">
+                ${formatDateTimeAbbreviated(a.created_at)}
+            </div>
+        </div>
+    `).join('');
+}
+
+function showAddAnnotationModalWithLap(sessionId, lapNumber) {
+    if (!pbState.session || pbState.session.meta.session_id !== sessionId) {
+        pbState.session = { meta: { session_id: sessionId } };
+    }
+    
+    const modal = document.getElementById('annotationModal');
+    if (!modal) return;
+
+    document.getElementById('annotationLapInput').value = lapNumber;
+    document.getElementById('annotationSectorInput').value = '';
+
+    modal.classList.add('active');
+    window.annotationSource = 'detail';
+}
+
+function showAddAnnotationModalFromDetail(sessionId) {
+    // Set up pbState.session if not in playback
+    if (!pbState.session || pbState.session.meta.session_id !== sessionId) {
+        pbState.session = { meta: { session_id: sessionId } };
+    }
+    
+    const modal = document.getElementById('annotationModal');
+    if (!modal) return;
+
+    document.getElementById('annotationLapInput').value = '';
+    document.getElementById('annotationSectorInput').value = '';
+
+    modal.classList.add('active');
+    
+    // Track where we came from to refresh the right list
+    window.annotationSource = 'detail';
+}
+
+function showAddAnnotationModal() {
+    if (!pbState.session) return;
+    
+    const modal = document.getElementById('annotationModal');
+    if (!modal) return;
+
+    // Prefill lap/sector if possible
+    const lapInput = document.getElementById('annotationLapInput');
+    const sectorInput = document.getElementById('annotationSectorInput');
+    
+    // Try to guess current lap from playback state
+    if (pbState.data && pbState.data.time) {
+        const curTime = pbState.data.time[pbState.currentIndex];
+        const curLap = pbState.laps.find(l => curTime >= l.start_time && (!l.end_time || curTime <= l.end_time));
+        if (curLap) {
+            lapInput.value = curLap.lap_number;
+        }
+    }
+
+    modal.classList.add('active');
+    window.annotationSource = 'playback';
+}
+
+function closeAnnotationModal() {
+    document.getElementById('annotationModal').classList.remove('active');
+}
+
+async function submitAddAnnotation() {
+    const text = document.getElementById('annotationTextInput').value.trim();
+    const lap = document.getElementById('annotationLapInput').value;
+    const sector = document.getElementById('annotationSectorInput').value;
+
+    if (!text) {
+        showToast('Note text is required', 'error');
+        return;
+    }
+
+    try {
+        const result = await apiCall(`/api/sessions/${pbState.session.meta.session_id}/annotations`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text,
+                lap_number: lap ? parseInt(lap) : null,
+                sector_number: sector ? parseInt(sector) : null
+            })
+        });
+
+        if (result) {
+            showToast('Note added', 'success');
+            closeAnnotationModal();
+            document.getElementById('annotationTextInput').value = '';
+            
+            if (window.annotationSource === 'detail') {
+                loadAnnotationsForDetail(pbState.session.meta.session_id);
+            } else {
+                loadAnnotations(pbState.session.meta.session_id);
+            }
+        }
+    } catch (e) {
+        showToast('Failed to add note: ' + e.message, 'error');
+    }
+}
+
+async function deleteAnnotation(id) {
+    if (!confirm('Delete this note?')) return;
+
+    try {
+        await apiCall(`/api/annotations/${id}`, { method: 'DELETE' });
+        showToast('Note deleted', 'success');
+        
+        if (window.annotationSource === 'detail') {
+            loadAnnotationsForDetail(pbState.session.meta.session_id);
+        } else {
+            loadAnnotations(pbState.session.meta.session_id);
+        }
+    } catch (e) {
+        showToast('Failed to delete note', 'error');
+    }
+}
+
+let pendingJoinToken = null;
+
+async function showJoinTeamModal(token) {
+    pendingJoinToken = token;
+    const modal = document.getElementById('joinTeamModal');
+    if (!modal) return;
+    
+    modal.classList.add('active');
+    
+    // Optional: fetch team name if possible without joining
+    // For now, we'll just show the modal
+}
+
+function closeJoinTeamModal() {
+    document.getElementById('joinTeamModal').classList.remove('active');
+    pendingJoinToken = null;
+    window.history.replaceState({}, document.title, "/");
+}
+
+async function submitJoinTeam() {
+    if (!pendingJoinToken) return;
+
+    if (!currentUser) {
+        showToast('Please login to join the team', 'info');
+        showAuthModal();
+        return;
+    }
+
+    const btn = document.getElementById('confirmJoinBtn');
+    btn.disabled = true;
+    btn.textContent = 'Joining...';
+
+    try {
+        const result = await apiCall(`/api/teams/join/${pendingJoinToken}`, { method: 'POST' });
+        if (result && result.success) {
+            showToast(`Successfully joined team: ${result.team_name}`, 'success');
+            closeJoinTeamModal();
+            showView('teams');
+        }
+    } catch (e) {
+        showToast('Failed to join team: ' + e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Join Team';
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -2159,6 +2653,7 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
                                     <td style="text-align: center;">
                                         ${isBest ? '<span class="best-badge">★ BEST</span>' : ''}
                                         <button class="btn-icon no-print" onclick="event.stopPropagation(); setForComparison('${session.meta.session_id}', ${lap.lap_number})" title="Add to Compare">⚖️</button>
+                                        <button class="btn-icon no-print" onclick="event.stopPropagation(); showAddAnnotationModalWithLap('${session.meta.session_id}', ${lap.lap_number})" title="Add Note">📝</button>
                                     </td>
                                 </tr>
                             `}).join('')}
@@ -2171,7 +2666,23 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
             
             <!-- SESSION TREND (Timeline) -->
             ${generateTimelineSVG(session.laps)}
+
+            <!-- SESSION ANNOTATIONS (Phase 5) -->
+            <div class="card" style="margin-top: 1.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="color: var(--primary);">📝</span> Coach Annotations
+                    </h3>
+                    <button class="btn btn-primary btn-sm" onclick="showAddAnnotationModalFromDetail('${session.meta.session_id}')">Add Note</button>
+                </div>
+                <div id="detailAnnotationsList">
+                    <div class="loading">Loading notes...</div>
+                </div>
+            </div>
         `;
+
+        // Load Annotations
+        loadAnnotationsForDetail(session.meta.session_id);
 
         // Phase 7.4.3: Init Comparison
         if (typeof initComparison === 'function') {
@@ -4458,6 +4969,9 @@ async function openPlayback(sessionId, shareToken = null) {
         pbState.session = session;
         pbState.data = telemetry;
         pbState.laps = session.laps;
+
+        // Load Annotations
+        loadAnnotations(sessionId);
 
         if (telemetry.time && telemetry.time.length > 0) {
             pbState.duration = telemetry.time[telemetry.time.length - 1] - telemetry.time[0];

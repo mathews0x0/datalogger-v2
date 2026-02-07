@@ -63,6 +63,7 @@
     <button class="nav-btn" data-view="tracks"><i class="fas fa-map-marked-alt"></i> Tracks</button>
     <button class="nav-btn" data-view="sessions"><i class="fas fa-history"></i> Sessions</button>
     <button class="nav-btn" data-view="community"><i class="fas fa-users"></i> Community</button>
+    <button class="nav-btn" data-view="teams"><i class="fas fa-users-cog"></i> Teams</button>
     <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
     <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
   </nav>
@@ -206,6 +207,26 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Teams View -->
+    <div class="view" id="teamsView">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fas fa-users-cog"></i> Teams</h2>
+        <button class="btn btn-primary btn-sm" id="createTeamBtn" onclick="showCreateTeamModal()">+ Create Team</button>
+      </div>
+
+      <div id="teamsList" class="tracks-grid">
+        <div class="loading">Loading teams...</div>
+      </div>
+    </div>
+
+    <!-- Team Detail View (Dynamic) -->
+    <div class="view" id="teamDetailView">
+      <button class="back-btn" onclick="showView('teams')">
+        ← Back to Teams
+      </button>
+      <div id="teamDetailContent"></div>
     </div>
 
     <!-- Process View -->
@@ -840,7 +861,7 @@
           <div class="card" style="padding: 1.25rem;">
             <div class="stat-label">Acceleration G's</div>
             <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
-              <div style="position: relative; width: 80px; height: 80px; border: 1px solid rgba(255,255,255,0.1); border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.02) 0%, transparent 100%);">
+              <div style="relative; width: 80px; height: 80px; border: 1px solid rgba(255,255,255,0.1); border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.02) 0%, transparent 100%);">
                 <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.05);"></div>
                 <div style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.05);"></div>
                 <div id="pbGDot" style="position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; background: var(--error); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 10px var(--error);"></div>
@@ -851,7 +872,51 @@
               </div>
             </div>
           </div>
+
+          <!-- SESSION ANNOTATIONS -->
+          <div class="card" style="padding: 1.25rem; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <div class="stat-label">Coach Notes</div>
+              <button class="btn btn-primary btn-sm" onclick="showAddAnnotationModal()" title="Add Note">
+                <i class="fas fa-plus"></i>
+              </button>
+            </div>
+            <div id="pbAnnotationsList" style="flex: 1; overflow-y: auto; font-size: 0.85rem;">
+              <div class="empty-state" style="padding: 1rem 0;">
+                <p style="font-size: 0.75rem; color: var(--text-muted);">No notes for this session</p>
+              </div>
+            </div>
+          </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Annotation Modal -->
+  <div class="modal" id="annotationModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeAnnotationModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">📝 Add Note</h3>
+      
+      <div class="form-group">
+        <label>Note Text</label>
+        <textarea id="annotationTextInput" class="form-input" rows="4" placeholder="Enter coaching feedback..."></textarea>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <div style="flex: 1;">
+          <label style="font-size: 0.75rem; color: var(--text-muted);">Lap (Optional)</label>
+          <input type="number" id="annotationLapInput" class="form-input" placeholder="Current">
+        </div>
+        <div style="flex: 1;">
+          <label style="font-size: 0.75rem; color: var(--text-muted);">Sector (Optional)</label>
+          <input type="number" id="annotationSectorInput" class="form-input" placeholder="Any">
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeAnnotationModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddAnnotation()">Save Note</button>
       </div>
     </div>
   </div>
@@ -936,6 +1001,73 @@
       <p style="font-size: 0.75rem; color: var(--text-muted);">
         Payment integration is currently in development. Contact support to manual upgrade.
       </p>
+    </div>
+  </div>
+
+  <!-- Create Team Modal -->
+  <div class="modal" id="createTeamModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeCreateTeamModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">👥 Create New Team</h3>
+      <p class="help-text" style="margin-bottom: 1.5rem;">Create a team to manage riders and view their telemetry data.</p>
+
+      <div class="form-group">
+        <label for="teamNameInput">Team Name</label>
+        <input type="text" id="teamNameInput" class="form-input" placeholder="e.g., Scuderia Racing">
+      </div>
+
+      <div class="form-group">
+        <label for="teamLogoInput">Logo URL (optional)</label>
+        <input type="text" id="teamLogoInput" class="form-input" placeholder="https://example.com/logo.png">
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeCreateTeamModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateTeam()">Create Team</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Team Invite Modal -->
+  <div class="modal" id="teamInviteModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <span class="modal-close" onclick="closeTeamInviteModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">🔗 Team Invite</h3>
+      
+      <p class="help-text" style="margin-bottom: 1rem;">Share this link with riders you want to invite to your team.</p>
+      
+      <div class="input-group">
+        <label>Invite Link</label>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="teamInviteLinkInput" class="form-input" readonly style="flex: 1; background: var(--bg-secondary);">
+          <button class="btn btn-primary btn-sm" onclick="copyTeamInviteLink()">
+            <i class="fas fa-copy"></i> Copy
+          </button>
+        </div>
+      </div>
+      
+      <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <button class="btn secondary btn-sm" style="width: 100%;" onclick="closeTeamInviteModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join Team Modal -->
+  <div class="modal" id="joinTeamModal">
+    <div class="modal-content" style="max-width: 400px; text-align: center;">
+      <span class="modal-close" onclick="closeJoinTeamModal()">&times;</span>
+      <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--primary);">
+        <i class="fas fa-user-plus"></i>
+      </div>
+      <h3 style="margin-bottom: 1rem;">Join Team</h3>
+      <p id="joinTeamMessage" style="color: var(--text-dim); margin-bottom: 2rem;">
+        You have been invited to join <strong id="invitedTeamName">...</strong>
+      </p>
+      
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeJoinTeamModal()">Decline</button>
+        <button class="btn btn-primary" id="confirmJoinBtn" onclick="submitJoinTeam()">Join Team</button>
+      </div>
     </div>
   </div>
 
