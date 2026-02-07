@@ -36,6 +36,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check BLE support
     initBleSupportCheck();
 
+    // Check Auth
+    checkAuth();
+
     // Load initial data
     loadHomeData();
 });
@@ -101,6 +104,12 @@ async function apiCall(endpoint, options = {}) {
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${API_BASE}${endpoint}${separator}_t=${Date.now()}`;
         const response = await fetch(url, options);
+        
+        if (response.status === 401 && !endpoint.includes('/api/auth/')) {
+            showAuthModal();
+            return null;
+        }
+
         if (!response.ok) {
             let errorMessage = `HTTP ${response.status}`;
             try {
@@ -117,6 +126,159 @@ async function apiCall(endpoint, options = {}) {
         }
         throw error;
     }
+}
+
+// ============================================================================
+// AUTHENTICATION
+// ============================================================================
+
+let currentUser = null;
+
+async function checkAuth() {
+    try {
+        const user = await apiCall('/api/auth/me');
+        if (user) {
+            currentUser = user;
+            updateAuthUI();
+        }
+    } catch (e) {
+        currentUser = null;
+        updateAuthUI();
+    }
+}
+
+function updateAuthUI() {
+    const loginBtn = document.getElementById('loginBtn');
+    const userProfileHeader = document.getElementById('userProfileHeader');
+    const headerUserName = document.getElementById('headerUserName');
+    const userProfileCard = document.getElementById('userProfileCard');
+
+    if (currentUser) {
+        if (loginBtn) loginBtn.style.display = 'none';
+        if (userProfileHeader) userProfileHeader.style.display = 'flex';
+        if (headerUserName) headerUserName.textContent = currentUser.name || currentUser.email;
+        if (userProfileCard) {
+            userProfileCard.style.display = 'block';
+            const nameInput = document.getElementById('profileName');
+            const bikeInput = document.getElementById('profileBike');
+            const trackInput = document.getElementById('profileHomeTrack');
+            if (nameInput) nameInput.value = currentUser.name || '';
+            if (bikeInput) bikeInput.value = currentUser.bike_info || '';
+            if (trackInput) trackInput.value = currentUser.home_track || '';
+        }
+    } else {
+        if (loginBtn) loginBtn.style.display = 'block';
+        if (userProfileHeader) userProfileHeader.style.display = 'none';
+        if (userProfileCard) userProfileCard.style.display = 'none';
+    }
+}
+
+async function saveProfile() {
+    const name = document.getElementById('profileName').value;
+    const bike_info = document.getElementById('profileBike').value;
+    const home_track = document.getElementById('profileHomeTrack').value;
+
+    try {
+        const result = await apiCall('/api/auth/profile', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, bike_info, home_track })
+        });
+        if (result) {
+            currentUser = result;
+            updateAuthUI();
+            showToast('Profile updated', 'success');
+        }
+    } catch (e) {
+        showToast('Failed to update profile: ' + e.message, 'error');
+    }
+}
+
+function showAuthModal() {
+    const modal = document.getElementById('authModal');
+    if (modal) {
+        modal.style.display = 'flex';
+        toggleAuthMode('login');
+    }
+}
+
+function closeAuthModal() {
+    const modal = document.getElementById('authModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function toggleAuthMode(mode) {
+    const loginForm = document.getElementById('loginForm');
+    const registerForm = document.getElementById('registerForm');
+    if (mode === 'login') {
+        if (loginForm) loginForm.style.display = 'block';
+        if (registerForm) registerForm.style.display = 'none';
+    } else {
+        if (loginForm) loginForm.style.display = 'none';
+        if (registerForm) registerForm.style.display = 'block';
+    }
+}
+
+async function submitLogin() {
+    const email = document.getElementById('loginEmail').value;
+    const password = document.getElementById('loginPassword').value;
+    const errorEl = document.getElementById('loginError');
+
+    try {
+        const result = await apiCall('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password })
+        });
+        if (result && result.success) {
+            currentUser = result.user;
+            updateAuthUI();
+            closeAuthModal();
+            showToast('Logged in successfully', 'success');
+            // Refresh data for current view
+            showView(currentView);
+        }
+    } catch (e) {
+        if (errorEl) {
+            errorEl.textContent = e.message;
+            errorEl.style.display = 'block';
+        }
+    }
+}
+
+async function submitRegister() {
+    const name = document.getElementById('regName').value;
+    const email = document.getElementById('regEmail').value;
+    const password = document.getElementById('regPassword').value;
+    const errorEl = document.getElementById('regError');
+
+    try {
+        const result = await apiCall('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, password })
+        });
+        if (result && result.success) {
+            showToast('Registered! Please login.', 'success');
+            toggleAuthMode('login');
+        }
+    } catch (e) {
+        if (errorEl) {
+            errorEl.textContent = e.message;
+            errorEl.style.display = 'block';
+        }
+    }
+}
+
+async function logout() {
+    try {
+        await apiCall('/api/auth/logout', { method: 'POST' });
+    } catch (e) {}
+    currentUser = null;
+    updateAuthUI();
+    showToast('Logged out', 'info');
+    // Refresh to home
+    showView('home');
 }
 
 async function checkConnection() {

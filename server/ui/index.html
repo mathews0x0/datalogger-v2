@@ -48,7 +48,11 @@
     </div>
 
     <div style="display: flex; gap: 0.5rem; margin-left: auto">
-      <!-- Recording Status Placeholder -->
+      <div id="userProfileHeader" style="display: none; align-items: center; gap: 0.75rem; margin-right: 1rem;">
+        <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600;"></span>
+        <button class="btn btn-sm" onclick="logout()" title="Logout" style="background: transparent; border: 1px solid var(--border); color: var(--text-dim);"><i class="fas fa-sign-out-alt"></i></button>
+      </div>
+      <button id="loginBtn" class="btn btn-primary btn-sm" onclick="showAuthModal()">Login / Register</button>
     </div>
   </header>
 
@@ -188,6 +192,26 @@
       </div>
 
       <div class="settings-grid">
+        <!-- USER PROFILE CONFIG -->
+        <div class="card" id="userProfileCard" style="border-left: 4px solid var(--primary); display: none;">
+          <h3>User Profile</h3>
+          <div class="input-group">
+            <label>Display Name</label>
+            <input type="text" id="profileName" class="form-input" placeholder="Your Name">
+          </div>
+          <div class="input-group">
+            <label>Bike Info</label>
+            <input type="text" id="profileBike" class="form-input" placeholder="e.g., 2023 Yamaha R1">
+          </div>
+          <div class="input-group">
+            <label>Home Track</label>
+            <input type="text" id="profileHomeTrack" class="form-input" placeholder="e.g., Mugello">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveProfile()" style="width: 100%; margin-top: 1rem;">
+            Update Profile
+          </button>
+        </div>
+
         <!-- SYSTEM CONFIG -->
 
 
@@ -714,6 +738,54 @@
 
   <!-- Toast Notifications -->
   <div class="toast" id="toast"></div>
+
+  <!-- Auth Modal -->
+  <div class="modal" id="authModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeAuthModal()">&times;</span>
+      <div id="loginForm">
+        <h3 style="margin-bottom: 1.5rem;">🔑 Login</h3>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="loginEmail" class="form-input" placeholder="email@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="loginPassword" class="form-input" placeholder="••••••••">
+        </div>
+        <div id="loginError" style="color: var(--error); font-size: 0.8rem; margin-bottom: 1rem; display: none;"></div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" style="width: 100%;" onclick="submitLogin()">Login</button>
+        </div>
+        <p style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);">
+          Don't have an account? <a href="#" onclick="toggleAuthMode('register')" style="color: var(--primary);">Register</a>
+        </p>
+      </div>
+
+      <div id="registerForm" style="display: none;">
+        <h3 style="margin-bottom: 1.5rem;">📝 Register</h3>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="regName" class="form-input" placeholder="Your Name">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="regEmail" class="form-input" placeholder="email@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="regPassword" class="form-input" placeholder="••••••••">
+        </div>
+        <div id="regError" style="color: var(--error); font-size: 0.8rem; margin-bottom: 1rem; display: none;"></div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" style="width: 100%;" onclick="submitRegister()">Register</button>
+        </div>
+        <p style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);">
+          Already have an account? <a href="#" onclick="toggleAuthMode('login')" style="color: var(--primary);">Login</a>
+        </p>
+      </div>
+    </div>
+  </div>
 
   <script src="ble-connector.js"></script>
   <script src="app.js?v=5"></script>
