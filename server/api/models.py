@@ -14,6 +14,8 @@ class User(db.Model):
     profile_photo = db.Column(db.String(255))
     bike_info = db.Column(db.String(255))
     home_track = db.Column(db.String(255))
+    subscription_tier = db.Column(db.String(20), default='free')
+    subscription_expires_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, password):
@@ -30,6 +32,8 @@ class User(db.Model):
             "profile_photo": self.profile_photo,
             "bike_info": self.bike_info,
             "home_track": self.home_track,
+            "subscription_tier": self.subscription_tier,
+            "subscription_expires_at": self.subscription_expires_at.isoformat() if self.subscription_expires_at else None,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 

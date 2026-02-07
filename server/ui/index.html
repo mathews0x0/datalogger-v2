@@ -49,6 +49,7 @@
 
     <div style="display: flex; gap: 0.5rem; margin-left: auto">
       <div id="userProfileHeader" style="display: none; align-items: center; gap: 0.75rem; margin-right: 1rem;">
+        <span id="tierBadge" class="tier-badge free">FREE</span>
         <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600;"></span>
         <button class="btn btn-sm" onclick="logout()" title="Logout" style="background: transparent; border: 1px solid var(--border); color: var(--text-dim);"><i class="fas fa-sign-out-alt"></i></button>
       </div>
@@ -400,6 +401,25 @@
               <div id="espOtaStatus"
                 style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">Starting
                 upload...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ADMIN TOOLS -->
+        <div class="card" id="adminToolsCard" style="border-left: 4px solid var(--error); display: none;">
+          <h3>Admin Tools</h3>
+          <p class="help-text">Manage user subscriptions and system settings</p>
+          
+          <div class="input-group">
+            <label>Set User Tier</label>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <input type="number" id="adminUserId" class="form-input" placeholder="User ID" style="width: 80px;">
+                <select id="adminTierSelect" class="form-input" style="flex: 1;">
+                    <option value="free">Free</option>
+                    <option value="pro">Pro</option>
+                    <option value="team">Team</option>
+                </select>
+                <button class="btn btn-danger btn-sm" onclick="adminSetTier()">Set Tier</button>
             </div>
           </div>
         </div>
@@ -825,6 +845,38 @@
           Already have an account? <a href="#" onclick="toggleAuthMode('login')" style="color: var(--primary);">Login</a>
         </p>
       </div>
+    </div>
+  </div>
+
+  <!-- Upgrade Modal -->
+  <div class="modal" id="upgradeModal">
+    <div class="modal-content" style="max-width: 500px; text-align: center;">
+      <span class="modal-close" onclick="closeUpgradeModal()">&times;</span>
+      <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--primary);">
+        <i class="fas fa-rocket"></i>
+      </div>
+      <h3 id="upgradeTitle" style="margin-bottom: 1rem;">Upgrade to Pro</h3>
+      <p id="upgradeMessage" style="color: var(--text-dim); margin-bottom: 2rem;">
+        Get unlimited session storage, CSV exports, and advanced telemetry features.
+      </p>
+      
+      <div class="pricing-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--primary); margin-bottom: 2rem;">
+        <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: var(--primary); margin-bottom: 0.5rem;">Pro Plan</div>
+        <div style="font-size: 2.5rem; font-weight: 800; margin-bottom: 1rem;">$9.99<span style="font-size: 1rem; color: var(--text-muted);">/mo</span></div>
+        <ul style="text-align: left; font-size: 0.9rem; list-style: none; padding: 0; margin: 0 0 1.5rem 0;">
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Unlimited Session Storage</li>
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> CSV/JSON Data Exports</li>
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Advanced Analytics & TBL</li>
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Priority Cloud Processing</li>
+        </ul>
+        <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="handleUpgradeClick()">
+          Coming Soon
+        </button>
+      </div>
+      
+      <p style="font-size: 0.75rem; color: var(--text-muted);">
+        Payment integration is currently in development. Contact support to manual upgrade.
+      </p>
     </div>
   </div>
 

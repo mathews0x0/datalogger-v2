@@ -44,6 +44,34 @@ db.init_app(app)
 bcrypt.init_app(app)
 jwt = JWTManager(app)
 
+from functools import wraps
+
+def require_tier(tier):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            user_id = get_jwt_identity()
+            user = User.query.get(user_id)
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            
+            # Tier hierarchy: team > pro > free
+            tier_values = {'free': 0, 'pro': 1, 'team': 2}
+            user_tier_val = tier_values.get(user.subscription_tier, 0)
+            required_tier_val = tier_values.get(tier, 0)
+            
+            if user_tier_val < required_tier_val:
+                return jsonify({
+                    "error": "Upgrade required",
+                    "message": f"This feature requires a {tier.capitalize()} subscription.",
+                    "required_tier": tier,
+                    "current_tier": user.subscription_tier
+                }), 403
+            
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+
 @app.before_request
 def protect_api():
     # Only protect /api routes
@@ -180,6 +208,58 @@ def update_profile():
     
     db.session.commit()
     return jsonify(user.to_dict())
+
+@app.route('/api/sessions/limit', methods=['GET'])
+@jwt_required()
+def get_session_limit():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    
+    count = SessionMeta.query.filter_by(user_id=user_id).count()
+    max_sessions = 5 if user.subscription_tier == 'free' else 999999
+    
+    return jsonify({
+        "used": count,
+        "max": max_sessions,
+        "tier": user.subscription_tier
+    })
+
+@app.route('/api/admin/set-tier', methods=['POST'])
+@jwt_required()
+def admin_set_tier():
+    current_user_id = int(get_jwt_identity())
+    current_user = User.query.get(current_user_id)
+    
+    # Simple admin check: user_id=1 or specific domain
+    is_admin = (current_user_id == 1 or (current_user.email and current_user.email.endswith('@racesense.v2')))
+    
+    if not is_admin:
+        return jsonify({"error": "Admin access required"}), 403
+        
+    data = request.get_json()
+    target_user_id = data.get('user_id')
+    new_tier = data.get('tier')
+    
+    if not target_user_id or not new_tier:
+        return jsonify({"error": "user_id and tier required"}), 400
+        
+    if new_tier not in ['free', 'pro', 'team']:
+        return jsonify({"error": "Invalid tier"}), 400
+        
+    target_user = User.query.get(target_user_id)
+    if not target_user:
+        return jsonify({"error": "Target user not found"}), 404
+        
+    target_user.subscription_tier = new_tier
+    db.session.commit()
+    
+    return jsonify({
+        "success": True, 
+        "user_id": target_user_id, 
+        "tier": new_tier
+    })
 
 # ============================================================================
 # UTILITY FUNCTIONS
@@ -704,6 +784,19 @@ def register_new_sessions(user_id):
 def process_session():
     """Process a learning CSV file"""
     user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    # Check session limit for free users
+    if user.subscription_tier == 'free':
+        count = SessionMeta.query.filter_by(user_id=user_id).count()
+        if count >= 5:
+            return jsonify({
+                "error": "Limit reached",
+                "message": "Free tier is limited to 5 processed sessions. Please upgrade to Pro for unlimited storage.",
+                "used": count,
+                "max": 5
+            }), 403
+
     data = request.get_json()
     filename = data.get('filename') or data.get('csv_file') # support legacy
     
@@ -1147,22 +1240,35 @@ def get_processed_files():
 def process_all_files():
     """Process all unprocessed learning files, or specific files if provided."""
     user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    
+    # Get already processed files for this user
+    processed_count = SessionMeta.query.filter_by(user_id=user_id).count()
+    
     # Check if specific files were requested
     data = request.get_json() or {}
     requested_files = data.get('files', None)  # Optional list of specific files
     
     # Get list of learning files
     files = file_mgr.get_files()
-    
-    # Get already processed files for this user
-    processed_meta = SessionMeta.query.filter_by(user_id=user_id).all()
-    # This is slightly wrong because source_file isn't in DB yet
-    # Let's just use the file system check for now or assume all files in learning are unprocessed if not in DB
-    
-    # For now, let's just use the existing logic but register new sessions after
-    
-    # (Existing logic truncated for brevity, but I'll replace it properly)
     to_process = requested_files if requested_files else [f['filename'] for f in files]
+
+    # Limit check for free tier
+    if user.subscription_tier == 'free':
+        if processed_count >= 5:
+             return jsonify({
+                "error": "Limit reached",
+                "message": "Free tier is limited to 5 processed sessions. Please upgrade to Pro for unlimited storage.",
+                "used": processed_count,
+                "max": 5
+            }), 403
+        
+        # Only process up to the limit
+        remaining = 5 - processed_count
+        if len(to_process) > remaining:
+            to_process = to_process[:remaining]
+            # We'll continue but notify user? Or just process what we can?
+            # For now, just process what we can.
     
     results = {"success": [], "failed": []}
     
@@ -1410,6 +1516,8 @@ def update_session_notes(session_id):
         return jsonify({"error": "Failed to save notes"}), 500
 
 @app.route('/api/sessions/<session_id>/export')
+@jwt_required()
+@require_tier('pro')
 def export_session(session_id):
     """
     Export session data as a ZIP file.

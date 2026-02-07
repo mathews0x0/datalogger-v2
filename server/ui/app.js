@@ -123,6 +123,14 @@ async function apiCall(endpoint, options = {}) {
             return null;
         }
 
+        if (response.status === 403) {
+            const errorData = await response.json();
+            if (errorData.error === "Upgrade required" || errorData.error === "Limit reached") {
+                showUpgradeModal(errorData.required_tier ? errorData.required_tier.charAt(0).toUpperCase() + errorData.required_tier.slice(1) : "Pro Feature");
+                return null;
+            }
+        }
+
         if (!response.ok) {
             let errorMessage = `HTTP ${response.status}`;
             try {
@@ -165,11 +173,23 @@ function updateAuthUI() {
     const userProfileHeader = document.getElementById('userProfileHeader');
     const headerUserName = document.getElementById('headerUserName');
     const userProfileCard = document.getElementById('userProfileCard');
+    const tierBadge = document.getElementById('tierBadge');
+    const adminToolsCard = document.getElementById('adminToolsCard');
 
     if (currentUser) {
         if (loginBtn) loginBtn.style.display = 'none';
         if (userProfileHeader) userProfileHeader.style.display = 'flex';
         if (headerUserName) headerUserName.textContent = currentUser.name || currentUser.email;
+        
+        if (tierBadge) {
+            tierBadge.textContent = (currentUser.subscription_tier || 'FREE').toUpperCase();
+            tierBadge.className = `tier-badge ${currentUser.subscription_tier || 'free'}`;
+        }
+
+        // Admin Check
+        const isAdmin = (currentUser.id === 1 || (currentUser.email && currentUser.email.endsWith('@racesense.v2')));
+        if (adminToolsCard) adminToolsCard.style.display = isAdmin ? 'block' : 'none';
+
         if (userProfileCard) {
             userProfileCard.style.display = 'block';
             const nameInput = document.getElementById('profileName');
@@ -183,7 +203,60 @@ function updateAuthUI() {
         if (loginBtn) loginBtn.style.display = 'block';
         if (userProfileHeader) userProfileHeader.style.display = 'none';
         if (userProfileCard) userProfileCard.style.display = 'none';
+        if (adminToolsCard) adminToolsCard.style.display = 'none';
     }
+}
+
+async function adminSetTier() {
+    const userId = document.getElementById('adminUserId').value;
+    const tier = document.getElementById('adminTierSelect').value;
+
+    if (!userId || !tier) {
+        showToast('User ID and Tier required', 'error');
+        return;
+    }
+
+    try {
+        const result = await apiCall('/api/admin/set-tier', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: parseInt(userId), tier: tier })
+        });
+        if (result && result.success) {
+            showToast(`User ${userId} tier set to ${tier}`, 'success');
+            // If we updated ourselves, refresh auth
+            if (parseInt(userId) === currentUser.id) {
+                checkAuth();
+            }
+        }
+    } catch (e) {
+        showToast('Admin action failed: ' + e.message, 'error');
+    }
+}
+
+function showUpgradeModal(featureName = "") {
+    const modal = document.getElementById('upgradeModal');
+    const title = document.getElementById('upgradeTitle');
+    const message = document.getElementById('upgradeMessage');
+    
+    if (featureName) {
+        title.textContent = "Unlock " + featureName;
+        message.textContent = `The ${featureName} feature is available on our Pro plan. Upgrade now to get full access!`;
+    } else {
+        title.textContent = "Upgrade to Pro";
+        message.textContent = "Get unlimited session storage, CSV exports, and advanced telemetry features.";
+    }
+    
+    if (modal) modal.classList.add('active');
+}
+
+function closeUpgradeModal() {
+    const modal = document.getElementById('upgradeModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function handleUpgradeClick() {
+    showToast("Payment integration coming soon! Contact support for manual upgrade.", "info");
 }
 
 async function saveProfile() {
@@ -1473,6 +1546,17 @@ async function tagToTrackdayFromDetail(trackdayId, sessionId) {
     }
 }
 
+async function exportSession(sessionId) {
+    if (!currentUser || currentUser.subscription_tier === 'free') {
+        showUpgradeModal("Export");
+        return;
+    }
+    
+    // Use window.open or fetch with blob if we need auth headers
+    // Since our API uses cookies for JWT, window.open should work if the cookie is set
+    window.open(`${API_BASE}/api/sessions/${sessionId}/export`);
+}
+
 async function viewSession(sessionId, isPublicView = false, shareToken = null) {
     const container = document.getElementById('sessionDetailContent');
     const view = document.getElementById('sessionDetailView');
@@ -1584,7 +1668,12 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
                     <button class="btn btn-primary btn-sm no-print" onclick="openPlayback('${session.meta.session_id}', ${isShared ? `'${shareToken}'` : 'null'})">▶ Live Playback</button>
                     ${!isShared ? `
                         <button class="btn btn-secondary btn-sm no-print" onclick="showTagToTrackdayModal('${session.meta.session_id}')">🏷️ Tag to Trackday</button>
-                        <button class="btn btn-secondary btn-sm no-print" onclick="window.open('/api/sessions/${session.meta.session_id}/export')">Export ZIP</button>
+                        <button class="btn btn-secondary btn-sm no-print" 
+                                ${(!currentUser || currentUser.subscription_tier === 'free') ? 'disabled title="Upgrade to Pro to export"' : ''}
+                                onclick="exportSession('${session.meta.session_id}')">
+                            <i class="fas fa-file-export"></i> Export ZIP
+                            ${(!currentUser || currentUser.subscription_tier === 'free') ? ' 🔒' : ''}
+                        </button>
                     ` : ''}
                     <button class="btn btn-secondary btn-sm no-print" onclick="window.print()">Print Report</button>
                     ${!isShared ? `
@@ -1794,13 +1883,15 @@ async function loadLearningFiles() {
     container.innerHTML = '<div class="loading">Loading files...</div>';
 
     try {
-        // Fetch both file list (with archive flag) and processed files in parallel
-        const [files, processedList] = await Promise.all([
+        // Fetch both file list (with archive flag), processed files, and session limit in parallel
+        const [files, processedList, limitInfo] = await Promise.all([
             apiCall(`/api/learning/list?archived=${isArchivesView}`),
-            apiCall('/api/learning/processed')
+            apiCall('/api/learning/processed'),
+            apiCall('/api/sessions/limit')
         ]);
         window.currentFiles = files;
         window.processedFiles = new Set(processedList);
+        window.sessionLimit = limitInfo;
         renderFileTable();
     } catch (error) {
         container.innerHTML = '<p class="help-text">Failed to load files</p>';
@@ -1811,10 +1902,35 @@ function renderFileTable() {
     const container = document.getElementById('learningFilesList');
     const files = window.currentFiles || [];
     const processedFiles = window.processedFiles || new Set();
+    const limit = window.sessionLimit;
 
     if (files.length === 0) {
         container.innerHTML = '<p class="help-text">No learning files available</p>';
         return;
+    }
+
+    // Session Limit Banner
+    let limitBanner = '';
+    if (limit && limit.tier === 'free') {
+        const isFull = limit.used >= limit.max;
+        const color = isFull ? 'var(--error)' : (limit.used >= limit.max - 1 ? 'var(--warning)' : 'var(--success)');
+        limitBanner = `
+            <div class="card" style="margin-bottom: 1.5rem; border-left: 4px solid ${color}; background: rgba(255,255,255,0.02);">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <strong style="color: ${color};">${isFull ? 'Session Limit Reached' : 'Free Tier Storage'}</strong>
+                        <p class="help-text" style="margin: 0.25rem 0 0 0;">
+                            You have used ${limit.used} of ${limit.max} available sessions. 
+                            ${isFull ? 'Upgrade to Pro for unlimited storage.' : 'Upgrade to Pro to remove this limit.'}
+                        </p>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="showUpgradeModal('Unlimited Storage')">Upgrade</button>
+                </div>
+                <div style="height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; margin-top: 1rem; overflow: hidden;">
+                    <div style="height: 100%; width: ${(limit.used / limit.max) * 100}%; background: ${color};"></div>
+                </div>
+            </div>
+        `;
     }
 
     // Count unprocessed files for the Process All button
@@ -1831,9 +1947,11 @@ function renderFileTable() {
         // Check if file is already processed
         const isProcessed = processedFiles.has(f.filename);
         const processedBadge = isProcessed ? '<span style="color:#4CAF50; margin-left:0.5rem;" title="Already Processed">✅</span>' : '';
+        
+        const isLimitReached = limit && limit.tier === 'free' && limit.used >= limit.max;
         const processBtn = isProcessed
             ? '<button class="btn small" disabled style="opacity:0.5;" title="Already Processed">Processed</button>'
-            : `<button class="btn small" onclick="processFile('${f.filename}')">Process</button>`;
+            : `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">Process</button>`;
 
         return `
             <tr class="${rowClass}">
@@ -1874,8 +1992,9 @@ function renderFileTable() {
     }).join('');
 
     const html = `
+        ${limitBanner}
         <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
-            <button class="btn btn-primary" id="btnProcessAll" onclick="processAllFiles()" ${unprocessedCount === 0 ? 'disabled style="opacity:0.5;"' : ''}>
+            <button class="btn btn-primary" id="btnProcessAll" onclick="processAllFiles()" ${(unprocessedCount === 0 || (limit && limit.tier === 'free' && limit.used >= limit.max)) ? 'disabled style="opacity:0.5;"' : ''}>
                 🚀 Process All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}
             </button>
             <button class="btn btn-danger btn-sm" id="btnDeleteBulk" onclick="deleteSelectedFiles()" style="display:none;">
