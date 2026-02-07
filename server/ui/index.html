@@ -61,6 +61,7 @@
     <button class="nav-btn active" data-view="home"><i class="fas fa-home"></i> Home</button>
     <button class="nav-btn" data-view="tracks"><i class="fas fa-map-marked-alt"></i> Tracks</button>
     <button class="nav-btn" data-view="sessions"><i class="fas fa-history"></i> Sessions</button>
+    <button class="nav-btn" data-view="community"><i class="fas fa-users"></i> Community</button>
     <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
     <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
   </nav>
@@ -144,6 +145,22 @@
         <div id="trackdaysList" class="sessions-list">
           <div class="loading">Loading trackdays...</div>
         </div>
+      </div>
+    </div>
+
+    <!-- Community View -->
+    <div class="view" id="communityView">
+      <h2><i class="fas fa-users"></i> Community Feed</h2>
+      <p class="help-text">Recent public sessions from the community</p>
+      
+      <div class="filter-bar">
+        <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
+          <option value="">All Tracks</option>
+        </select>
+      </div>
+
+      <div id="communitySessionsList" class="sessions-list">
+        <div class="loading">Loading community sessions...</div>
       </div>
     </div>
 
@@ -502,6 +519,30 @@
 
       <div class="modal-actions" style="margin-top: 1rem;">
         <button class="btn secondary" onclick="closeTagTrackdayModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share Modal -->
+  <div class="modal" id="shareModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <span class="modal-close" onclick="closeShareModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">🔗 Share Session</h3>
+      
+      <p class="help-text" style="margin-bottom: 1rem;">Anyone with this link can view this session, even without an account.</p>
+      
+      <div class="input-group">
+        <label>Shareable Link</label>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="shareLinkInput" class="form-input" readonly style="flex: 1; background: var(--bg-secondary);">
+          <button class="btn btn-primary btn-sm" onclick="copyShareLink()">
+            <i class="fas fa-copy"></i> Copy
+          </button>
+        </div>
+      </div>
+      
+      <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <button class="btn secondary btn-sm" style="width: 100%;" onclick="closeShareModal()">Close</button>
       </div>
     </div>
   </div>

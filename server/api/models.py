@@ -45,6 +45,28 @@ class SessionMeta(db.Model):
     total_laps = db.Column(db.Integer)
     best_lap_time = db.Column(db.Float)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # New fields for Phase 2: Privacy
+    is_public = db.Column(db.Boolean, default=False)
+    share_token = db.Column(db.String(100), unique=True, nullable=True)
+    share_expires_at = db.Column(db.DateTime, nullable=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "track_id": self.track_id,
+            "session_name": self.session_name,
+            "start_time": self.start_time,
+            "duration_sec": self.duration_sec,
+            "total_laps": self.total_laps,
+            "best_lap_time": self.best_lap_time,
+            "is_public": self.is_public,
+            "share_token": self.share_token,
+            "share_expires_at": self.share_expires_at.isoformat() if self.share_expires_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
 
 class TrackMeta(db.Model):
     __tablename__ = 'tracks'

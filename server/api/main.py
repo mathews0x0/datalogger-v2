@@ -53,9 +53,14 @@ def protect_api():
             '/api/health',
             '/api/status',
             '/api/auth/login',
-            '/api/auth/register'
+            '/api/auth/register',
+            '/api/public/sessions'
         ]
         if request.path in public_paths:
+            return
+            
+        # Also allow shared and public session data
+        if request.path.startswith('/api/shared/') or request.path.startswith('/api/public/'):
             return
             
         # Also allow logout (it handles its own JWT if needed, or just clears cookies)
@@ -63,6 +68,16 @@ def protect_api():
             return
 
         try:
+            # For some endpoints, JWT is optional (we handle check inside)
+            optional_jwt_paths = [
+                '/api/sessions/' # We'll check prefixes
+            ]
+            
+            # If it's a session detail or telemetry request, we'll handle auth inside the function
+            if request.path.startswith('/api/sessions/') and (request.path.count('/') >= 4 or request.path.endswith('/telemetry')):
+                 # e.g. /api/sessions/<id> or /api/sessions/<id>/telemetry
+                 return
+
             verify_jwt_in_request()
         except Exception:
             return jsonify({"error": "Authentication required"}), 401
@@ -70,6 +85,7 @@ def protect_api():
 
 import time
 import sys
+import uuid
 
 # Add core to path for imports
 CORE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core'))
@@ -245,7 +261,9 @@ def robust_get_json(url, timeout=3.0):
 # ============================================================================
 
 @app.route('/')
-def index():
+@app.route('/shared/<token>')
+@app.route('/community')
+def index(token=None):
     """Serve the companion app"""
     return send_file(os.path.join(app.static_folder, 'index.html'))
 
@@ -405,21 +423,30 @@ def get_sessions():
             'track_name': track_name,
             'total_laps': s.total_laps,
             'best_lap_time': s.best_lap_time,
-            'tbl_improved': False # Need to store this in DB if we want it
+            'tbl_improved': False, # Need to store this in DB if we want it
+            'is_public': s.is_public,
+            'share_token': s.share_token
         })
     
     return jsonify(sessions)
 
 @app.route('/api/sessions/<path:session_id>')
-@jwt_required()
 def get_session(session_id):
     """Get full session data"""
+    try:
+        verify_jwt_in_request(optional=True)
+    except:
+        pass
     user_id = get_jwt_identity()
     
-    # Check if session belongs to user
-    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
+    # Check if session belongs to user or is public
+    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
-        return jsonify({"error": "Session not found or access denied"}), 404
+        return jsonify({"error": "Session not found"}), 404
+        
+    if not s_meta.is_public:
+        if not user_id or int(s_meta.user_id) != int(user_id):
+            return jsonify({"error": "Access denied"}), 401
         
     sessions_dir = config.SESSIONS_DIR
     session_file = sessions_dir / f"{session_id}.json"
@@ -429,6 +456,15 @@ def get_session(session_id):
         
     with open(session_file, 'r') as f:
         session_data = json.load(f)
+    
+    # Add privacy info from DB
+    session_data['is_public'] = s_meta.is_public
+    session_data['share_token'] = s_meta.share_token
+    
+    # Add owner info for public/shared views
+    owner = User.query.get(s_meta.user_id)
+    session_data['owner_name'] = owner.name if owner else "Unknown Rider"
+    session_data['is_shared_view'] = (not user_id or int(s_meta.user_id) != int(user_id))
     
     # Transform old format to new format for frontend compatibility
     if 'summary' not in session_data and 'aggregates' in session_data:
@@ -441,15 +477,22 @@ def get_session(session_id):
     return jsonify(session_data)
 
 @app.route('/api/sessions/<path:session_id>/telemetry')
-@jwt_required()
 def get_session_telemetry(session_id):
     """Get full telemetry data for a session"""
+    try:
+        verify_jwt_in_request(optional=True)
+    except:
+        pass
     user_id = get_jwt_identity()
     
-    # Check if session belongs to user
-    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
+    # Check if session belongs to user or is public
+    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
-        return jsonify({"error": "Session not found or access denied"}), 404
+        return jsonify({"error": "Session not found"}), 404
+        
+    if not s_meta.is_public:
+        if not user_id or int(s_meta.user_id) != int(user_id):
+            return jsonify({"error": "Access denied"}), 401
         
     sessions_dir = config.SESSIONS_DIR
     telemetry_file = sessions_dir / f"{session_id}_telemetry.json"
@@ -458,6 +501,125 @@ def get_session_telemetry(session_id):
         return send_file(telemetry_file, mimetype='application/json')
     
     return jsonify({"error": "Telemetry data not found"}), 404
+
+@app.route('/api/sessions/<path:session_id>/privacy', methods=['PUT'])
+@jwt_required()
+def toggle_session_privacy(session_id):
+    """Toggle session public/private status"""
+    user_id = int(get_jwt_identity())
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
+    
+    if not s_meta:
+        return jsonify({"error": "Session not found or access denied"}), 404
+        
+    data = request.get_json()
+    is_public = data.get('is_public', False)
+    
+    s_meta.is_public = is_public
+    db.session.commit()
+    
+    return jsonify({"success": True, "is_public": s_meta.is_public})
+
+@app.route('/api/sessions/<path:session_id>/share', methods=['POST'])
+@jwt_required()
+def generate_share_link(session_id):
+    """Generate or retrieve a share token for a session"""
+    user_id = int(get_jwt_identity())
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
+    
+    if not s_meta:
+        return jsonify({"error": "Session not found or access denied"}), 404
+        
+    if not s_meta.share_token:
+        s_meta.share_token = str(uuid.uuid4())
+        
+    db.session.commit()
+    
+    return jsonify({
+        "success": True, 
+        "share_token": s_meta.share_token,
+        "share_url": f"/shared/{s_meta.share_token}"
+    })
+
+@app.route('/api/shared/<token>')
+def get_shared_session(token):
+    """Get session data via share token (NO AUTH REQUIRED)"""
+    s_meta = SessionMeta.query.filter_by(share_token=token).first()
+    
+    if not s_meta:
+        return jsonify({"error": "Shared session not found"}), 404
+        
+    # Optional: check expiry if implemented
+    if s_meta.share_expires_at and s_meta.share_expires_at < datetime.utcnow():
+        return jsonify({"error": "Shared link has expired"}), 410
+        
+    sessions_dir = config.SESSIONS_DIR
+    session_file = sessions_dir / f"{s_meta.session_id}.json"
+    
+    if not session_file.exists():
+        return jsonify({"error": "Session data file not found"}), 404
+        
+    with open(session_file, 'r') as f:
+        session_data = json.load(f)
+    
+    # Add owner info
+    owner = User.query.get(s_meta.user_id)
+    session_data['owner_name'] = owner.name if owner else "Unknown Rider"
+    session_data['is_shared_view'] = True
+    
+    return jsonify(session_data)
+
+@app.route('/api/shared/<token>/telemetry')
+def get_shared_telemetry(token):
+    """Get telemetry via share token (NO AUTH REQUIRED)"""
+    s_meta = SessionMeta.query.filter_by(share_token=token).first()
+    
+    if not s_meta:
+        return jsonify({"error": "Shared session not found"}), 404
+        
+    sessions_dir = config.SESSIONS_DIR
+    telemetry_file = sessions_dir / f"{s_meta.session_id}_telemetry.json"
+    
+    if telemetry_file.exists():
+        return send_file(telemetry_file, mimetype='application/json')
+    
+    return jsonify({"error": "Telemetry data not found"}), 404
+
+@app.route('/api/public/sessions')
+def get_public_sessions():
+    """Get all public sessions"""
+    track_id = request.args.get('track_id', type=int)
+    
+    query = SessionMeta.query.filter_by(is_public=True)
+    if track_id:
+        query = query.filter_by(track_id=track_id)
+    
+    sessions_meta = query.order_by(SessionMeta.start_time.desc()).all()
+    
+    sessions = []
+    for s in sessions_meta:
+        # Get track name for response
+        track = TrackMeta.query.filter_by(track_id=s.track_id).first()
+        track_name = track.track_name if track else 'Unknown'
+        
+        # Get owner name
+        owner = User.query.get(s.user_id)
+        owner_name = owner.name if owner else "Unknown"
+        
+        sessions.append({
+            'session_id': s.session_id,
+            'session_name': s.session_name,
+            'start_time': s.start_time,
+            'duration_sec': s.duration_sec,
+            'track_id': s.track_id,
+            'track_name': track_name,
+            'total_laps': s.total_laps,
+            'best_lap_time': s.best_lap_time,
+            'owner_name': owner_name,
+            'is_public': True
+        })
+    
+    return jsonify(sessions)
 
 
 @app.route('/api/upload', methods=['POST'])

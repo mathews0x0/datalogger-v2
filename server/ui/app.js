@@ -39,6 +39,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check Auth
     checkAuth();
 
+    // Check for shared session in URL
+    const path = window.location.pathname;
+    if (path.startsWith('/shared/')) {
+        const token = path.split('/')[2];
+        if (token) {
+            viewSession(null, false, token);
+            return; // Don't load home data
+        }
+    }
+
     // Load initial data
     loadHomeData();
 });
@@ -83,6 +93,9 @@ function showView(viewName) {
                 break;
             case 'sessions':
                 loadSessions();
+                break;
+            case 'community':
+                loadCommunitySessions();
                 break;
             case 'process':
                 loadLearningFiles();
@@ -743,6 +756,7 @@ async function loadSessions(filterTrackId = null) {
                             <span>Duration:</span>
                             <strong>${formatDuration(session.duration_sec)}</strong>
                         </div>
+                        ${session.is_public ? '<span class="badge" style="background: var(--primary); color: white;"><i class="fas fa-globe"></i> Public</span>' : ''}
                         ${session.tbl_improved ? '<span class="badge success">New TBL!</span>' : ''}
                     </div>
                 </div>
@@ -752,6 +766,115 @@ async function loadSessions(filterTrackId = null) {
     } catch (error) {
         container.innerHTML = '<p class="help-text">Failed to load sessions</p>';
     }
+}
+
+// ============================================================================
+// COMMUNITY VIEW
+// ============================================================================
+
+async function loadCommunitySessions() {
+    const container = document.getElementById('communitySessionsList');
+    const filterSelect = document.getElementById('communityTrackFilter');
+
+    container.innerHTML = '<div class="loading">Loading community sessions...</div>';
+
+    try {
+        const trackId = filterSelect.value ? parseInt(filterSelect.value) : null;
+        const endpoint = trackId ? `/api/public/sessions?track_id=${trackId}` : '/api/public/sessions';
+        const publicSessions = await apiCall(endpoint);
+
+        // Populate filter dropdown if empty
+        if (filterSelect.options.length <= 1) {
+            const tracksData = await apiCall('/api/tracks');
+            filterSelect.innerHTML = '<option value="">All Tracks</option>' +
+                tracksData.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
+        }
+
+        if (publicSessions.length === 0) {
+            container.innerHTML = '<p class="help-text">No public sessions found. Be the first to share one!</p>';
+            return;
+        }
+
+        container.innerHTML = publicSessions.map(session => `
+            <div class="session-card" onclick="viewSession('${session.session_id}', true)">
+                <div class="session-header">
+                    <div>
+                        <div class="session-title">${session.track_name}</div>
+                        <div style="font-size: 0.8rem; color: var(--primary); font-weight: 600;">👤 ${session.owner_name}</div>
+                    </div>
+                    <div class="session-time">${formatDateTimeAbbreviated(session.start_time)}</div>
+                </div>
+                <div class="session-stats">
+                    <div class="session-stat">
+                        <span>Laps:</span>
+                        <strong>${session.total_laps}</strong>
+                    </div>
+                    <div class="session-stat">
+                        <span>Best:</span>
+                        <strong style="color: var(--success);">${formatTime(session.best_lap_time)}</strong>
+                    </div>
+                    <div class="session-stat">
+                        <span>Duration:</span>
+                        <strong>${formatDuration(session.duration_sec)}</strong>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+    } catch (error) {
+        container.innerHTML = '<p class="help-text">Failed to load community sessions</p>';
+    }
+}
+
+// ============================================================================
+// PRIVACY & SHARING
+// ============================================================================
+
+async function togglePrivacy(sessionId, isPublic) {
+    try {
+        const result = await apiCall(`/api/sessions/${sessionId}/privacy`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_public: isPublic })
+        });
+        
+        if (result && result.success) {
+            showToast(isPublic ? 'Session is now PUBLIC' : 'Session is now PRIVATE', 'info');
+            // Update UI without full reload
+            const toggle = document.getElementById('privacyToggle');
+            if (toggle) toggle.checked = isPublic;
+        }
+    } catch (e) {
+        showToast('Failed to update privacy: ' + e.message, 'error');
+    }
+}
+
+async function shareSession(sessionId) {
+    try {
+        const result = await apiCall(`/api/sessions/${sessionId}/share`, {
+            method: 'POST'
+        });
+        
+        if (result && result.success) {
+            const shareUrl = window.location.origin + result.share_url;
+            document.getElementById('shareLinkInput').value = shareUrl;
+            document.getElementById('shareModal').classList.add('active');
+        }
+    } catch (e) {
+        showToast('Failed to generate share link: ' + e.message, 'error');
+    }
+}
+
+function closeShareModal() {
+    document.getElementById('shareModal').classList.remove('active');
+}
+
+function copyShareLink() {
+    const input = document.getElementById('shareLinkInput');
+    input.select();
+    input.setSelectionRange(0, 99999);
+    document.execCommand('copy');
+    showToast('Link copied to clipboard!', 'success');
 }
 
 // ============================================================================
@@ -1350,7 +1473,7 @@ async function tagToTrackdayFromDetail(trackdayId, sessionId) {
     }
 }
 
-async function viewSession(sessionId) {
+async function viewSession(sessionId, isPublicView = false, shareToken = null) {
     const container = document.getElementById('sessionDetailContent');
     const view = document.getElementById('sessionDetailView');
 
@@ -1361,7 +1484,17 @@ async function viewSession(sessionId) {
     });
 
     try {
-        const session = await apiCall(`/api/sessions/${sessionId}`);
+        let endpoint = isPublicView ? `/api/sessions/${sessionId}` : `/api/sessions/${sessionId}`;
+        if (shareToken) {
+            endpoint = `/api/shared/${shareToken}`;
+        }
+        
+        // If it's a public view from community, we still use the main session endpoint but might need to adjust auth
+        // Actually, the API I wrote for /api/public/sessions returns enough info to identify it.
+        // But for details, we need the full session.
+        
+        const session = await apiCall(endpoint);
+        const isShared = session.is_shared_view || isPublicView;
 
         // Phase 7.1 Calculations
         const validLapsTimes = session.laps.filter(l => l.valid && l.lap_time > 0).map(l => l.lap_time);
@@ -1394,12 +1527,14 @@ async function viewSession(sessionId) {
 
         // Get all-time best for this track (from track data)
         let allTimeBest = null;
-        try {
-            const trackData = await apiCall(`/api/tracks/${session.track.track_id}`);
-            if (trackData && trackData.best_lap_time) {
-                allTimeBest = trackData.best_lap_time;
-            }
-        } catch (e) { console.log("Track PB not available"); }
+        if (!isShared) {
+            try {
+                const trackData = await apiCall(`/api/tracks/${session.track.track_id}`);
+                if (trackData && trackData.best_lap_time) {
+                    allTimeBest = trackData.best_lap_time;
+                }
+            } catch (e) { console.log("Track PB not available"); }
+        }
 
         // Generate sector comparison data
         const sectorBests = [];
@@ -1409,11 +1544,23 @@ async function viewSession(sessionId) {
         }
 
         container.innerHTML = `
+            ${isShared ? `
+                <div style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--primary);">
+                    <div>
+                        <span style="color: var(--primary); font-weight: bold;">Rider: ${session.owner_name || 'Anonymous'}</span>
+                        <p style="margin: 0.25rem 0 0 0; font-size: 0.8rem; color: var(--text-dim);">You are viewing a shared session.</p>
+                    </div>
+                    ${!currentUser ? `
+                        <button class="btn btn-primary btn-sm" onclick="showAuthModal()">Sign up to track your own laps</button>
+                    ` : ''}
+                </div>
+            ` : ''}
+
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
                 <div>
                      <h2 style="margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem;">
                         ${session.meta.session_name || session.track.track_name + ' Session'}
-                        <button class="btn-icon no-print" onclick="promptRenameSession('${session.meta.session_id}', '${session.meta.session_name || ''}')" title="Rename Session">✎</button>
+                        ${!isShared ? `<button class="btn-icon no-print" onclick="promptRenameSession('${session.meta.session_id}', '${session.meta.session_name || ''}')" title="Rename Session">✎</button>` : ''}
                      </h2>
                      <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
                          <p class="help-text" style="margin: 0;">${formatDateTime(session.meta.start_time)}</p>
@@ -1424,11 +1571,25 @@ async function viewSession(sessionId) {
                      </div>
                 </div>
                 <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-                    <button class="btn btn-primary btn-sm no-print" onclick="openPlayback('${session.meta.session_id}')">▶ Live Playback</button>
-                    <button class="btn btn-secondary btn-sm no-print" onclick="showTagToTrackdayModal('${session.meta.session_id}')">🏷️ Tag to Trackday</button>
-                    <button class="btn btn-secondary btn-sm no-print" onclick="window.open('/api/sessions/${session.meta.session_id}/export')">Export ZIP</button>
+                    ${!isShared ? `
+                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-right: 0.5rem; background: var(--bg-secondary); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border);">
+                            <span style="font-size: 0.75rem; font-weight: 600;">Public</span>
+                            <label class="toggle-switch" style="transform: scale(0.8);">
+                                <input type="checkbox" id="privacyToggle" ${session.is_public ? 'checked' : ''} onchange="togglePrivacy('${session.meta.session_id}', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <button class="btn btn-secondary btn-sm no-print" onclick="shareSession('${session.meta.session_id}')"><i class="fas fa-share-alt"></i> Share</button>
+                    ` : ''}
+                    <button class="btn btn-primary btn-sm no-print" onclick="openPlayback('${session.meta.session_id}', ${isShared ? `'${shareToken}'` : 'null'})">▶ Live Playback</button>
+                    ${!isShared ? `
+                        <button class="btn btn-secondary btn-sm no-print" onclick="showTagToTrackdayModal('${session.meta.session_id}')">🏷️ Tag to Trackday</button>
+                        <button class="btn btn-secondary btn-sm no-print" onclick="window.open('/api/sessions/${session.meta.session_id}/export')">Export ZIP</button>
+                    ` : ''}
                     <button class="btn btn-secondary btn-sm no-print" onclick="window.print()">Print Report</button>
-                    <button class="btn btn-danger btn-sm no-print" onclick="deleteSession('${session.meta.session_id}')">Delete</button>
+                    ${!isShared ? `
+                        <button class="btn btn-danger btn-sm no-print" onclick="deleteSession('${session.meta.session_id}')">Delete</button>
+                    ` : ''}
                 </div>
             </div>
             
@@ -1515,7 +1676,8 @@ async function viewSession(sessionId) {
                 </h3>
                 <textarea 
                     id="sessionNotes" 
-                    placeholder="Add notes about this session (e.g., tire pressure, setup changes, conditions)..."
+                    ${isShared ? 'readonly' : ''}
+                    placeholder="${isShared ? 'No notes available.' : 'Add notes about this session (e.g., tire pressure, setup changes, conditions)...'}"
                     style="width: 100%; min-height: 80px; background: var(--surface-light); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; color: var(--text); resize: vertical; font-family: inherit;"
                     onblur="saveSessionNotes('${session.meta.session_id}')"
                 >${session.mode?.notes || ''}</textarea>
@@ -1554,7 +1716,7 @@ async function viewSession(sessionId) {
             const isBest = lap.is_session_best;
 
             return `
-                                <tr onclick="viewLapDetail('${session.meta.session_id}', ${lap.lap_number})" class="lap-row ${isBest ? 'best-lap' : ''}" title="Click for Detailed Analysis">
+                                <tr onclick="viewLapDetail('${session.meta.session_id}', ${lap.lap_number}, ${isShared ? `'${shareToken}'` : 'null'})" class="lap-row ${isBest ? 'best-lap' : ''}" title="Click for Detailed Analysis">
                                     <td class="lap-number">
                                         ${lap.lap_number}
                                     </td>
@@ -1590,7 +1752,18 @@ async function viewSession(sessionId) {
         `;
 
         // Phase 7.4.3: Init Comparison
-        setTimeout(() => initComparison(session), 100);
+        if (typeof initComparison === 'function') {
+            setTimeout(() => initComparison(session), 100);
+        }
+
+    } catch (error) {
+        console.error(error);
+        container.innerHTML = `<div class="error-state">
+            <p>Failed to load session</p>
+            <p class="help-text" style="color: var(--error);">${error.message}</p>
+        </div>`;
+    }
+}
 
     } catch (error) {
         console.error(error);
@@ -1969,21 +2142,28 @@ async function processAllFiles() {
 // LAP DETAILED ANALYSIS (Phase 7.4)
 // ----------------------------------------------------------------------------
 
-async function viewLapDetail(sessionId, lapNumber) {
+async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
     const container = document.getElementById('sessionDetailContent');
     container.innerHTML = `<div class="loading">Loading Lap ${lapNumber} telemetry...</div>`;
 
     try {
-        const session = await apiCall(`/api/sessions/${sessionId}`);
+        let endpoint = `/api/sessions/${sessionId}`;
+        if (shareToken) {
+            endpoint = `/api/shared/${shareToken}`;
+        }
+        const session = await apiCall(endpoint);
         const lap = session.laps.find(l => l.lap_number === lapNumber);
 
         // Fetch Telemetry
-        const teleId = sessionId + "_telemetry";
         let telemetry = null;
         try {
-            telemetry = await apiCall(`/api/sessions/${teleId}`);
+            let teleEndpoint = `/api/sessions/${sessionId}_telemetry`;
+            if (shareToken) {
+                teleEndpoint = `/api/shared/${shareToken}/telemetry`;
+            }
+            telemetry = await apiCall(teleEndpoint);
         } catch (e) {
-            throw new Error("Telemetry not available for this session. (Reprocess to generate)");
+            throw new Error("Telemetry not available for this session.");
         }
 
 
@@ -3658,7 +3838,7 @@ let pbState = {
     bounds: null
 };
 
-async function openPlayback(sessionId) {
+async function openPlayback(sessionId, shareToken = null) {
     const modal = document.getElementById('playbackModal');
 
     // 1. Reset State
@@ -3676,9 +3856,17 @@ async function openPlayback(sessionId) {
 
     try {
         // 3. Fetch Data
+        let endpoint = `/api/sessions/${sessionId}`;
+        let teleEndpoint = `/api/sessions/${sessionId}/telemetry`;
+        
+        if (shareToken) {
+            endpoint = `/api/shared/${shareToken}`;
+            teleEndpoint = `/api/shared/${shareToken}/telemetry`;
+        }
+
         const [session, telemetry] = await Promise.all([
-            apiCall(`/api/sessions/${sessionId}`),
-            apiCall(`/api/sessions/${sessionId}/telemetry`)
+            apiCall(endpoint),
+            apiCall(teleEndpoint)
         ]);
 
         pbState.session = session;
