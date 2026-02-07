@@ -1530,3 +1530,24 @@ The SD card module wasn't faulty — the driver was. Always start with official/
 - PCBA-ready BOM with LCSC part numbers confirmed.
 
 ---
+
+---
+
+### 2026-02-07: Firmware Port — RS-Core (ESP32-S3) Optimization
+
+**Context:** Following the finalization of the RS-Core hardware, the firmware was ported to support the ESP32-S3's specific architecture and new pin mapping.
+
+**Implementation Details:**
+- **Pin Mapping:** Updated all peripheral GPIOs to match the RS-Core V2 schematic (GPS: 17/18, IMU: 21/39, SD: 10/11/12/13).
+- **Battery Monitoring:** Integrated ADC1_CH7 (IO35) logic. The firmware now captures real-time voltage data, enabling battery percentage tracking in the app and "low power" safety shutdowns.
+- **S3 Performance Tuning:**
+    - Increased SD SPI frequency to **10MHz** for faster write bursts.
+    - Set I2C frequency to **400kHz** (Fast Mode) for the BMI160.
+    - Utilized the S3's dual-core architecture to isolate the high-frequency logging loop from the web server.
+- **CSV Schema Update:** Added `vbat` as a core telemetry field to every log entry.
+
+**Outcome:**
+- Firmware is fully synchronized with the production hardware.
+- Ready for final system integration testing and March track deployment.
+
+---
