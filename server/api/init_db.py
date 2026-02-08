@@ -15,7 +15,7 @@ def init_db():
         print("Database tables created.")
 
         # Create default admin user if it doesn't exist
-        admin = User.query.filter_by(email='admin@racesense.v2').first()
+        admin = User.query.filter_by(email='admin').first()
         if not admin:
             admin = User(
                 email='admin@racesense.v2',
@@ -23,7 +23,7 @@ def init_db():
                 bike_info='System Default',
                 home_track='N/A'
             )
-            admin.set_password('admin123') # Default password
+            admin.set_password('RS') # Default password
             db.session.add(admin)
             db.session.commit()
             print(f"Default admin user created with ID: {admin.id}")
