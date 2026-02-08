@@ -2579,78 +2579,84 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
                     </div>
                 </div>
             </div>
-            
-            <!-- WEATHER & CONDITIONS -->
-            <div class="card" style="margin-bottom: 1.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                    <span style="font-size: 1.5rem;">🌡️</span>
-                    <div>
-                        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Track Temp</div>
-                        <div style="font-weight: 600;">${session.environment?.track_temperature ? session.environment.track_temperature + '°C' : '--'}</div>
-                    </div>
+
+            <!-- SECTION: SESSION CONTEXT (Environment, Notes, Diagnostics) -->
+            <div id="sectionContext" class="details-section collapsed">
+                <div class="details-section-header" onclick="toggleDetailsSection('sectionContext')">
+                    <h3><i class="fas fa-info-circle" style="color: var(--secondary);"></i> Session Context & Health</h3>
+                    <i class="fas fa-chevron-down chevron-icon"></i>
                 </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                    <span style="font-size: 1.5rem;">☁️</span>
-                    <div>
-                        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Ambient</div>
-                        <div style="font-weight: 600;">${session.environment?.ambient_temperature ? session.environment.ambient_temperature + '°C' : '--'}</div>
+                <div class="details-section-content">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                        <div class="card" style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem;">
+                            <span style="font-size: 1.5rem;">🌡️</span>
+                            <div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Track Temp</div>
+                                <div style="font-weight: 600;">${session.environment?.track_temperature ? session.environment.track_temperature + '°C' : '--'}</div>
+                            </div>
+                        </div>
+                        <div class="card" style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem;">
+                            <span style="font-size: 1.5rem;">☁️</span>
+                            <div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Ambient</div>
+                                <div style="font-weight: 600;">${session.environment?.ambient_temperature ? session.environment.ambient_temperature + '°C' : '--'}</div>
+                            </div>
+                        </div>
+                        <div class="card" style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem;">
+                            <span style="font-size: 1.5rem;">📡</span>
+                            <div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">GPS Quality</div>
+                                <div style="font-weight: 600;">${session.environment?.gps_quality_summary?.fix_dropouts === 0 ? '✓ Excellent' : session.environment?.gps_quality_summary?.fix_dropouts + ' dropouts'}</div>
+                            </div>
+                        </div>
+                        <div class="card" style="display: flex; align-items: center; gap: 0.75rem; padding: 1rem;">
+                            <span style="font-size: 1.5rem;">⏱️</span>
+                            <div>
+                                <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Duration</div>
+                                <div style="font-weight: 600;">${Math.floor(session.meta.duration_sec / 60)}m ${Math.floor(session.meta.duration_sec % 60)}s</div>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                    <span style="font-size: 1.5rem;">📡</span>
-                    <div>
-                        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">GPS Quality</div>
-                        <div style="font-weight: 600;">${session.environment?.gps_quality_summary?.fix_dropouts === 0 ? '✓ Excellent' : session.environment?.gps_quality_summary?.fix_dropouts + ' dropouts'}</div>
+
+                    <div style="margin-bottom: 1.5rem;">
+                        <h4 style="margin: 0 0 0.75rem 0; font-size: 0.9rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Session Notes</h4>
+                        <textarea 
+                            id="sessionNotes" 
+                            ${isShared ? 'readonly' : ''}
+                            placeholder="${isShared ? 'No notes available.' : 'Add notes about this session (e.g., tire pressure, setup changes, conditions)...'}"
+                            style="width: 100%; min-height: 80px; background: var(--surface-light); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; color: var(--text); resize: vertical; font-family: inherit;"
+                            onblur="saveSessionNotes('${session.meta.session_id}')"
+                        >${session.mode?.notes || ''}</textarea>
                     </div>
-                </div>
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                    <span style="font-size: 1.5rem;">⏱️</span>
+
                     <div>
-                        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Duration</div>
-                        <div style="font-weight: 600;">${Math.floor(session.meta.duration_sec / 60)}m ${Math.floor(session.meta.duration_sec % 60)}s</div>
+                        <h4 style="margin: 0 0 0.75rem 0; font-size: 0.9rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Technical Diagnostics</h4>
+                        ${generateDiagnosticsPanelFixed(session)}
                     </div>
                 </div>
             </div>
-            
-            <!-- SESSION NOTES -->
-            <div class="card" style="margin-bottom: 1.5rem;">
-                <h3 style="margin: 0 0 0.75rem 0; display: flex; align-items: center; gap: 0.5rem;">
-                    <span style="color: var(--primary);">📝</span> Session Notes
-                </h3>
-                <textarea 
-                    id="sessionNotes" 
-                    ${isShared ? 'readonly' : ''}
-                    placeholder="${isShared ? 'No notes available.' : 'Add notes about this session (e.g., tire pressure, setup changes, conditions)...'}"
-                    style="width: 100%; min-height: 80px; background: var(--surface-light); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; color: var(--text); resize: vertical; font-family: inherit;"
-                    onblur="saveSessionNotes('${session.meta.session_id}')"
-                >${session.mode?.notes || ''}</textarea>
-            </div>
-            
-            <!-- SESSION DIAGNOSTICS (Always Visible) -->
-            ${generateDiagnosticsPanelFixed(session)}
-            
-            <!-- SECTOR COMPARISON CHART -->
-            ${generateSectorComparisonChart(session.laps, sectorCount, sectorBests)}
-            
-            <!-- LAP ANALYSIS TABLE (Modernized) -->
-            <div class="card" style="margin-bottom: 1.5rem;">
-                <h3 style="margin: 0 0 1rem 0; display: flex; align-items: center; gap: 0.5rem;">
-                    <span style="color: var(--primary);">📊</span> Lap Analysis
-                </h3>
-                <div style="overflow-x: auto;">
-                    <table class="modern-table" style="width: 100%; border-collapse: collapse; min-width: 600px;">
-                        <thead>
-                            <tr>
-                                <th style="width: 60px;">Lap</th>
-                                <th>Time</th>
-                                <th>Delta</th>
-                                ${session.analysis?.metrics ? '<th style="text-align: center;">Stability</th><th style="text-align: center;">Lat Load</th>' : ''}
-                                ${Array(sectorCount).fill(0).map((_, i) => `<th style="text-align: center;">S${i + 1}</th>`).join('')}
-                                <th style="width: 60px;"></th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${session.laps.map(lap => {
+
+            <!-- SECTION: LAP ANALYSIS (Main Table) -->
+            <div id="sectionLaps" class="details-section">
+                <div class="details-section-header" onclick="toggleDetailsSection('sectionLaps')">
+                    <h3><i class="fas fa-stopwatch" style="color: var(--success);"></i> Lap Analysis</h3>
+                    <i class="fas fa-chevron-down chevron-icon"></i>
+                </div>
+                <div class="details-section-content">
+                    <div style="overflow-x: auto;">
+                        <table class="modern-table" style="width: 100%; border-collapse: collapse; min-width: 600px;">
+                            <thead>
+                                <tr>
+                                    <th style="width: 60px;">Lap</th>
+                                    <th>Time</th>
+                                    <th>Delta</th>
+                                    ${session.analysis?.metrics ? '<th style="text-align: center;">Stability</th><th style="text-align: center;">Lat Load</th>' : ''}
+                                    ${Array(sectorCount).fill(0).map((_, i) => `<th style="text-align: center;">S${i + 1}</th>`).join('')}
+                                    <th style="width: 60px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${session.laps.map(lap => {
             const m = session.analysis?.metrics?.laps?.find(x => x && x.lap_number === lap.lap_number);
             const stab = m?.scores?.stability_score;
             const load = m?.scores?.lateral_load_score;
@@ -2659,52 +2665,72 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
             const isBest = lap.is_session_best;
 
             return `
-                                <tr onclick="viewLapDetail('${session.meta.session_id}', ${lap.lap_number}, ${isShared ? `'${shareToken}'` : 'null'})" class="lap-row ${isBest ? 'best-lap' : ''}" title="Click for Detailed Analysis">
-                                    <td class="lap-number">
-                                        ${lap.lap_number}
-                                    </td>
-                                    <td class="lap-time">${formatTime(lap.lap_time)}</td>
-                                    <td class="lap-delta ${lap.delta_to_reference > 0 ? 'slower' : 'faster'}">
-                                        ${lap.delta_to_reference > 0 ? '+' : ''}${lap.delta_to_reference.toFixed(3)}
-                                    </td>
-                                    ${session.analysis?.metrics ? `
-                                        <td style="text-align: center;">
-                                            ${stab ? `<span class="score-pill" style="background: ${stabColor}22; color: ${stabColor};">${stab}%</span>` : '-'}
+                                    <tr onclick="viewLapDetail('${session.meta.session_id}', ${lap.lap_number}, ${isShared ? `'${shareToken}'` : 'null'})" class="lap-row ${isBest ? 'best-lap' : ''}" title="Click for Detailed Analysis">
+                                        <td class="lap-number">
+                                            ${lap.lap_number}
                                         </td>
-                                        <td style="text-align: center;">
-                                            ${load ? `<span class="score-pill">${load}%</span>` : '-'}
+                                        <td class="lap-time">${formatTime(lap.lap_time)}</td>
+                                        <td class="lap-delta ${lap.delta_to_reference > 0 ? 'slower' : 'faster'}">
+                                            ${lap.delta_to_reference > 0 ? '+' : ''}${lap.delta_to_reference.toFixed(3)}
                                         </td>
-                                    ` : ''}
-                                    ${lap.sector_times.map((t, i) => `
-                                        <td class="${getHeatmapClass(t, sectorMedians[i])}" style="text-align: center; font-family: monospace;">${formatTime(t)}</td>
-                                    `).join('')}
-                                    <td style="text-align: center;">
-                                        ${isBest ? '<span class="best-badge">★ BEST</span>' : ''}
-                                        <button class="btn-icon no-print" onclick="event.stopPropagation(); setForComparison('${session.meta.session_id}', ${lap.lap_number})" title="Add to Compare">⚖️</button>
-                                        <button class="btn-icon no-print" onclick="event.stopPropagation(); showAddAnnotationModalWithLap('${session.meta.session_id}', ${lap.lap_number})" title="Add Note">📝</button>
-                                    </td>
-                                </tr>
-                            `}).join('')}
-                        </tbody>
-                    </table>
+                                        ${session.analysis?.metrics ? `
+                                            <td style="text-align: center;">
+                                                ${stab ? `<span class="score-pill" style="background: ${stabColor}22; color: ${stabColor};">${stab}%</span>` : '-'}
+                                            </td>
+                                            <td style="text-align: center;">
+                                                ${load ? `<span class="score-pill">${load}%</span>` : '-'}
+                                            </td>
+                                        ` : ''}
+                                        ${lap.sector_times.map((t, i) => `
+                                            <td class="${getHeatmapClass(t, sectorMedians[i])}" style="text-align: center; font-family: monospace;">${formatTime(t)}</td>
+                                        `).join('')}
+                                        <td style="text-align: center;">
+                                            ${isBest ? '<span class="best-badge">★ BEST</span>' : ''}
+                                            <button class="btn-icon no-print" onclick="event.stopPropagation(); setForComparison('${session.meta.session_id}', ${lap.lap_number})" title="Add to Compare">⚖️</button>
+                                            <button class="btn-icon no-print" onclick="event.stopPropagation(); showAddAnnotationModalWithLap('${session.meta.session_id}', ${lap.lap_number})" title="Add Note">📝</button>
+                                        </td>
+                                    </tr>
+                                `}).join('')}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
             
             <div id="comparisonContainer"></div>
-            
-            <!-- SESSION TREND (Timeline) -->
-            ${generateTimelineSVG(session.laps)}
 
-            <!-- SESSION ANNOTATIONS (Phase 5) -->
-            <div class="card" style="margin-top: 1.5rem;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                    <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="color: var(--primary);">📝</span> Coach Annotations
-                    </h3>
-                    <button class="btn btn-primary btn-sm" onclick="showAddAnnotationModalFromDetail('${session.meta.session_id}')">Add Note</button>
+            <!-- SECTION: VISUAL INSIGHTS (Charts) -->
+            <div id="sectionVisuals" class="details-section collapsed">
+                <div class="details-section-header" onclick="toggleDetailsSection('sectionVisuals')">
+                    <h3><i class="fas fa-chart-area" style="color: var(--primary);"></i> Visual Insights</h3>
+                    <i class="fas fa-chevron-down chevron-icon"></i>
                 </div>
-                <div id="detailAnnotationsList">
-                    <div class="loading">Loading notes...</div>
+                <div class="details-section-content">
+                    <div style="margin-bottom: 2rem;">
+                        <h4 style="margin: 0 0 1rem 0; font-size: 0.9rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Sector Comparison</h4>
+                        ${generateSectorComparisonChart(session.laps, sectorCount, sectorBests)}
+                    </div>
+                    <div>
+                        <h4 style="margin: 0 0 1rem 0; font-size: 0.9rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;">Session Timeline</h4>
+                        ${generateTimelineSVG(session.laps)}
+                    </div>
+                </div>
+            </div>
+
+            <!-- SECTION: COACH'S CORNER (Annotations) -->
+            <div id="sectionCoach" class="details-section">
+                <div class="details-section-header" onclick="toggleDetailsSection('sectionCoach')">
+                    <h3><i class="fas fa-user-graduate" style="color: #9c27b0;"></i> Coach's Corner</h3>
+                    <i class="fas fa-chevron-down chevron-icon"></i>
+                </div>
+                <div class="details-section-content">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                        <p class="help-text" style="margin: 0;">Add notes and feedback for specific laps or the entire session.</p>
+                        <button class="btn btn-primary btn-sm" onclick="showAddAnnotationModalFromDetail('${session.meta.session_id}')">Add Note</button>
+                    </div>
+                    <div id="detailAnnotationsList">
+                        <div class="loading">Loading notes...</div>
+                    </div>
                 </div>
             </div>
         `;
@@ -6654,3 +6680,14 @@ function updateBleUiState(state) {
         setupArea.style.display = 'none';
     }
 }
+
+/**
+ * UI Cleanup: Collapsible section helper
+ */
+function toggleDetailsSection(sectionId) {
+    const section = document.getElementById(sectionId);
+    if (section) {
+        section.classList.toggle('collapsed');
+    }
+}
+

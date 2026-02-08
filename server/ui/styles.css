@@ -406,7 +406,7 @@ h2::before {
   background: #444;
 }
 
-/* Existing utility compatibility */
+/* Status badge refinements */
 .status-badge {
   background: var(--glass);
   border: 1px solid var(--glass-border);
@@ -414,6 +414,65 @@ h2::before {
   padding: 4px 12px;
   font-size: 0.75rem;
   font-weight: 600;
+}
+
+/* Collapsible Details Sections */
+.details-section {
+    margin-bottom: 1.5rem;
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    transition: all 0.3s ease;
+}
+
+.details-section-header {
+    padding: 1.25rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    background: rgba(255, 255, 255, 0.02);
+    transition: background 0.2s;
+    user-select: none;
+}
+
+.details-section-header:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.details-section-header h3 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.details-section-content {
+    padding: 1.5rem;
+    border-top: 1px solid var(--border);
+    animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.details-section.collapsed .details-section-content {
+    display: none;
+}
+
+.chevron-icon {
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-size: 0.9rem;
+    opacity: 0.6;
+}
+
+.details-section.collapsed .chevron-icon {
+    transform: rotate(-90deg);
 }
 
 .sessions-list {
@@ -797,6 +856,18 @@ h2::before {
 
   .quick-stats {
     grid-template-columns: 1fr;
+  }
+
+  .details-section-header {
+      padding: 1rem;
+  }
+
+  .details-section-header h3 {
+      font-size: 1rem;
+  }
+
+  .details-section-content {
+      padding: 1rem;
   }
 }
 
