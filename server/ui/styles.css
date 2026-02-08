@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @import url('https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css');
 
 :root {
@@ -1962,4 +1962,386 @@ input:checked + .toggle-slider:before {
   height: 150px;
   border-radius: var(--radius);
   margin-bottom: 1rem;
+}
+
+/* ============================================================================
+   PREMIUM SESSION HEADER (Minimalist Overhaul)
+   ============================================================================ */
+
+.session-header-premium {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: 1.5rem 0;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.session-header-premium .session-title-block {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-header-premium .session-title {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+  margin: 0 0 0.5rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.session-header-premium .session-title::before {
+  display: none;
+}
+
+.session-header-premium .session-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  color: var(--text-dim);
+  font-size: 0.875rem;
+}
+
+.session-header-premium .session-meta-row .meta-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.session-header-premium .session-meta-row .meta-item i {
+  opacity: 0.6;
+  font-size: 0.8rem;
+}
+
+.session-header-premium .session-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+
+/* Back Link (subtle) */
+.session-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-decoration: none;
+  padding: 0.4rem 0;
+  transition: color 0.2s;
+  margin-bottom: 0.5rem;
+}
+
+.session-back-link:hover {
+  color: var(--primary);
+}
+
+.session-back-link i {
+  font-size: 0.7rem;
+}
+
+/* Telemetry Info Row - Collapsed badges */
+.telemetry-info-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 8px;
+  border: 1px solid var(--glass-border);
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.telemetry-info-row .telemetry-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.telemetry-info-row .telemetry-item .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.telemetry-info-row .telemetry-item .dot.green {
+  background: var(--success);
+  box-shadow: 0 0 6px var(--success);
+}
+
+.telemetry-info-row .telemetry-item .dot.orange {
+  background: var(--warning);
+  box-shadow: 0 0 6px var(--warning);
+}
+
+.telemetry-info-row .telemetry-item .dot.gray {
+  background: var(--text-muted);
+}
+
+.telemetry-info-row .divider {
+  width: 1px;
+  height: 14px;
+  background: var(--border);
+}
+
+/* Actions Dropdown */
+.actions-dropdown {
+  position: relative;
+  display: inline-block;
+}
+
+.actions-dropdown-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.actions-dropdown-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.actions-dropdown-btn i.fa-chevron-down {
+  font-size: 0.7rem;
+  opacity: 0.7;
+  transition: transform 0.2s;
+}
+
+.actions-dropdown.open .actions-dropdown-btn i.fa-chevron-down {
+  transform: rotate(180deg);
+}
+
+.actions-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 200px;
+  background: rgba(20, 20, 20, 0.98);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-8px);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 100;
+  overflow: hidden;
+}
+
+.actions-dropdown.open .actions-dropdown-menu {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.actions-dropdown-menu .dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  color: var(--text);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+}
+
+.actions-dropdown-menu .dropdown-item:hover {
+  background: rgba(255, 107, 53, 0.1);
+}
+
+.actions-dropdown-menu .dropdown-item i {
+  width: 16px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.actions-dropdown-menu .dropdown-item:hover i {
+  color: var(--primary);
+}
+
+.actions-dropdown-menu .dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0.25rem 0;
+}
+
+.actions-dropdown-menu .dropdown-item.danger {
+  color: var(--error);
+}
+
+.actions-dropdown-menu .dropdown-item.danger i {
+  color: var(--error);
+}
+
+.actions-dropdown-menu .dropdown-item.danger:hover {
+  background: rgba(255, 56, 96, 0.1);
+}
+
+.actions-dropdown-menu .dropdown-item:disabled,
+.actions-dropdown-menu .dropdown-item.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.actions-dropdown-menu .dropdown-item:disabled:hover,
+.actions-dropdown-menu .dropdown-item.disabled:hover {
+  background: transparent;
+}
+
+/* Public Toggle - Premium style */
+.privacy-toggle-premium {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: all 0.2s;
+}
+
+.privacy-toggle-premium.is-public {
+  background: rgba(0, 210, 106, 0.1);
+  border-color: rgba(0, 210, 106, 0.3);
+  color: var(--success);
+}
+
+.privacy-toggle-premium .toggle-switch {
+  transform: scale(0.75);
+  margin: 0;
+}
+
+/* Primary Playback Button - Premium */
+.btn-playback {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.25rem;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 4px 15px var(--primary-glow);
+}
+
+.btn-playback:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px var(--primary-glow);
+}
+
+.btn-playback i {
+  font-size: 0.8rem;
+}
+
+/* Lap time typography */
+.lap-time-display {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+
+/* Shared session banner - cleaner */
+.shared-session-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem 1.25rem;
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.08) 0%, rgba(255, 107, 53, 0.02) 100%);
+  border: 1px solid rgba(255, 107, 53, 0.2);
+  border-radius: 12px;
+  margin-bottom: 1.5rem;
+}
+
+.shared-session-banner .rider-info {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.shared-session-banner .rider-avatar {
+  width: 40px;
+  height: 40px;
+  background: var(--primary);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #000;
+}
+
+.shared-session-banner .rider-name {
+  font-weight: 600;
+  color: var(--primary);
+  cursor: pointer;
+}
+
+.shared-session-banner .rider-name:hover {
+  text-decoration: underline;
+}
+
+.shared-session-banner .shared-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .session-header-premium {
+    flex-direction: column;
+    gap: 1rem;
+  }
+  
+  .session-header-premium .session-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+  
+  .session-header-premium .session-title {
+    font-size: 1.35rem;
+  }
+  
+  .telemetry-info-row {
+    flex-wrap: wrap;
+  }
+  
+  .actions-dropdown-menu {
+    right: auto;
+    left: 0;
+  }
 }

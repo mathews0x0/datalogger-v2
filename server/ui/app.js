@@ -1791,6 +1791,39 @@ function copyShareLink() {
 }
 
 // ============================================================================
+// ACTIONS DROPDOWN (Session Header)
+// ============================================================================
+
+function toggleActionsDropdown() {
+    const dropdown = document.getElementById('sessionActionsDropdown');
+    if (dropdown) {
+        dropdown.classList.toggle('open');
+        
+        // Close when clicking outside
+        if (dropdown.classList.contains('open')) {
+            setTimeout(() => {
+                document.addEventListener('click', closeActionsDropdownOnOutsideClick);
+            }, 10);
+        }
+    }
+}
+
+function closeActionsDropdown() {
+    const dropdown = document.getElementById('sessionActionsDropdown');
+    if (dropdown) {
+        dropdown.classList.remove('open');
+    }
+    document.removeEventListener('click', closeActionsDropdownOnOutsideClick);
+}
+
+function closeActionsDropdownOnOutsideClick(e) {
+    const dropdown = document.getElementById('sessionActionsDropdown');
+    if (dropdown && !dropdown.contains(e.target)) {
+        closeActionsDropdown();
+    }
+}
+
+// ============================================================================
 // TRACKDAY FEATURE
 // ============================================================================
 
@@ -2445,24 +2478,6 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
             sectorMedians.push(calculateMedian(times));
         }
 
-        // Calibration Badge
-        let calibBadge = '';
-        if (session.calibration && session.calibration.calibrated) {
-            const conf = session.calibration.confidence;
-            const color = conf === 'HIGH' ? '#4CAF50' : '#FF9800';
-            calibBadge = `
-                <div class="consistency-badge" style="border-color: ${color}; color: ${color};" title="Gravity Aligned (Confidence: ${conf})">
-                    IMU: ${conf}
-                </div>
-            `;
-        } else if (session.calibration) {
-            calibBadge = `
-                <div class="consistency-badge" style="border-color: #9E9E9E; color: #9E9E9E;" title="Uncalibrated">
-                    IMU: RAW
-                </div>
-            `;
-        }
-
         // Get all-time best for this track (from track data)
         let allTimeBest = null;
         if (!isShared) {
@@ -2481,57 +2496,102 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
             sectorBests.push(times.length ? Math.min(...times) : 0);
         }
 
+        // Build telemetry info (IMU + Consistency consolidated)
+        const imuStatus = session.calibration?.calibrated 
+            ? (session.calibration.confidence === 'HIGH' ? 'green' : 'orange')
+            : 'gray';
+        const imuLabel = session.calibration?.calibrated 
+            ? `IMU: ${session.calibration.confidence}`
+            : 'IMU: RAW';
+
         container.innerHTML = `
             ${isShared ? `
-                <div style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--primary);">
-                    <div>
-                        <span style="color: var(--primary); font-weight: bold; cursor: pointer;" onclick="showUserProfile(${session.user_id})">Rider: ${session.owner_name || 'Anonymous'}</span>
-                        <p style="margin: 0.25rem 0 0 0; font-size: 0.8rem; color: var(--text-dim);">You are viewing a shared session.</p>
+                <div class="shared-session-banner">
+                    <div class="rider-info">
+                        <div class="rider-avatar">${(session.owner_name || 'A').charAt(0).toUpperCase()}</div>
+                        <div>
+                            <div class="rider-name" onclick="showUserProfile(${session.user_id})">${session.owner_name || 'Anonymous'}</div>
+                            <div class="shared-label">Viewing shared session</div>
+                        </div>
                     </div>
                     ${!currentUser ? `
-                        <button class="btn btn-primary btn-sm" onclick="showAuthModal()">Sign up to track your own laps</button>
+                        <button class="btn btn-primary btn-sm" onclick="showAuthModal()">Sign up to track your laps</button>
                     ` : ''}
                 </div>
-            ` : ''}
+            ` : `
+                <a href="#" class="session-back-link no-print" onclick="showView('sessions'); return false;">
+                    <i class="fas fa-arrow-left"></i> Back to Sessions
+                </a>
+            `}
 
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-                <div>
-                     <h2 style="margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem;">
+            <!-- PREMIUM SESSION HEADER -->
+            <div class="session-header-premium">
+                <div class="session-title-block">
+                    <h2 class="session-title">
                         ${session.meta.session_name || session.track.track_name + ' Session'}
-                        ${!isShared ? `<button class="btn-icon no-print" onclick="promptRenameSession('${session.meta.session_id}', '${session.meta.session_name || ''}')" title="Rename Session">✎</button>` : ''}
-                     </h2>
-                     <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
-                         <p class="help-text" style="margin: 0;">${formatDateTime(session.meta.start_time)}</p>
-                         <div class="consistency-badge" title="Standard Deviation of valid laps">
-                             Consist: <strong>±${consistency.toFixed(2)}s</strong>
-                         </div>
-                         ${calibBadge}
-                     </div>
+                        ${!isShared ? `<button class="btn-icon no-print" onclick="promptRenameSession('${session.meta.session_id}', '${session.meta.session_name || ''}')" title="Rename Session" style="opacity: 0.5; font-size: 0.9rem;">✎</button>` : ''}
+                    </h2>
+                    <div class="session-meta-row">
+                        <span class="meta-item"><i class="far fa-calendar"></i> ${formatDateTime(session.meta.start_time)}</span>
+                        <span class="meta-item"><i class="fas fa-road"></i> ${session.track.track_name}</span>
+                        <span class="meta-item"><i class="far fa-clock"></i> ${Math.floor(session.meta.duration_sec / 60)}m</span>
+                    </div>
+                    
+                    <!-- Consolidated Telemetry Info Row -->
+                    <div class="telemetry-info-row no-print">
+                        <span class="telemetry-item" title="Standard Deviation of valid laps">
+                            <i class="fas fa-chart-line"></i> Consistency: <strong>±${consistency.toFixed(2)}s</strong>
+                        </span>
+                        <span class="divider"></span>
+                        <span class="telemetry-item" title="${session.calibration?.calibrated ? 'Gravity Aligned' : 'Uncalibrated IMU'}">
+                            <span class="dot ${imuStatus}"></span> ${imuLabel}
+                        </span>
+                    </div>
                 </div>
-                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+
+                <div class="session-actions no-print">
+                    <!-- Primary Action: Live Playback -->
+                    <button class="btn-playback" onclick="openPlayback('${session.meta.session_id}', ${isShared ? `'${shareToken}'` : 'null'})">
+                        <i class="fas fa-play"></i> Playback
+                    </button>
+
                     ${!isShared ? `
-                        <div style="display: flex; align-items: center; gap: 0.5rem; margin-right: 0.5rem; background: var(--bg-secondary); padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border);">
-                            <span style="font-size: 0.75rem; font-weight: 600;">Public</span>
-                            <label class="toggle-switch" style="transform: scale(0.8);">
-                                <input type="checkbox" id="privacyToggle" ${session.is_public ? 'checked' : ''} onchange="togglePrivacy('${session.meta.session_id}', this.checked)">
-                                <span class="toggle-slider"></span>
-                            </label>
-                        </div>
-                        <button class="btn btn-secondary btn-sm no-print" onclick="shareSession('${session.meta.session_id}')"><i class="fas fa-share-alt"></i> Share</button>
-                    ` : ''}
-                    <button class="btn btn-primary btn-sm no-print" onclick="openPlayback('${session.meta.session_id}', ${isShared ? `'${shareToken}'` : 'null'})">▶ Live Playback</button>
-                    ${!isShared ? `
-                        <button class="btn btn-secondary btn-sm no-print" onclick="showTagToTrackdayModal('${session.meta.session_id}')">🏷️ Tag to Trackday</button>
-                        <button class="btn btn-secondary btn-sm no-print" 
-                                ${(!currentUser || currentUser.subscription_tier === 'free') ? 'disabled title="Upgrade to Pro to export"' : ''}
-                                onclick="exportSession('${session.meta.session_id}')">
-                            <i class="fas fa-file-export"></i> Export ZIP
-                            ${(!currentUser || currentUser.subscription_tier === 'free') ? ' 🔒' : ''}
+                    <!-- Public Toggle (Premium style) -->
+                    <div class="privacy-toggle-premium ${session.is_public ? 'is-public' : ''}" title="${session.is_public ? 'Session is public' : 'Session is private'}">
+                        <i class="fas ${session.is_public ? 'fa-globe' : 'fa-lock'}"></i>
+                        <span>${session.is_public ? 'Public' : 'Private'}</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="privacyToggle" ${session.is_public ? 'checked' : ''} onchange="togglePrivacy('${session.meta.session_id}', this.checked); this.closest('.privacy-toggle-premium').classList.toggle('is-public', this.checked); this.closest('.privacy-toggle-premium').querySelector('span').textContent = this.checked ? 'Public' : 'Private'; this.closest('.privacy-toggle-premium').querySelector('i').className = 'fas ' + (this.checked ? 'fa-globe' : 'fa-lock');">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+
+                    <!-- Actions Dropdown -->
+                    <div class="actions-dropdown" id="sessionActionsDropdown">
+                        <button class="actions-dropdown-btn" onclick="toggleActionsDropdown()">
+                            <i class="fas fa-ellipsis-h"></i> More <i class="fas fa-chevron-down"></i>
                         </button>
-                    ` : ''}
-                    <button class="btn btn-secondary btn-sm no-print" onclick="window.print()">Print Report</button>
-                    ${!isShared ? `
-                        <button class="btn btn-danger btn-sm no-print" onclick="deleteSession('${session.meta.session_id}')">Delete</button>
+                        <div class="actions-dropdown-menu">
+                            <button class="dropdown-item" onclick="shareSession('${session.meta.session_id}'); closeActionsDropdown();">
+                                <i class="fas fa-share-alt"></i> Share Link
+                            </button>
+                            <button class="dropdown-item" onclick="showTagToTrackdayModal('${session.meta.session_id}'); closeActionsDropdown();">
+                                <i class="fas fa-tag"></i> Tag to Trackday
+                            </button>
+                            <button class="dropdown-item ${(!currentUser || currentUser.subscription_tier === 'free') ? 'disabled' : ''}" 
+                                    onclick="${(!currentUser || currentUser.subscription_tier === 'free') ? '' : `exportSession('${session.meta.session_id}'); closeActionsDropdown();`}"
+                                    ${(!currentUser || currentUser.subscription_tier === 'free') ? 'title="Upgrade to Pro"' : ''}>
+                                <i class="fas fa-file-archive"></i> Export ZIP ${(!currentUser || currentUser.subscription_tier === 'free') ? '🔒' : ''}
+                            </button>
+                            <button class="dropdown-item" onclick="window.print(); closeActionsDropdown();">
+                                <i class="fas fa-print"></i> Print Report
+                            </button>
+                            <div class="dropdown-divider"></div>
+                            <button class="dropdown-item danger" onclick="deleteSession('${session.meta.session_id}')">
+                                <i class="fas fa-trash"></i> Delete Session
+                            </button>
+                        </div>
+                    </div>
                     ` : ''}
                 </div>
             </div>
@@ -2549,14 +2609,14 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
                     <div class="stat-icon" style="background: rgba(0, 210, 106, 0.1); color: var(--success);"><i class="fas fa-stopwatch"></i></div>
                     <div class="stat-info">
                         <div class="stat-label">Session Best</div>
-                        <div class="stat-value" style="color: var(--success);">${formatTime(session.summary.best_lap_time)}</div>
+                        <div class="stat-value lap-time-display" style="color: var(--success);">${formatTime(session.summary.best_lap_time)}</div>
                     </div>
                 </div>
                 <div class="stat-card">
                     <div class="stat-icon" style="background: rgba(0, 78, 137, 0.1); color: var(--secondary);"><i class="fas fa-magic"></i></div>
                     <div class="stat-info">
                         <div class="stat-label">Theo. Best</div>
-                        <div class="stat-value">${formatTime(session.references.theoretical_best_reference)}</div>
+                        <div class="stat-value lap-time-display">${formatTime(session.references.theoretical_best_reference)}</div>
                     </div>
                 </div>
                 ${allTimeBest ? `
@@ -2564,7 +2624,7 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
                     <div class="stat-icon" style="background: rgba(156, 39, 176, 0.1); color: #9c27b0;"><i class="fas fa-crown"></i></div>
                     <div class="stat-info">
                         <div class="stat-label">All-Time PB</div>
-                        <div class="stat-value" style="color: #9c27b0;">${formatTime(allTimeBest)}</div>
+                        <div class="stat-value lap-time-display" style="color: #9c27b0;">${formatTime(allTimeBest)}</div>
                         ${session.summary.best_lap_time <= allTimeBest ? '<div style="color: #4CAF50; font-size: 0.7rem; font-weight: 700;">🏆 NEW PB!</div>' : ''}
                     </div>
                 </div>
