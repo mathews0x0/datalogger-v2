@@ -1,7 +1,7 @@
-# RS-Core Enclosure V2 — Mechanical Specification
+# RS-Core Enclosure V2.1 — Mechanical Specification
 
 **Document:** `enclosure_v2_spec.md`  
-**Version:** 2.0  
+**Version:** 2.1  
 **Date:** 2026-02-09  
 **Author:** Racesense Mechanical Engineering  
 
@@ -9,19 +9,27 @@
 
 ## 1. Overview
 
-This document specifies the **Version 2** 3D-printable enclosure for the **RS-Core** motorsport datalogger. The design features a modular layer-stack architecture with an integrated GoPro Quick Release Buckle (male) for rapid mounting/dismounting.
+This document specifies the **Version 2.1** 3D-printable enclosure for the **RS-Core** motorsport datalogger. The design features a modular layer-stack architecture with an integrated GoPro Quick Release Buckle (male) for rapid mounting/dismounting.
 
-### 1.1 Key Changes from V1
+### 1.1 Key Changes from V2.0
 
-| Feature | V1 | V2 |
-|---------|----|----|
+| Feature | V2.0 | V2.1 |
+|---------|------|------|
+| JST Connectors | Missing cutouts | Full cutouts for UART, PWR-SW, BATT, LED_OUT, AUX |
+| Port Layout | 3 ports | 8 ports (USB, USBOUT, μSD, UART, PWR-SW, BATT, LED_OUT, AUX) |
+| Wire Routing | Basic | Dedicated channels for JST cables |
+
+### 1.2 Key Changes from V1
+
+| Feature | V1 | V2+ |
+|---------|----|-----|
 | Mount Type | Dual-fin GoPro prongs | GoPro Quick Release Buckle (male) |
 | GPS Layout | Single module (stacked) | Side-by-side module + antenna |
 | Shell Design | 2-piece clamshell | Multi-layer stack |
-| Port Access | Single USB-C | USB-C (data) + USBOUT (power) + MicroSD |
+| Port Access | Single USB-C | Full peripheral access |
 | Battery Bay | Snug fit | Generous tolerance (+2mm) |
 
-### 1.2 Design Philosophy
+### 1.3 Design Philosophy
 
 - **Layered Stack Architecture:** Buckle → Battery → PCB → GPS → Cover
 - **Quick-Release Mounting:** Standard GoPro male buckle for flat adhesive mounts
@@ -41,11 +49,21 @@ This document specifies the **Version 2** 3D-printable enclosure for the **RS-Co
 | LiPo Battery | 40 × 25 × 10 | +2mm tolerance all sides |
 | GPS Module | 36 × 26 × 4 | Main GPS receiver |
 | GPS Antenna | 26 × 26 × 9 | Ceramic patch (active) |
-| USB-C (Data) | 9 × 3.5 | Left side at ~8.8mm from edge |
-| USB-C (Power Out) | 9 × 3.5 | Right side at ~63.9mm from edge |
-| MicroSD Slot | 14 × 3 | Center-right at ~53.2mm from edge |
 
-### 2.2 GoPro Quick Release Buckle Dimensions
+### 2.2 Connector Inventory
+
+| Connector | Type | Pins | Footprint (mm) | Height (mm) |
+|-----------|------|------|----------------|-------------|
+| USB (Data) | USB-C 16-pin | 16 | 9.0 × 7.5 | 3.2 |
+| USBOUT (Power) | USB-C 16-pin | 16 | 9.0 × 7.5 | 3.2 |
+| MICRO-SD | Push-push TF | - | 14.0 × 15.0 | 2.0 |
+| UART | JST SH 4-pin | 4 | 5.0 × 4.0 | 4.25 |
+| LED_OUT | JST SH 4-pin | 4 | 5.0 × 4.0 | 4.25 |
+| AUX (I2C) | JST SH 4-pin | 4 | 5.0 × 4.0 | 4.25 |
+| PWR-SW | JST SH 2-pin | 2 | 3.0 × 4.0 | 4.25 |
+| BATT | JST SH 2-pin | 2 | 3.0 × 4.0 | 4.25 |
+
+### 2.3 GoPro Quick Release Buckle Dimensions
 
 | Parameter | Value | Notes |
 |-----------|-------|-------|
@@ -80,7 +98,9 @@ This document specifies the **Version 2** 3D-printable enclosure for the **RS-Co
 │   ┌─────────────────────────────────────────────────────────┐   │
 │   │                    RS-Core PCB                          │   │
 │   │                   69.2 × 30.6 mm                        │   │
-│   │   [USB]                      [μSD]            [USBOUT]  │   │
+│   │                                                         │   │
+│   │   [USB]           [BATT][PWR][AUX]            [USBOUT]  │   │
+│   │                                     [μSD] [LED] [UART]  │   │
 │   └─────────────────────────────────────────────────────────┘   │
 │                      ALL PORTS EXPOSED                          │
 ├─────────────────────────────────────────────────────────────────┤
@@ -110,15 +130,43 @@ This document specifies the **Version 2** 3D-printable enclosure for the **RS-Co
 | Wall Thickness | 2.0 mm |
 | Corner Radius | 4.0 mm |
 
-### 3.3 Port Cutout Positions
+### 3.3 Complete Port Cutout Positions
 
-All measurements from enclosure front-left corner (looking at PCB layer from above):
+All measurements from PCB layer front-left corner (enclosure interior, wall offset already applied):
 
-| Port | X Position | Y Position | Cutout Size | Edge |
-|------|------------|------------|-------------|------|
-| USB-C (Data) | 0mm (left wall) | 13mm | 10 × 4mm | Left |
-| MicroSD | 0mm (left wall) | 51mm | 15 × 4mm | Left |
-| USB-C (Power) | 68mm (right wall) | 60mm | 10 × 4mm | Right |
+**PCB Coordinate System:**
+- PCB sits centered in enclosure
+- PCB origin (0,0) = front-left corner of PCB
+- Enclosure wall offset: 4.4mm from PCB edge to enclosure wall
+
+#### 3.3.1 Left Wall Ports (X = 0, enclosure left wall)
+
+| Port | PCB Y Position | Height Above PCB | Cutout Size (W×H) | Notes |
+|------|----------------|------------------|-------------------|-------|
+| USB-C (Data) | 8.7mm | 0mm (on PCB) | 10 × 4mm | Main data/charging |
+
+#### 3.3.2 Right Wall Ports (X = 69.2mm, enclosure right wall)
+
+| Port | PCB Y Position | Height Above PCB | Cutout Size (W×H) | Notes |
+|------|----------------|------------------|-------------------|-------|
+| USB-C (Power Out) | 22.9mm | 0mm (on PCB) | 10 × 4mm | Power delivery out |
+| LED_OUT (JST 4-pin) | 23.5mm | 0mm (on PCB) | 6 × 5mm | LED strip connector |
+| UART (JST 4-pin) | 29.4mm | 0mm (on PCB) | 6 × 5mm | Debug/GPS UART |
+
+#### 3.3.3 Front Wall Ports (Y = 0, enclosure front wall)
+
+| Port | PCB X Position | Height Above PCB | Cutout Size (W×H) | Notes |
+|------|----------------|------------------|-------------------|-------|
+| BATT (JST 2-pin) | 7.1mm | 0mm (on PCB) | 4 × 5mm | Battery connector |
+| PWR-SW (JST 2-pin) | 4.9mm | 0mm (on PCB) | 4 × 5mm | Power switch |
+| AUX (JST 4-pin) | 12.3mm | 0mm (on PCB) | 6 × 5mm | Auxiliary I2C |
+| MicroSD | 53.2mm | 2mm (recessed) | 15 × 4mm | Card slot |
+
+#### 3.3.4 LED Indicator Window (Front Wall)
+
+| Feature | Position | Size | Notes |
+|---------|----------|------|-------|
+| LED Window | Center-left | 12 × 6mm | Status LED visibility |
 
 ---
 
@@ -173,12 +221,19 @@ The base layer integrates a standard GoPro-compatible male quick release buckle.
 
 **Internal Dimensions:** 73 × 34 × 15mm
 
-**Port Cutouts:**
-| Port | Wall | Position from Bottom of Layer | Cutout |
-|------|------|-------------------------------|--------|
-| USB-C (Data) | Left | 4mm up | 10 × 4mm |
-| MicroSD | Left | 6mm up | 15 × 4mm |
-| USB-C (Power Out) | Right | 4mm up | 10 × 4mm |
+**Port Cutouts (Complete List):**
+
+| Port | Wall | Y/X from Corner | Height from Floor | Cutout (W×H) |
+|------|------|-----------------|-------------------|--------------|
+| USB-C (Data) | Left | Y=13mm | 4mm | 10 × 4mm |
+| MicroSD | Front | X=57mm | 4mm | 15 × 4mm |
+| USB-C (Power) | Right | Y=27mm | 4mm | 10 × 4mm |
+| LED_OUT (JST) | Right | Y=28mm | 4mm | 6 × 5mm |
+| UART (JST) | Right | Y=34mm (top edge) | 4mm | 6 × 5mm |
+| BATT (JST) | Front | X=11mm | 4mm | 4 × 5mm |
+| PWR-SW (JST) | Front | X=9mm | 4mm | 4 × 5mm |
+| AUX (JST) | Front | X=16mm | 4mm | 6 × 5mm |
+| LED Window | Front | X=center | 6mm | 12 × 6mm |
 
 **PCB Mounting:**
 - 4× corner standoffs (3mm height, M2 holes)
@@ -272,11 +327,12 @@ The base layer integrates a standard GoPro-compatible male quick release buckle.
 
 ```openscad
 // ============================================================
-// RS-CORE ENCLOSURE V2.0
+// RS-CORE ENCLOSURE V2.1
 // Racesense Motorsport Datalogger Housing
-// GoPro Quick Release + Side-by-Side GPS
+// GoPro Quick Release + Side-by-Side GPS + ALL JST Cutouts
 // ============================================================
-// Usage: Render with F6, export STL for each layer separately
+// Version: 2.1 (2026-02-09)
+// Changes: Added UART, PWR-SW, BATT, LED_OUT, AUX cutouts
 // ============================================================
 
 /* [Display Options] */
@@ -335,16 +391,37 @@ buckle_tab_w = 12;
 buckle_tab_h = 4;
 buckle_base_h = 2;
 
-/* [Port Cutouts] */
+/* [Port Cutouts - USB-C] */
 usbc_width = 10;
 usbc_height = 4;
+
+/* [Port Cutouts - MicroSD] */
 sd_width = 15;
 sd_height = 4;
 
-// Port positions (Y from front edge of enclosure)
-usb_data_y = 13;    // USB-C data port
-usb_power_y = 60;   // USB-C power out
-sd_slot_y = 51;     // MicroSD slot
+/* [Port Cutouts - JST SH 4-pin] */
+jst4_width = 6;    // 5mm connector + 1mm tolerance
+jst4_height = 5;   // 4.25mm connector + 0.75mm tolerance
+
+/* [Port Cutouts - JST SH 2-pin] */
+jst2_width = 4;    // 3mm connector + 1mm tolerance
+jst2_height = 5;   // 4.25mm connector + 0.75mm tolerance
+
+/* [Port Positions - Y from front edge of enclosure] */
+// Left wall ports
+usb_data_y = 13;        // USB-C data port
+
+// Right wall ports  
+usb_power_y = 27;       // USB-C power out
+led_out_y = 28;         // LED_OUT JST (adjacent to USBOUT)
+uart_y = 34;            // UART JST (near top edge)
+
+/* [Port Positions - X from left edge of enclosure] */
+// Front wall ports (bottom edge of PCB)
+batt_x = 11;            // Battery JST
+pwr_sw_x = 9;           // Power switch JST  
+aux_x = 16;             // AUX/I2C JST
+sd_slot_x = 57;         // MicroSD slot
 
 /* [Snap Fit] */
 snap_width = 8;
@@ -521,7 +598,7 @@ module battery_layer() {
 }
 
 // ============================================================
-// LAYER 3: PCB COMPARTMENT
+// LAYER 3: PCB COMPARTMENT (with ALL port cutouts)
 // ============================================================
 
 module pcb_layer() {
@@ -554,22 +631,56 @@ module pcb_layer() {
             }
         }
         
-        // === PORT CUTOUTS ===
+        // ============================================================
+        // PORT CUTOUTS - LEFT WALL
+        // ============================================================
         
         // USB-C Data port (LEFT wall)
         translate([-0.1, usb_data_y - usbc_width/2, wall + 4])
             cube([wall + 0.2, usbc_width, usbc_height]);
         
-        // MicroSD slot (LEFT wall)  
-        translate([-0.1, sd_slot_y - sd_width/2, wall + 6])
-            cube([wall + 0.2, sd_width, sd_height]);
+        // ============================================================
+        // PORT CUTOUTS - RIGHT WALL
+        // ============================================================
         
         // USB-C Power out (RIGHT wall)
         translate([enc_length - wall - 0.1, usb_power_y - usbc_width/2, wall + 4])
             cube([wall + 0.2, usbc_width, usbc_height]);
         
-        // LED viewing window (front face)
-        translate([enc_length/2 - 6, -0.1, wall + 6])
+        // LED_OUT JST 4-pin (RIGHT wall, adjacent to USBOUT)
+        translate([enc_length - wall - 0.1, led_out_y - jst4_width/2, wall + 4])
+            cube([wall + 0.2, jst4_width, jst4_height]);
+        
+        // UART JST 4-pin (RIGHT wall, near top edge)
+        translate([enc_length - wall - 0.1, uart_y - jst4_width/2, wall + 4])
+            cube([wall + 0.2, jst4_width, jst4_height]);
+        
+        // ============================================================
+        // PORT CUTOUTS - FRONT WALL (Bottom edge of PCB)
+        // ============================================================
+        
+        // BATT JST 2-pin (FRONT wall)
+        translate([batt_x - jst2_width/2, -0.1, wall + 4])
+            cube([jst2_width, wall + 0.2, jst2_height]);
+        
+        // PWR-SW JST 2-pin (FRONT wall)
+        translate([pwr_sw_x - jst2_width/2, -0.1, wall + 4])
+            cube([jst2_width, wall + 0.2, jst2_height]);
+        
+        // AUX JST 4-pin (FRONT wall)
+        translate([aux_x - jst4_width/2, -0.1, wall + 4])
+            cube([jst4_width, wall + 0.2, jst4_height]);
+        
+        // MicroSD slot (FRONT wall)
+        translate([sd_slot_x - sd_width/2, -0.1, wall + 4])
+            cube([sd_width, wall + 0.2, sd_height]);
+        
+        // ============================================================
+        // LED VIEWING WINDOW
+        // ============================================================
+        
+        // LED indicator window (FRONT wall, center-left)
+        translate([enc_length/3 - 6, -0.1, wall + 6])
             cube([12, wall - 0.5, 6]);
     }
     
@@ -839,8 +950,11 @@ Set only one layer `= true` at a time, render (F6), then export STL.
    └── Snap-fit clicks into place
    └── PCB sits on standoffs, secure with M2 screws if desired
    
-3. Connect GPS module and antenna cables to PCB
-   └── Route cables neatly
+3. Connect all cables:
+   └── Battery cable from below
+   └── Power switch (PWR-SW) if using external switch
+   └── LED strip to LED_OUT
+   └── GPS module UART cable
    
 4. Place GPS module and antenna in GPS Layer
    └── Module on left, Antenna on right (side-by-side)
@@ -888,6 +1002,12 @@ Set only one layer `= true` at a time, render (F6), then export STL.
 - Optional foam pad in battery bay isolates LiPo from impacts
 - GoPro buckle provides additional isolation from mount
 
+### 10.4 JST Connector Access
+
+- All JST connectors have 1mm clearance tolerance for plug insertion
+- Front wall JST connectors (BATT, PWR-SW, AUX) are grouped for wire routing
+- Right wall JST connectors (LED_OUT, UART) can be accessed from side
+
 ---
 
 ## 11. Revision History
@@ -896,41 +1016,44 @@ Set only one layer `= true` at a time, render (F6), then export STL.
 |---------|------|---------|
 | 1.0 | 2026-02-09 | Initial V1 design (dual-fin GoPro) |
 | 2.0 | 2026-02-09 | V2: Quick release buckle, side-by-side GPS, multi-layer stack |
+| 2.1 | 2026-02-09 | V2.1: Added all JST connector cutouts (UART, PWR-SW, BATT, LED_OUT, AUX) |
 
 ---
 
-## 12. Appendix: Dimensional Summary
+## 12. Appendix: Port Layout Diagram
 
 ```
                          78mm
-    ┌───────────────────────────────────────────────────┐
-    │                   TOP COVER                        │
-    │    ┌─────────────────────────────────────────┐    │
-    │    │  GPS Module    │ gap │   GPS Antenna    │    │
-    │    │   36×26mm      │ 3mm │    26×26mm       │    │  68mm
-    │    │                │     │   ╔═══════════╗  │    │
-    │    │                │     │   ║  WINDOW   ║  │    │
-    │    │                │     │   ║  28×28mm  ║  │    │
-    │    └────────────────┴─────┴───╚═══════════╝──┘    │
-    │  ○                                           ○    │ ← M3 screw
-    └───────────────────────────────────────────────────┘
-                        TOP VIEW
-
-    Side Elevation (Cross-Section at Center):
+    ┌───────────────────────────────────────────────────────────────┐
+    │                                                               │
+    │                        TOP VIEW (PCB Layer)                   │
+    │                                                               │
+    │  USB                                                    UART  │
+    │  ════                                                   ════  │
+    │  [__]                                                   [__]  │ 68mm
+    │                                                       LED_OUT │
+    │                                                         [__]  │
+    │                                                       USBOUT  │
+    │                                                         ════  │
+    │                                                         [__]  │
+    │                                                               │
+    └───────────────────────────────────────────────────────────────┘
+      [BATT][PWR][AUX]              [μSD]
+      ▪▪▪▪  ▪▪▪  ▪▪▪▪▪             ═══════
+      
+    FRONT WALL CONNECTORS (Bottom Edge of PCB):
+    ├─ BATT (JST 2-pin): X=11mm
+    ├─ PWR-SW (JST 2-pin): X=9mm  
+    ├─ AUX (JST 4-pin): X=16mm
+    └─ MicroSD: X=57mm
     
-         Cover  ░░░░░▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░    3mm
-                ▓ = Antenna window (1mm thin)
-         ─────────────────────────────────────────────
-         GPS    │  GPS MOD  │     │   ANTENNA   │        11mm
-         ─────────────────────────────────────────────
-         PCB    │ USB │           │ μSD │   │ USBOUT │   15mm
-                │◄───►│           │◄───►│   │◄──────►│
-         ─────────────────────────────────────────────
-         BATT   │        BATTERY BAY        │            13mm
-         ─────────────────────────────────────────────
-         BUCKLE │          ▓▓▓▓▓▓▓▓         │            10mm
-                           GOPRO BUCKLE                  ────
-                                                        52mm total
+    RIGHT WALL CONNECTORS:
+    ├─ USBOUT (USB-C): Y=27mm
+    ├─ LED_OUT (JST 4-pin): Y=28mm
+    └─ UART (JST 4-pin): Y=34mm
+    
+    LEFT WALL CONNECTORS:
+    └─ USB Data (USB-C): Y=13mm
 ```
 
 ---
