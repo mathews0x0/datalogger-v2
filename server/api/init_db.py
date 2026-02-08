@@ -23,7 +23,7 @@ def init_db():
                 bike_info='System Default',
                 home_track='N/A'
             )
-            admin.set_password('RS') # Default password
+            admin.set_password('admin123') # Default password
             db.session.add(admin)
             db.session.commit()
             print(f"Default admin user created with ID: {admin.id}")
