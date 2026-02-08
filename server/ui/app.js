@@ -317,8 +317,8 @@ function toggleAuthMode(mode) {
 }
 
 async function submitLogin() {
-    const email = document.getElementById('loginEmail').value;
-    const password = document.getElementById('loginPassword').value;
+    const email = document.getElementById('loginEmail')?.value || '';
+    const password = document.getElementById('loginPassword')?.value || '';
     const errorEl = document.getElementById('loginError');
 
     try {
