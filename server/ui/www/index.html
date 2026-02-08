@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Motorcycle Datalogger Companion App" />
+  <meta name="theme-color" content="#1a1a1a" />
+  <title>Datalogger Companion</title>
+  <link rel="stylesheet" href="styles.css?v=5" />
+</head>
+
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div style="display: flex; align-items: center; gap: 1.5rem;">
+      <h1><i class="fas fa-bolt"></i> RaceSense</h1>
+
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <!-- Connection Status -->
+        <div id="connectionStatus" class="status-badge offline">
+          <span class="status-dot"></span> <span id="connText">Offline</span>
+          <span id="versionWarning" class="badge"
+            style="display: none; background: var(--error); color: white; margin-left: 0.5rem; cursor: pointer;"
+            title="Firmware Mismatch: Update required">
+            ⚠️ UPDATE
+          </span>
+        </div>
+
+        <!-- Storage Indicator -->
+        <div id="storageIndicator" class="storage-indicator" style="display: none;" title="ESP32 Flash Storage">
+          <i class="fas fa-database" style="font-size: 0.75rem;"></i>
+          <div class="storage-bar">
+            <div id="storageBarFill" class="storage-bar-fill" style="width: 0%"></div>
+          </div>
+          <span id="storageText" style="font-size: 0.7rem; min-width: 30px;">0%</span>
+        </div>
+
+        <!-- Active Track Status -->
+        <div id="activeTrackBadge" class="status-badge" style="display: none;">
+          <i class="fas fa-flag-checkered" style="font-size: 0.75rem; color: var(--success);"></i>
+          <span id="activeTrackName" style="font-size: 0.75rem; font-weight: 600;">No Track</span>
+          <span id="trackIdentifiedDot" class="status-dot"
+            style="margin-left: 0.25rem; background: var(--text-muted); width: 6px; height: 6px;"
+            title="Track Identified Status"></span>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 0.5rem; margin-left: auto">
+      <div id="userProfileHeader" style="display: none; align-items: center; gap: 0.75rem; margin-right: 1rem;">
+        <span id="tierBadge" class="tier-badge free">FREE</span>
+        <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;" onclick="showUserProfile(currentUser.id)"></span>
+        <button class="btn btn-sm" onclick="logout()" title="Logout" style="background: transparent; border: 1px solid var(--border); color: var(--text-dim);"><i class="fas fa-sign-out-alt"></i></button>
+      </div>
+      <button id="loginBtn" class="btn btn-primary btn-sm" onclick="showAuthModal()">Login / Register</button>
+    </div>
+  </header>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <button class="nav-btn active" data-view="home"><i class="fas fa-home"></i> Home</button>
+    <button class="nav-btn" data-view="tracks"><i class="fas fa-map-marked-alt"></i> Tracks</button>
+    <button class="nav-btn" data-view="sessions"><i class="fas fa-history"></i> Sessions</button>
+    <button class="nav-btn" data-view="community"><i class="fas fa-users"></i> Community</button>
+    <button class="nav-btn" data-view="teams"><i class="fas fa-users-cog"></i> Teams</button>
+    <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
+    <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main" id="mainContent">
+    <!-- Home View -->
+    <div class="view active" id="homeView">
+      <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
+      <div class="quick-stats" id="quickStats">
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-road"></i></div>
+          <div class="stat-info">
+            <div class="stat-label">Total Tracks</div>
+            <div class="stat-value" id="totalTracks">-</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-flag-checkered"></i></div>
+          <div class="stat-info">
+            <div class="stat-label">Total Sessions</div>
+            <div class="stat-value" id="totalSessions">-</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon"><i class="fas fa-clock"></i></div>
+          <div class="stat-info">
+            <div class="stat-label">Last Session</div>
+            <div class="stat-value" id="recentSession" style="font-size: 1.25rem;">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Recent Sessions</h3>
+        <div id="recentSessionsList" class="sessions-list">
+          <div class="loading">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tracks View -->
+    <div class="view" id="tracksView">
+      <h2>Tracks</h2>
+      <div id="tracksList" class="tracks-grid">
+        <div class="loading">Loading tracks...</div>
+      </div>
+    </div>
+
+    <!-- Sessions View -->
+    <div class="view" id="sessionsView">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;">Sessions & Trackdays</h2>
+        <button class="btn btn-primary btn-sm" onclick="showCreateTrackdayModal()">+ New Trackday</button>
+      </div>
+
+      <!-- Tab Bar -->
+      <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
+        <button class="session-tab active" data-tab="sessions" onclick="switchSessionTab('sessions')">
+          <i class="fas fa-list"></i> Sessions
+        </button>
+        <button class="session-tab" data-tab="trackdays" onclick="switchSessionTab('trackdays')">
+          <i class="fas fa-flag-checkered"></i> Trackdays
+        </button>
+      </div>
+
+      <!-- Sessions Panel -->
+      <div id="sessionsPanel">
+        <div class="filter-bar">
+          <select id="trackFilter" class="filter-select">
+            <option value="">All Tracks</option>
+          </select>
+        </div>
+        <div id="sessionsList" class="sessions-list">
+          <div class="loading">Loading sessions...</div>
+        </div>
+      </div>
+
+      <!-- Trackdays Panel -->
+      <div id="trackdaysPanel" style="display: none;">
+        <div id="trackdaysList" class="sessions-list">
+          <div class="loading">Loading trackdays...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Community View -->
+    <div class="view" id="communityView">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fas fa-users"></i> Community</h2>
+      </div>
+
+      <!-- Community Sub-Tabs -->
+      <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
+        <button class="session-tab active" data-comm-tab="explore" onclick="switchCommunityTab('explore')">
+          <i class="fas fa-search"></i> Explore
+        </button>
+        <button class="session-tab" data-comm-tab="following" onclick="switchCommunityTab('following')">
+          <i class="fas fa-user-friends"></i> Following
+        </button>
+        <button class="session-tab" data-comm-tab="leaderboards" onclick="switchCommunityTab('leaderboards')">
+          <i class="fas fa-trophy"></i> Leaderboards
+        </button>
+      </div>
+      
+      <!-- Explore Panel -->
+      <div id="explorePanel">
+        <div class="filter-bar">
+          <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
+            <option value="">All Tracks</option>
+          </select>
+        </div>
+        <div id="communitySessionsList" class="sessions-list">
+          <div class="loading">Loading community sessions...</div>
+        </div>
+      </div>
+
+      <!-- Following Feed Panel -->
+      <div id="followingPanel" style="display: none;">
+        <div id="followingFeedList" class="sessions-list">
+          <div class="loading">Loading your feed...</div>
+        </div>
+      </div>
+
+      <!-- Leaderboards Panel -->
+      <div id="leaderboardsPanel" style="display: none;">
+        <div class="filter-bar" style="display: flex; gap: 0.5rem;">
+          <select id="lbTrackSelect" class="filter-select" style="flex: 2;" onchange="loadLeaderboard()">
+            <option value="">Select Track...</option>
+          </select>
+          <select id="lbPeriodSelect" class="filter-select" style="flex: 1;" onchange="loadLeaderboard()">
+            <option value="all">All Time</option>
+            <option value="month">This Month</option>
+            <option value="week">This Week</option>
+          </select>
+        </div>
+        <div id="leaderboardContent">
+          <div class="empty-state">
+            <i class="fas fa-trophy" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+            <p>Select a track to view the leaderboard</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Teams View -->
+    <div class="view" id="teamsView">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fas fa-users-cog"></i> Teams</h2>
+        <button class="btn btn-primary btn-sm" id="createTeamBtn" onclick="showCreateTeamModal()">+ Create Team</button>
+      </div>
+
+      <div id="teamsList" class="tracks-grid">
+        <div class="loading">Loading teams...</div>
+      </div>
+    </div>
+
+    <!-- Team Detail View (Dynamic) -->
+    <div class="view" id="teamDetailView">
+      <button class="back-btn" onclick="showView('teams')">
+        ← Back to Teams
+      </button>
+      <div id="teamDetailContent"></div>
+    </div>
+
+    <!-- Process View -->
+    <div class="view" id="processView">
+      <h2>Process New Session</h2>
+      <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+        <p class="help-text" style="margin: 0;">Select a CSV file from learning data to process</p>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <label class="archive-toggle-label">
+            <span>Show Archives</span>
+            <div class="toggle-switch">
+              <input type="checkbox" id="showArchivesToggle" onchange="toggleArchivesView()">
+              <span class="toggle-slider"></span>
+            </div>
+          </label>
+          <button class="btn btn-primary btn-sm" onclick="syncFromDevice()">
+            <i class="fas fa-wifi"></i> Sync from Device
+          </button>
+        </div>
+      </div>
+      <div id="learningFilesList" class="files-list">
+        <div class="loading">Loading files...</div>
+      </div>
+    </div>
+
+    <!-- LOGS VIEW -->
+
+
+
+    <!-- DIAGNOSTICS VIEW -->
+
+
+
+    <!-- Settings View -->
+    <div class="view" id="settingsView">
+      <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+          ">
+        <h2>System Settings</h2>
+        <button class="btn" style="background: var(--success); color: #000" onclick="saveSettings()">
+          Save Changes
+        </button>
+      </div>
+
+      <div class="settings-grid">
+        <!-- USER PROFILE CONFIG -->
+        <div class="card" id="userProfileCard" style="border-left: 4px solid var(--primary); display: none;">
+          <h3>User Profile</h3>
+          <div class="input-group">
+            <label>Display Name</label>
+            <input type="text" id="profileName" class="form-input" placeholder="Your Name">
+          </div>
+          <div class="input-group">
+            <label>Bike Info</label>
+            <input type="text" id="profileBike" class="form-input" placeholder="e.g., 2023 Yamaha R1">
+          </div>
+          <div class="input-group">
+            <label>Home Track</label>
+            <input type="text" id="profileHomeTrack" class="form-input" placeholder="e.g., Mugello">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="saveProfile()" style="width: 100%; margin-top: 1rem;">
+            Update Profile
+          </button>
+        </div>
+
+        <!-- SYSTEM CONFIG -->
+
+
+
+        <!-- NETWORK CONFIG -->
+
+
+
+        <!-- DEVICE CONFIG -->
+        <div class="card" style="border-left: 4px solid #9C27B0">
+          <h3>Device Connection</h3>
+
+          <!-- BLE Provisioning (New Priority) -->
+          <div class="input-group" id="bleSetupSection">
+            <label>Provision via Bluetooth</label>
+            <div
+              style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
+              
+              <!-- Auto-Share Toggle -->
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                <div style="display: flex; flex-direction: column;">
+                  <span style="font-size: 0.85rem; font-weight: 600;">Auto-Share WiFi</span>
+                  <span style="font-size: 0.7rem; color: var(--text-muted);">Automatically setup known networks</span>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="autoShareWifiToggle" onchange="toggleAutoShareWifi()">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div id="bleSupportWarning"
+                style="display: none; color: var(--error); font-size: 0.8rem; margin-bottom: 0.5rem;">
+                <i class="fas fa-exclamation-triangle"></i> Web Bluetooth not supported in this browser (Use Chrome).
+              </div>
+
+              <div id="bleConnectState"
+                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <div style="display: flex; align-items: center; gap: 0.75rem;">
+                  <div id="bleStatusDot" class="status-dot offline"></div>
+                  <span id="bleStatusText" style="font-weight: 600;">Bluetooth: Not Connected</span>
+                </div>
+                <button class="btn btn-primary btn-sm" id="btnBleConnect" onclick="handleBleConnect()">
+                  <i class="fab fa-bluetooth-b"></i> Connect
+                </button>
+              </div>
+
+              <!-- WiFi Setup (Hidden until BLE connected) -->
+              <div id="bleWifiSetup" style="display: none; border-top: 1px solid var(--border); padding-top: 1rem;">
+                <div class="input-group">
+                  <label style="font-size: 0.8rem;">Select WiFi Network</label>
+                  <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <select id="bleWifiSelect" class="form-input" style="flex: 1;">
+                      <option value="">Scanning for networks...</option>
+                    </select>
+                    <button class="btn btn-secondary btn-sm" onclick="handleBleWifiScan()">
+                      <i class="fas fa-sync"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="input-group">
+                  <label style="font-size: 0.8rem;">Network Password</label>
+                  <input type="password" id="bleWifiPass" class="form-input" placeholder="Password"
+                    style="width: 100%; margin-bottom: 1rem;" />
+                </div>
+
+                <div style="display: flex; gap: 0.5rem;">
+                  <button class="btn btn-success btn-sm" style="flex: 1;" onclick="handleBleWifiConfig()">
+                    <i class="fas fa-wifi"></i> Setup WiFi
+                  </button>
+                  <button class="btn btn-secondary btn-sm" onclick="handleBleStartAP()">
+                    <i class="fas fa-broadcast-tower"></i> Use AP Mode
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Existing Device Connection UI -->
+          <div class="input-group">
+            <label>Status</label>
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border);">
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <div id="scanStatusBadge" class="status-dot error"></div>
+                <div style="display: flex; flex-direction: column; justify-content: center;">
+                  <span id="scanStatusText" style="font-weight: 600; color: var(--text-primary);">Disconnected</span>
+                  <span id="scanIpText"
+                    style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
+                </div>
+              </div>
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
+                  <i class="fas fa-search"></i> Scan
+                </button>
+              </div>
+            </div>
+
+            <!-- Hidden Input for logic compatibility -->
+            <input type="text" id="devConfigIP" style="display: none;"
+              onchange="localStorage.setItem('lastDeviceIP', this.value)" />
+
+            <p class="help-text" style="font-size: 0.75rem; margin-top: 0.5rem;">
+              <i class="fas fa-info-circle"></i> Click Scan to auto-discover the Datalogger.
+            </p>
+          </div>
+
+          <!-- Stored Networks -->
+          <div class="input-group">
+            <label>Stored WiFi Networks <button class="btn btn-sm" onclick="loadStoredNetworks()"
+                style="padding: 0.25rem 0.5rem;"><i class="fas fa-sync"></i></button></label>
+            <div id="storedNetworksList"
+              style="background: var(--bg-secondary); border-radius: 8px; padding: 0.75rem; min-height: 40px;">
+              <span style="color: var(--text-muted); font-size: 0.85rem;">Click refresh to load...</span>
+            </div>
+          </div>
+
+          <!-- Add Network -->
+          <div class="input-group">
+            <label>Add WiFi Network</label>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+              <input type="text" id="devConfigSSID" class="form-input" placeholder="SSID (network name)"
+                style="flex: 1; min-width: 150px;" />
+              <input type="password" id="devConfigPass" class="form-input" placeholder="Password"
+                style="flex: 1; min-width: 150px;" />
+              <button class="btn btn-primary btn-sm" onclick="addWifiNetwork()" style="white-space: nowrap;">
+                <i class="fas fa-plus"></i> Add
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ESP32 FIRMWARE CONFIG -->
+        <div class="card" style="border-left: 4px solid var(--success)">
+          <h3>ESP32 Firmware</h3>
+          <p class="help-text">Manage remote datalogger protocol version and OTA updates</p>
+
+          <div id="espFirmwareStatus" class="input-group"
+            style="padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <span style="font-size: 0.9rem; color: var(--text-muted);">Current Version</span>
+              <strong id="espCurrentVersion" style="font-family: monospace;">Checking...</strong>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <span style="font-size: 0.9rem; color: var(--text-muted);">Server Version</span>
+              <strong id="espServerVersion" style="font-family: monospace;">---</strong>
+            </div>
+
+            <button class="btn btn-secondary btn-sm" onclick="checkEspVersionManual()" style="width: 100%;">
+              <i class="fas fa-sync"></i> Refresh Version Status
+            </button>
+          </div>
+
+          <div id="espUpdateArea"
+            style="display: none; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
+            <div id="espUpdateWarning" style="color: var(--warning); font-size: 0.85rem; margin-bottom: 1rem;">
+              <i class="fas fa-exclamation-triangle"></i> Hardware version mismatch detected.
+            </div>
+
+            <button class="btn btn-primary" id="btnEspUpdate" onclick="flashLatestEspWifi()" style="width: 100%;">
+              <i class="fas fa-bolt"></i> Flash Latest (WiFi OTA)
+            </button>
+
+            <div id="espOtaProgress" style="display: none; margin-top: 1rem;">
+              <div style="height: 6px; background: #333; width: 100%; border-radius: 3px; overflow: hidden;">
+                <div id="espOtaBar"
+                  style="height: 100%; background: var(--primary); width: 0%; transition: width 0.3s;"></div>
+              </div>
+              <div id="espOtaStatus"
+                style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">Starting
+                upload...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ADMIN TOOLS -->
+        <div class="card" id="adminToolsCard" style="border-left: 4px solid var(--error); display: none;">
+          <h3>Admin Tools</h3>
+          <p class="help-text">Manage user subscriptions and system settings</p>
+          
+          <div class="input-group">
+            <label>Set User Tier</label>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <input type="number" id="adminUserId" class="form-input" placeholder="User ID" style="width: 80px;">
+                <select id="adminTierSelect" class="form-input" style="flex: 1;">
+                    <option value="free">Free</option>
+                    <option value="pro">Pro</option>
+                    <option value="team">Team</option>
+                </select>
+                <button class="btn btn-danger btn-sm" onclick="adminSetTier()">Set Tier</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- LED CONFIG -->
+
+
+
+        <!-- Service Maintenance -->
+
+
+      </div>
+    </div>
+
+    <!-- LED Config Modal -->
+
+
+
+    <!-- Session Detail View (Dynamic) -->
+    <div class="view" id="sessionDetailView">
+      <button class="back-btn" onclick="showView('sessions')">
+        ← Back to Sessions
+      </button>
+      <div id="sessionDetailContent"></div>
+    </div>
+
+    <!-- Track Detail View (Dynamic) -->
+    <div class="view" id="trackDetailView">
+      <button class="back-btn" onclick="showView('tracks')">
+        ← Back to Tracks
+      </button>
+      <div id="trackDetailContent"></div>
+    </div>
+
+    <!-- User Profile View (Dynamic) -->
+    <div class="view" id="userProfileView">
+      <button class="back-btn" onclick="history.back() || showView('community')">
+        ← Back
+      </button>
+      <div id="userProfileContent"></div>
+    </div>
+
+    <!-- Comparison View (Dynamic) -->
+    <div class="view" id="comparisonView">
+      <button class="back-btn" onclick="showView('sessions')">
+        ← Back
+      </button>
+      <div id="comparisonContent"></div>
+    </div>
+  </main>
+
+  <!-- Modal -->
+  <div class="modal" id="modal">
+    <div class="modal-content">
+      <span class="modal-close" onclick="closeModal()">&times;</span>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <!-- Rename Modal -->
+  <div class="modal" id="renameModal">
+    <div class="modal-content">
+      <span class="modal-close" onclick="closeRenameModal()">&times;</span>
+      <h3 style="margin-bottom: 1rem">Rename Track</h3>
+      <input type="text" id="renameInput" class="modal-input" placeholder="Enter new track name" />
+      <p class="help-text" style="margin-top: 0.5rem">
+        Sanitized name: <strong id="sanitizedPreview">-</strong>
+      </p>
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeRenameModal()">
+          Cancel
+        </button>
+        <button class="btn" onclick="submitRename()">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Trackday Modal -->
+  <div class="modal" id="createTrackdayModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <span class="modal-close" onclick="closeCreateTrackdayModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">🏁 Create New Trackday</h3>
+
+      <div class="form-group">
+        <label for="tdName">Trackday Name</label>
+        <input type="text" id="tdName" class="form-input" placeholder="e.g., Sunday Practice">
+      </div>
+
+      <div class="form-group">
+        <label for="tdDate">Date</label>
+        <input type="date" id="tdDate" class="form-input">
+      </div>
+
+      <div class="form-group">
+        <label for="tdOrganizer">Organizer (optional)</label>
+        <input type="text" id="tdOrganizer" class="form-input" placeholder="e.g., Local Bike Club">
+      </div>
+
+      <div class="form-group">
+        <label for="tdRider">Rider Name (optional)</label>
+        <input type="text" id="tdRider" class="form-input" placeholder="e.g., John Doe">
+      </div>
+
+      <div class="form-group">
+        <label for="tdTrack">Track</label>
+        <select id="tdTrack" class="form-input">
+          <option value="">Select Track...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="tdNotes">Notes (optional)</label>
+        <textarea id="tdNotes" class="form-input" rows="3" placeholder="Weather, setup, goals..."></textarea>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeCreateTrackdayModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateTrackday()">Create Trackday</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tag to Trackday Modal -->
+  <div class="modal" id="tagTrackdayModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeTagTrackdayModal()">&times;</span>
+      <h3 style="margin-bottom: 1rem;">🏷️ Tag to Trackday</h3>
+      <p class="help-text" style="margin-bottom: 1rem;">Select a trackday to add this session to:</p>
+
+      <div id="tagTrackdayList" style="max-height: 300px; overflow-y: auto;">
+        <div class="loading">Loading trackdays...</div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 1rem;">
+        <button class="btn secondary" onclick="closeTagTrackdayModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Share Modal -->
+  <div class="modal" id="shareModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <span class="modal-close" onclick="closeShareModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">🔗 Share Session</h3>
+      
+      <p class="help-text" style="margin-bottom: 1rem;">Anyone with this link can view this session, even without an account.</p>
+      
+      <div class="input-group">
+        <label>Shareable Link</label>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="shareLinkInput" class="form-input" readonly style="flex: 1; background: var(--bg-secondary);">
+          <button class="btn btn-primary btn-sm" onclick="copyShareLink()">
+            <i class="fas fa-copy"></i> Copy
+          </button>
+        </div>
+      </div>
+      
+      <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <button class="btn secondary btn-sm" style="width: 100%;" onclick="closeShareModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Trackday Detail View -->
+  <div class="view" id="trackdayDetailView">
+    <button class="back-btn" onclick="showView('sessions'); switchSessionTab('trackdays');">← Back to
+      Trackdays</button>
+    <div id="trackdayDetailContent">
+      <div class="loading">Loading trackday...</div>
+    </div>
+  </div>
+
+  <!-- Raw View Modal -->
+  <div class="modal" id="rawFileModal">
+    <div class="modal-content" style="
+          max-width: 800px;
+          width: 90%;
+          height: 80vh;
+          display: flex;
+          flex-direction: column;
+        ">
+      <span class="modal-close" onclick="closeRawFileModal()">&times;</span>
+      <h3 id="rawFileTitle" style="
+            margin-bottom: 1rem;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 0.5rem;
+          ">
+        Raw File
+      </h3>
+      <div style="
+            flex: 1;
+            overflow: auto;
+            background: #000;
+            color: #0f0;
+            padding: 1rem;
+            font-family: monospace;
+            border-radius: 4px;
+            font-size: 0.85rem;
+          " id="rawFileContent">
+        Loading...
+      </div>
+      <div style="margin-top: 1rem; text-align: right">
+        <button class="btn secondary" onclick="closeRawFileModal()">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Geo Map Modal -->
+  <div class="modal" id="geoModal">
+    <div class="modal-content" style="max-width: 600px; text-align: center">
+      <span class="modal-close" onclick="closeGeoModal()">&times;</span>
+      <h3 id="geoTitle" style="margin-bottom: 1rem">Path Visualization</h3>
+      <div id="geoContainer" style="
+            background: var(--surface-light);
+            padding: 1rem;
+            border-radius: 8px;
+          ">
+        <svg id="geoSvg" viewBox="0 0 400 300" style="
+              width: 100%;
+              height: auto;
+              max-height: 400px;
+              border: 1px solid var(--border);
+            "></svg>
+      </div>
+      <p id="geoStats" class="help-text" style="margin-top: 1rem">
+        Loading...
+      </p>
+    </div>
+  </div>
+
+  <!-- Playback Modal -->
+  <div class="modal" id="playbackModal">
+    <div class="modal-content" style="
+          max-width: 1200px;
+          width: 95%;
+          height: 90vh;
+          display: flex;
+          flex-direction: column;
+          background: #080808;
+          border: 1px solid rgba(255,255,255,0.1);
+        ">
+      <span class="modal-close" onclick="closePlaybackModal()">&times;</span>
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="margin: 0; color: var(--primary); display: flex; align-items: center; gap: 0.75rem;">
+          <i class="fas fa-play-circle"></i> Telemetry Analysis
+        </h3>
+        <div id="pbLapNumber" style="font-weight: 700; color: var(--text-dim); background: rgba(255,255,255,0.05); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">LAP -/-</div>
+      </div>
+
+      <!-- Top Controls -->
+      <div class="playback-controls" style="
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 1rem;
+          ">
+        <button class="btn" id="pbPlayPause" onclick="togglePlayback()"
+          style="width: 44px; height: 44px; padding: 0; border-radius: 50%;">
+          <i class="fas fa-play"></i>
+        </button>
+        <span id="pbTime" style="font-family: 'JetBrains Mono', monospace; font-size: 1.25rem; color: #fff; min-width: 100px;">00:00.00</span>
+        <input type="range" id="pbSeek" min="0" max="100" value="0" style="flex: 1; accent-color: var(--primary);"
+          oninput="seekPlayback(this.value)" />
+        <select id="pbLapSelect" class="filter-select" onchange="jumpToLap(this.value)" style="min-width: 160px; padding: 0.5rem;">
+          <option value="all">Session Overview</option>
+        </select>
+        <button class="btn secondary" onclick="nextLapPlay()">
+          Next Lap <i class="fas fa-forward"></i>
+        </button>
+      </div>
+
+      <!-- Dashboard Grid -->
+      <div style="
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 1.25rem;
+            flex: 1;
+            min-height: 0;
+          ">
+        <!-- Map Container -->
+        <div class="glass" style="
+              position: relative;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              overflow: hidden;
+              border-radius: 12px;
+            ">
+          <canvas id="pbTrackCanvas" style="
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+              "></canvas>
+
+          <!-- Map Layer Controls -->
+          <div class="map-controls">
+            <label><input type="radio" name="pbMapMode" value="speed" checked onchange="updateHeatmapMode()" /> Speed</label>
+            <label><input type="radio" name="pbMapMode" value="accel" onchange="updateHeatmapMode()" /> G-Force</label>
+            <label><input type="radio" name="pbMapMode" value="clean" onchange="updateHeatmapMode()" /> Line</label>
+          </div>
+        </div>
+
+        <!-- Widgets Column -->
+        <div style="
+              display: flex;
+              flex-direction: column;
+              gap: 1rem;
+              overflow-y: auto;
+              padding-right: 5px;
+            ">
+          <!-- LAP TIME + DELTA -->
+          <div class="card" style="padding: 1.25rem; border-left: 4px solid var(--primary);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+              <div class="stat-label">Lap Time</div>
+              <i class="fas fa-stopwatch" style="color: var(--primary);"></i>
+            </div>
+            <div id="pbLapTime" style="font-size: 2.5rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; letter-spacing: -1px;">--:--.---</div>
+            
+            <!-- Delta Bar -->
+            <div id="pbDeltaBar" style="height: 32px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-top: 1rem; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
+              <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.2); z-index: 1;"></div>
+              <div id="pbDeltaFill" style="position: absolute; top: 0; bottom: 0; width: 0; left: 50%; background: var(--success); transition: all 0.1s ease;"></div>
+              <span id="pbDeltaText" style="position: absolute; width: 100%; text-align: center; line-height: 32px; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; z-index: 2; text-shadow: 0 1px 4px rgba(0,0,0,0.5);">+0.000s</span>
+            </div>
+          </div>
+
+          <!-- SECTOR TIMES -->
+          <div class="card" style="padding: 1rem;">
+            <div style="display: flex; justify-content: space-between; gap: 0.5rem;">
+              <div id="pbS1" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
+                <div class="stat-label" style="font-size: 0.6rem;">SEC 1</div>
+                <div id="pbS1Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">--.-</div>
+              </div>
+              <div id="pbS2" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
+                <div class="stat-label" style="font-size: 0.6rem;">SEC 2</div>
+                <div id="pbS2Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">--.-</div>
+              </div>
+              <div id="pbS3" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
+                <div class="stat-label" style="font-size: 0.6rem;">SEC 3</div>
+                <div id="pbS3Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">--.-</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Speed -->
+          <div class="card" style="padding: 1.25rem;">
+            <div class="stat-label">Current Speed</div>
+            <div style="display: flex; align-items: baseline; gap: 0.5rem; margin: 0.25rem 0;">
+              <span id="pbSpeed" style="font-size: 2.5rem; font-weight: 800; color: var(--primary); font-family: 'JetBrains Mono', monospace;">0</span>
+              <span style="font-size: 0.9rem; color: var(--text-dim); font-weight: 600;">KM/H</span>
+            </div>
+            <div style="height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
+              <div id="pbSpeedBar" style="height: 100%; width: 0%; background: var(--primary); box-shadow: 0 0 10px var(--primary-glow);"></div>
+            </div>
+          </div>
+
+          <!-- Lean Angle -->
+          <div class="card" style="padding: 1.25rem;">
+            <div class="stat-label">Lean Angle</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
+              <div style="position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
+                <div style="position: absolute; width: 100%; height: 1px; background: rgba(255,255,255,0.1);"></div>
+                <div id="pbLeanBike" style="width: 3px; height: 40px; background: var(--primary); border-radius: 4px; transform-origin: center; transition: transform 0.05s linear; box-shadow: 0 0 15px var(--primary-glow);"></div>
+              </div>
+              <div style="font-size: 2rem; font-weight: 800; font-family: 'JetBrains Mono', monospace;"><span id="pbLean">0</span>°</div>
+            </div>
+          </div>
+
+          <!-- G-Force -->
+          <div class="card" style="padding: 1.25rem;">
+            <div class="stat-label">Acceleration G's</div>
+            <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
+              <div style="relative; width: 80px; height: 80px; border: 1px solid rgba(255,255,255,0.1); border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.02) 0%, transparent 100%);">
+                <div style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.05);"></div>
+                <div style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.05);"></div>
+                <div id="pbGDot" style="position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; background: var(--error); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 10px var(--error);"></div>
+              </div>
+              <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim);">
+                <div style="margin-bottom: 4px;">LAT <span id="pbGY" style="color: #fff; font-weight: 700;">0.0</span>G</div>
+                <div>LON <span id="pbGX" style="color: #fff; font-weight: 700;">0.0</span>G</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SESSION ANNOTATIONS -->
+          <div class="card" style="padding: 1.25rem; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+              <div class="stat-label">Coach Notes</div>
+              <button class="btn btn-primary btn-sm" onclick="showAddAnnotationModal()" title="Add Note">
+                <i class="fas fa-plus"></i>
+              </button>
+            </div>
+            <div id="pbAnnotationsList" style="flex: 1; overflow-y: auto; font-size: 0.85rem;">
+              <div class="empty-state" style="padding: 1rem 0;">
+                <p style="font-size: 0.75rem; color: var(--text-muted);">No notes for this session</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Add Annotation Modal -->
+  <div class="modal" id="annotationModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeAnnotationModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">📝 Add Note</h3>
+      
+      <div class="form-group">
+        <label>Note Text</label>
+        <textarea id="annotationTextInput" class="form-input" rows="4" placeholder="Enter coaching feedback..."></textarea>
+      </div>
+
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <div style="flex: 1;">
+          <label style="font-size: 0.75rem; color: var(--text-muted);">Lap (Optional)</label>
+          <input type="number" id="annotationLapInput" class="form-input" placeholder="Current">
+        </div>
+        <div style="flex: 1;">
+          <label style="font-size: 0.75rem; color: var(--text-muted);">Sector (Optional)</label>
+          <input type="number" id="annotationSectorInput" class="form-input" placeholder="Any">
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeAnnotationModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitAddAnnotation()">Save Note</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Auth Modal -->
+  <div class="modal" id="authModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeAuthModal()">&times;</span>
+      <div id="loginForm">
+        <h3 style="margin-bottom: 1.5rem;">🔑 Login</h3>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="loginEmail" class="form-input" placeholder="email@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="loginPassword" class="form-input" placeholder="••••••••">
+        </div>
+        <div id="loginError" style="color: var(--error); font-size: 0.8rem; margin-bottom: 1rem; display: none;"></div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" style="width: 100%;" onclick="submitLogin()">Login</button>
+        </div>
+        <p style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);">
+          Don't have an account? <a href="#" onclick="toggleAuthMode('register')" style="color: var(--primary);">Register</a>
+        </p>
+      </div>
+
+      <div id="registerForm" style="display: none;">
+        <h3 style="margin-bottom: 1.5rem;">📝 Register</h3>
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="regName" class="form-input" placeholder="Your Name">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="regEmail" class="form-input" placeholder="email@example.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="regPassword" class="form-input" placeholder="••••••••">
+        </div>
+        <div id="regError" style="color: var(--error); font-size: 0.8rem; margin-bottom: 1rem; display: none;"></div>
+        <div class="modal-actions">
+          <button class="btn btn-primary" style="width: 100%;" onclick="submitRegister()">Register</button>
+        </div>
+        <p style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);">
+          Already have an account? <a href="#" onclick="toggleAuthMode('login')" style="color: var(--primary);">Login</a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Upgrade Modal -->
+  <div class="modal" id="upgradeModal">
+    <div class="modal-content" style="max-width: 500px; text-align: center;">
+      <span class="modal-close" onclick="closeUpgradeModal()">&times;</span>
+      <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--primary);">
+        <i class="fas fa-rocket"></i>
+      </div>
+      <h3 id="upgradeTitle" style="margin-bottom: 1rem;">Upgrade to Pro</h3>
+      <p id="upgradeMessage" style="color: var(--text-dim); margin-bottom: 2rem;">
+        Get unlimited session storage, CSV exports, and advanced telemetry features.
+      </p>
+      
+      <div class="pricing-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--primary); margin-bottom: 2rem;">
+        <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: var(--primary); margin-bottom: 0.5rem;">Pro Plan</div>
+        <div style="font-size: 2.5rem; font-weight: 800; margin-bottom: 1rem;">$9.99<span style="font-size: 1rem; color: var(--text-muted);">/mo</span></div>
+        <ul style="text-align: left; font-size: 0.9rem; list-style: none; padding: 0; margin: 0 0 1.5rem 0;">
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Unlimited Session Storage</li>
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> CSV/JSON Data Exports</li>
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Advanced Analytics & TBL</li>
+          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Priority Cloud Processing</li>
+        </ul>
+        <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="handleUpgradeClick()">
+          Coming Soon
+        </button>
+      </div>
+      
+      <p style="font-size: 0.75rem; color: var(--text-muted);">
+        Payment integration is currently in development. Contact support to manual upgrade.
+      </p>
+    </div>
+  </div>
+
+  <!-- Create Team Modal -->
+  <div class="modal" id="createTeamModal">
+    <div class="modal-content" style="max-width: 400px;">
+      <span class="modal-close" onclick="closeCreateTeamModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">👥 Create New Team</h3>
+      <p class="help-text" style="margin-bottom: 1.5rem;">Create a team to manage riders and view their telemetry data.</p>
+
+      <div class="form-group">
+        <label for="teamNameInput">Team Name</label>
+        <input type="text" id="teamNameInput" class="form-input" placeholder="e.g., Scuderia Racing">
+      </div>
+
+      <div class="form-group">
+        <label for="teamLogoInput">Logo URL (optional)</label>
+        <input type="text" id="teamLogoInput" class="form-input" placeholder="https://example.com/logo.png">
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeCreateTeamModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateTeam()">Create Team</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Team Invite Modal -->
+  <div class="modal" id="teamInviteModal">
+    <div class="modal-content" style="max-width: 500px;">
+      <span class="modal-close" onclick="closeTeamInviteModal()">&times;</span>
+      <h3 style="margin-bottom: 1.5rem;">🔗 Team Invite</h3>
+      
+      <p class="help-text" style="margin-bottom: 1rem;">Share this link with riders you want to invite to your team.</p>
+      
+      <div class="input-group">
+        <label>Invite Link</label>
+        <div style="display: flex; gap: 0.5rem;">
+          <input type="text" id="teamInviteLinkInput" class="form-input" readonly style="flex: 1; background: var(--bg-secondary);">
+          <button class="btn btn-primary btn-sm" onclick="copyTeamInviteLink()">
+            <i class="fas fa-copy"></i> Copy
+          </button>
+        </div>
+      </div>
+      
+      <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+        <button class="btn secondary btn-sm" style="width: 100%;" onclick="closeTeamInviteModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Join Team Modal -->
+  <div class="modal" id="joinTeamModal">
+    <div class="modal-content" style="max-width: 400px; text-align: center;">
+      <span class="modal-close" onclick="closeJoinTeamModal()">&times;</span>
+      <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--primary);">
+        <i class="fas fa-user-plus"></i>
+      </div>
+      <h3 style="margin-bottom: 1rem;">Join Team</h3>
+      <p id="joinTeamMessage" style="color: var(--text-dim); margin-bottom: 2rem;">
+        You have been invited to join <strong id="invitedTeamName">...</strong>
+      </p>
+      
+      <div class="modal-actions">
+        <button class="btn secondary" onclick="closeJoinTeamModal()">Decline</button>
+        <button class="btn btn-primary" id="confirmJoinBtn" onclick="submitJoinTeam()">Join Team</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="ble-connector.js"></script>
+  <script src="app.js?v=5"></script>
+</body>
+
+</html>

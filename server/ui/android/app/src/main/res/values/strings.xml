@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Racesense</string>
+    <string name="title_activity_main">Racesense</string>
+    <string name="package_name">com.racesense.app</string>
+    <string name="custom_url_scheme">com.racesense.app</string>
+</resources>

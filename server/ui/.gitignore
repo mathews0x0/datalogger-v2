@@ -1,0 +1,10 @@
+node_modules/
+# android/
+# ios/
+# We usually commit android/ and ios/ in Capacitor to preserve native configs
+# but we can ignore build artifacts
+android/app/build/
+android/.gradle/
+android/local.properties
+ios/App/Pods/
+ios/App/App.xcworkspace/xcuserdata/

@@ -1672,3 +1672,33 @@ The SD card module wasn't faulty — the driver was. Always start with official/
 - Ready for Phase 2 (privacy controls, public/private sessions)
 
 ---
+
+---
+
+## 25. Phase 25 — Mobile Implementation Start (2026-02-09)
+
+**Objective:** Transition the Racesense Companion App from a web-only interface to a native mobile experience using Capacitor.
+
+### Core Implementation:
+
+1.  **Framework:** Capacitor 6.x "Mobile Wrap".
+2.  **Platform Initialization:**
+    - Initialized Capacitor in `/server/ui/`.
+    - App Name: "Racesense"
+    - App ID: `com.racesense.app`
+3.  **Core Plugins Installed:**
+    - `@capacitor/app`, `@capacitor/filesystem`, `@capacitor/network`, `@capacitor/preferences`, `@capacitor/device`, `@capacitor/splash-screen`, `@capacitor/status-bar`.
+    - `@capacitor-community/bluetooth-le` (BLE Control).
+    - `@capacitor-community/sqlite` (Local results cache).
+    - `@capacitor/http` (ESP32 data transfer).
+    - `@capacitor/local-notifications`.
+4.  **Hybrid Burst Scaffolding:**
+    - Created `capacitor-ble-adapter.js` to handle the command channel to the ESP32.
+    - Updated `package.json` with mobile-specific build and sync scripts.
+
+### Technical Decisions:
+
+- **Web Directory:** Moved web assets to `/server/ui/www/` to avoid recursive inclusion of native platform folders during the build process.
+- **Config:** Enabled `cleartext` support in `capacitor.config.json` to allow communication with the ESP32's local WiFi Access Point (HTTP).
+
+**Status:** ✅ Phase 25 Foundation Complete. Native Android and iOS projects initialized.
