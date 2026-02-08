@@ -18,7 +18,7 @@ def init_db():
         admin = User.query.filter_by(email='admin').first()
         if not admin:
             admin = User(
-                email='admin@racesense.v2',
+                email='admin',
                 name='Admin',
                 bike_info='System Default',
                 home_track='N/A'
