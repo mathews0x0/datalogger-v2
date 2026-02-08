@@ -47,5 +47,10 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- BLE Permissions (Required for @capacitor-community/bluetooth-le) -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Racesense uses Bluetooth to communicate with your datalogger device for telemetry and configuration.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Racesense uses Bluetooth to communicate with your datalogger device.</string>
 </dict>
 </plist>
