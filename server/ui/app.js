@@ -560,13 +560,13 @@ async function loadFollowingFeed() {
         const feed = await apiCall('/api/feed/following');
 
         if (!feed || feed.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--text-dim);">
-                    <i class="fas fa-user-friends" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
-                    <p>No activity from people you follow.</p>
-                    <p style="font-size: 0.8rem; color: var(--text-muted);">Follow some riders in the Explore tab!</p>
-                </div>
-            `;
+            container.innerHTML = renderEmptyState(
+                '👥',
+                'Your feed is empty',
+                "You're not following anyone yet. Discover fast riders in the Explore tab!",
+                'Explore Riders',
+                "switchCommunityTab('explore')"
+            );
             return;
         }
 
@@ -613,12 +613,11 @@ async function loadLeaderboard() {
     const container = document.getElementById('leaderboardContent');
 
     if (!trackId) {
-        container.innerHTML = `
-            <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--text-dim);">
-                <i class="fas fa-trophy" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
-                <p>Select a track to view the leaderboard</p>
-            </div>
-        `;
+        container.innerHTML = renderEmptyState(
+            '🏆',
+            'Select a track',
+            'Choose a track from the dropdown to view the leaderboard rankings.'
+        );
         return;
     }
 
@@ -628,7 +627,11 @@ async function loadLeaderboard() {
         const leaderboard = await apiCall(`/api/leaderboards/track/${trackId}?period=${period}`);
 
         if (!leaderboard || leaderboard.length === 0) {
-            container.innerHTML = '<p class="help-text" style="text-align: center; padding: 2rem;">No public times for this track yet.</p>';
+            container.innerHTML = renderEmptyState(
+                '🏁',
+                'No times recorded',
+                'Be the first to set a public lap time on this track!'
+            );
             return;
         }
 
@@ -790,15 +793,16 @@ async function loadTeams() {
         const teamsData = await apiCall('/api/teams');
         
         if (!teamsData || teamsData.length === 0) {
-            container.innerHTML = `
-                <div class="empty-state" style="text-align: center; padding: 3rem; color: var(--text-dim); grid-column: 1 / -1;">
-                    <i class="fas fa-users" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
-                    <p>You are not a member of any teams.</p>
-                    ${currentUser && currentUser.subscription_tier === 'team' ? 
-                        '<button class="btn btn-primary" style="margin-top: 1rem;" onclick="showCreateTeamModal()">Create Your First Team</button>' : 
-                        '<p style="font-size: 0.8rem; color: var(--text-muted);">Upgrade to Team tier to create your own team!</p>'}
-                </div>
-            `;
+            const canCreate = currentUser && currentUser.subscription_tier === 'team';
+            container.innerHTML = renderEmptyState(
+                '👥',
+                'No teams yet',
+                canCreate 
+                    ? 'Create a team to collaborate with other riders and coaches.'
+                    : 'Join a team via invite link, or upgrade to Team tier to create your own.',
+                canCreate ? 'Create Team' : null,
+                canCreate ? 'showCreateTeamModal()' : null
+            );
             return;
         }
 
@@ -1364,7 +1368,13 @@ function renderRecentSessions(recentSessions) {
     const container = document.getElementById('recentSessionsList');
 
     if (recentSessions.length === 0) {
-        container.innerHTML = '<p class="help-text">No sessions yet</p>';
+        container.innerHTML = renderEmptyState(
+            '🏁',
+            'No sessions yet',
+            'Connect your device and hit the track to start logging laps!',
+            'Connect Device',
+            "showView('settings')"
+        );
         return;
     }
 
@@ -1402,7 +1412,13 @@ async function loadTracks() {
         tracks = data.tracks || [];
 
         if (tracks.length === 0) {
-            container.innerHTML = '<p class="help-text">No tracks yet. Process a session to create your first track!</p>';
+            container.innerHTML = renderEmptyState(
+                '🗺️',
+                'No tracks yet',
+                'Process your first session and we\'ll automatically learn the track layout.',
+                'Process Files',
+                "showView('process')"
+            );
             return;
         }
 
@@ -1613,7 +1629,13 @@ async function loadSessions(filterTrackId = null) {
         }
 
         if (sessions.length === 0) {
-            container.innerHTML = '<p class="help-text">No sessions yet</p>';
+            container.innerHTML = renderEmptyState(
+                '📊',
+                'No sessions yet',
+                'Process your first ride data to see your sessions here.',
+                'Process Files',
+                "showView('process')"
+            );
             return;
         }
 
@@ -1676,7 +1698,13 @@ async function loadCommunitySessions() {
         }
 
         if (publicSessions.length === 0) {
-            container.innerHTML = '<p class="help-text">No public sessions found. Be the first to share one!</p>';
+            container.innerHTML = renderEmptyState(
+                '🌍',
+                'No public sessions yet',
+                'Be the first to share your lap times with the community!',
+                'View My Sessions',
+                "showView('sessions')"
+            );
             return;
         }
 
@@ -4479,6 +4507,17 @@ function drawDeltaChart(data) {
 // ----------------------------------------------------------------------------
 // UTILITY
 // ----------------------------------------------------------------------------
+
+function renderEmptyState(icon, title, message, actionText = null, actionFn = null) {
+    return `
+        <div class="empty-state">
+            <div class="empty-state-icon">${icon}</div>
+            <div class="empty-state-title">${title}</div>
+            <div class="empty-state-message">${message}</div>
+            ${actionText && actionFn ? `<button class="btn btn-primary" onclick="${actionFn}">${actionText}</button>` : ''}
+        </div>
+    `;
+}
 
 async function promptRenameSession(sessionId, currentName) {
     const newName = prompt("Enter new session name:", currentName);

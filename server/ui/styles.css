@@ -1810,3 +1810,39 @@ input:checked + .toggle-slider:before {
   overflow-y: auto;
   padding-right: 5px;
 }
+
+/* Empty States */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 3rem 2rem;
+  color: var(--text-dim);
+  grid-column: 1 / -1;
+}
+
+.empty-state-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.4;
+}
+
+.empty-state-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.5rem;
+}
+
+.empty-state-message {
+  font-size: 0.9rem;
+  max-width: 300px;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.empty-state .btn {
+  margin-top: 0.5rem;
+}
