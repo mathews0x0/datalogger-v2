@@ -554,7 +554,7 @@ function switchCommunityTab(tab) {
 async function loadFollowingFeed() {
     const container = document.getElementById('followingFeedList');
     if (!container) return;
-    container.innerHTML = '<div class="loading">Loading your feed...</div>';
+    container.innerHTML = renderSkeletonCards(3, 'session');
 
     try {
         const feed = await apiCall('/api/feed/following');
@@ -787,7 +787,7 @@ function formatDateShort(dateStr) {
 async function loadTeams() {
     const container = document.getElementById('teamsList');
     if (!container) return;
-    container.innerHTML = '<div class="loading">Loading teams...</div>';
+    container.innerHTML = renderSkeletonCards(4, 'track');
 
     try {
         const teamsData = await apiCall('/api/teams');
@@ -1405,7 +1405,7 @@ function renderRecentSessions(recentSessions) {
 
 async function loadTracks() {
     const container = document.getElementById('tracksList');
-    container.innerHTML = '<div class="loading">Loading tracks...</div>';
+    container.innerHTML = renderSkeletonCards(4, 'track');
 
     try {
         const data = await apiCall('/api/tracks');
@@ -1609,7 +1609,7 @@ async function loadSessions(filterTrackId = null) {
     const container = document.getElementById('sessionsList');
     const filterSelect = document.getElementById('trackFilter');
 
-    container.innerHTML = '<div class="loading">Loading sessions...</div>';
+    container.innerHTML = renderSkeletonCards(3, 'session');
 
     try {
         // Load sessions
@@ -1683,7 +1683,7 @@ async function loadCommunitySessions() {
     const container = document.getElementById('communitySessionsList');
     const filterSelect = document.getElementById('communityTrackFilter');
 
-    container.innerHTML = '<div class="loading">Loading community sessions...</div>';
+    container.innerHTML = renderSkeletonCards(3, 'session');
 
     try {
         const trackId = filterSelect.value ? parseInt(filterSelect.value) : null;
@@ -2297,7 +2297,7 @@ async function showTagSessionModal(trackdayId) {
     const modal = document.getElementById('tagTrackdayModal');
     const container = document.getElementById('tagTrackdayList');
 
-    container.innerHTML = '<div class="loading">Loading sessions...</div>';
+    container.innerHTML = renderSkeletonCards(3, 'session');
     modal.classList.add('active');
 
     // Store trackday ID for the bulk add
@@ -4517,6 +4517,42 @@ function renderEmptyState(icon, title, message, actionText = null, actionFn = nu
             ${actionText && actionFn ? `<button class="btn btn-primary" onclick="${actionFn}">${actionText}</button>` : ''}
         </div>
     `;
+}
+
+function renderSkeletonCards(count = 3, type = 'session') {
+    const skeletons = [];
+    for (let i = 0; i < count; i++) {
+        if (type === 'session') {
+            skeletons.push(`
+                <div class="skeleton-card">
+                    <div class="skeleton skeleton-line title"></div>
+                    <div class="skeleton skeleton-line subtitle"></div>
+                    <div style="display: flex; gap: 1rem; margin-top: 1rem;">
+                        <div class="skeleton skeleton-line short"></div>
+                        <div class="skeleton skeleton-line short"></div>
+                        <div class="skeleton skeleton-line short"></div>
+                    </div>
+                </div>
+            `);
+        } else if (type === 'track') {
+            skeletons.push(`
+                <div class="skeleton-card" style="min-height: 200px;">
+                    <div class="skeleton skeleton-image"></div>
+                    <div class="skeleton skeleton-line title"></div>
+                    <div class="skeleton skeleton-line subtitle"></div>
+                </div>
+            `);
+        } else if (type === 'table-row') {
+            skeletons.push(`
+                <tr>
+                    <td><div class="skeleton skeleton-line short" style="margin: 0;"></div></td>
+                    <td><div class="skeleton skeleton-line medium" style="margin: 0;"></div></td>
+                    <td><div class="skeleton skeleton-line short" style="margin: 0;"></div></td>
+                </tr>
+            `);
+        }
+    }
+    return skeletons.join('');
 }
 
 async function promptRenameSession(sessionId, currentName) {

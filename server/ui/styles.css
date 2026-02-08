@@ -1846,3 +1846,49 @@ input:checked + .toggle-slider:before {
 .empty-state .btn {
   margin-top: 0.5rem;
 }
+
+/* Loading Skeletons */
+.skeleton {
+  background: linear-gradient(90deg, var(--surface) 25%, var(--surface-light) 50%, var(--surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius);
+}
+
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-card {
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.skeleton-line {
+  height: 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 4px;
+}
+
+.skeleton-line.title { width: 60%; height: 1.25rem; }
+.skeleton-line.subtitle { width: 40%; height: 0.875rem; }
+.skeleton-line.short { width: 30%; }
+.skeleton-line.medium { width: 50%; }
+.skeleton-line.full { width: 100%; }
+
+.skeleton-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+}
+
+.skeleton-image {
+  width: 100%;
+  height: 150px;
+  border-radius: var(--radius);
+  margin-bottom: 1rem;
+}
