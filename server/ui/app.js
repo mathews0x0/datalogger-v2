@@ -128,7 +128,7 @@ async function apiCall(endpoint, options = {}) {
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${API_BASE}${endpoint}${separator}_t=${Date.now()}`;
         const response = await fetch(url, options);
-        
+
         if (response.status === 401 && !endpoint.includes('/api/auth/')) {
             showAuthModal();
             return null;
@@ -191,7 +191,7 @@ function updateAuthUI() {
         if (loginBtn) loginBtn.style.display = 'none';
         if (userProfileHeader) userProfileHeader.style.display = 'flex';
         if (headerUserName) headerUserName.textContent = currentUser.name || currentUser.email;
-        
+
         if (tierBadge) {
             tierBadge.textContent = (currentUser.subscription_tier || 'FREE').toUpperCase();
             tierBadge.className = `tier-badge ${currentUser.subscription_tier || 'free'}`;
@@ -249,7 +249,7 @@ function showUpgradeModal(featureName = "") {
     const modal = document.getElementById('upgradeModal');
     const title = document.getElementById('upgradeTitle');
     const message = document.getElementById('upgradeMessage');
-    
+
     if (featureName) {
         title.textContent = "Unlock " + featureName;
         message.textContent = `The ${featureName} feature is available on our Pro plan. Upgrade now to get full access!`;
@@ -257,7 +257,7 @@ function showUpgradeModal(featureName = "") {
         title.textContent = "Upgrade to Pro";
         message.textContent = "Get unlimited session storage, CSV exports, and advanced telemetry features.";
     }
-    
+
     if (modal) modal.classList.add('active');
 }
 
@@ -370,7 +370,7 @@ async function submitRegister() {
 async function logout() {
     try {
         await apiCall('/api/auth/logout', { method: 'POST' });
-    } catch (e) {}
+    } catch (e) { }
     currentUser = null;
     updateAuthUI();
     showToast('Logged out', 'info');
@@ -536,7 +536,7 @@ function switchCommunityTab(tab) {
     const explorePanel = document.getElementById('explorePanel');
     const followingPanel = document.getElementById('followingPanel');
     const leaderboardsPanel = document.getElementById('leaderboardsPanel');
-    
+
     if (explorePanel) explorePanel.style.display = tab === 'explore' ? 'block' : 'none';
     if (followingPanel) followingPanel.style.display = tab === 'following' ? 'block' : 'none';
     if (leaderboardsPanel) leaderboardsPanel.style.display = tab === 'leaderboards' ? 'block' : 'none';
@@ -604,7 +604,7 @@ async function loadLeaderboardTracks() {
         const data = await apiCall('/api/tracks');
         select.innerHTML = '<option value="">Select Track...</option>' +
             data.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
-    } catch (e) {}
+    } catch (e) { }
 }
 
 async function loadLeaderboard() {
@@ -649,12 +649,12 @@ async function loadLeaderboard() {
                     </thead>
                     <tbody>
                         ${leaderboard.map(entry => {
-                            let rankDisplay = entry.rank;
-                            if (entry.rank === 1) rankDisplay = '🥇';
-                            else if (entry.rank === 2) rankDisplay = '🥈';
-                            else if (entry.rank === 3) rankDisplay = '🥉';
-                            
-                            return `
+            let rankDisplay = entry.rank;
+            if (entry.rank === 1) rankDisplay = '🥇';
+            else if (entry.rank === 2) rankDisplay = '🥈';
+            else if (entry.rank === 3) rankDisplay = '🥉';
+
+            return `
                             <tr onclick="viewSession('${entry.session_id}', true)" style="cursor: pointer;">
                                 <td style="font-weight: 700;">${rankDisplay}</td>
                                 <td>
@@ -667,7 +667,7 @@ async function loadLeaderboard() {
                                 <td class="hide-mobile" style="font-size: 0.75rem; color: var(--text-muted);">${formatDateShort(entry.date)}</td>
                             </tr>
                             `;
-                        }).join('')}
+        }).join('')}
                     </tbody>
                 </table>
             </div>
@@ -692,7 +692,7 @@ async function showUserProfile(userId) {
         // Fetch stats and user info
         const stats = await apiCall(`/api/users/${userId}/stats`);
         const social = await apiCall(`/api/users/${userId}/social-counts`);
-        
+
         const name = stats.name || `Rider ${userId}`;
 
         container.innerHTML = `
@@ -763,7 +763,7 @@ async function toggleFollow(userId, currentlyFollowing) {
     try {
         const method = currentlyFollowing ? 'DELETE' : 'POST';
         const result = await apiCall(`/api/users/${userId}/follow`, { method });
-        
+
         if (result && result.success) {
             showToast(currentlyFollowing ? 'Unfollowed' : 'Now following', 'success');
             // Refresh profile view
@@ -791,13 +791,13 @@ async function loadTeams() {
 
     try {
         const teamsData = await apiCall('/api/teams');
-        
+
         if (!teamsData || teamsData.length === 0) {
             const canCreate = currentUser && currentUser.subscription_tier === 'team';
             container.innerHTML = renderEmptyState(
                 '👥',
                 'No teams yet',
-                canCreate 
+                canCreate
                     ? 'Create a team to collaborate with other riders and coaches.'
                     : 'Join a team via invite link, or upgrade to Team tier to create your own.',
                 canCreate ? 'Create Team' : null,
@@ -956,7 +956,7 @@ async function loadTeamSessions(riderIds) {
         // Since our API doesn't have a bulk rider session endpoint, we'll fetch community/public sessions 
         // OR we can rely on the fact that if we are coach, we can now access their private sessions too.
         // For now, let's fetch sessions for each rider.
-        
+
         let allTeamSessions = [];
         for (const riderId of riderIds) {
             try {
@@ -1107,7 +1107,7 @@ function showAddAnnotationModalWithLap(sessionId, lapNumber) {
     if (!pbState.session || pbState.session.meta.session_id !== sessionId) {
         pbState.session = { meta: { session_id: sessionId } };
     }
-    
+
     const modal = document.getElementById('annotationModal');
     if (!modal) return;
 
@@ -1123,7 +1123,7 @@ function showAddAnnotationModalFromDetail(sessionId) {
     if (!pbState.session || pbState.session.meta.session_id !== sessionId) {
         pbState.session = { meta: { session_id: sessionId } };
     }
-    
+
     const modal = document.getElementById('annotationModal');
     if (!modal) return;
 
@@ -1131,21 +1131,21 @@ function showAddAnnotationModalFromDetail(sessionId) {
     document.getElementById('annotationSectorInput').value = '';
 
     modal.classList.add('active');
-    
+
     // Track where we came from to refresh the right list
     window.annotationSource = 'detail';
 }
 
 function showAddAnnotationModal() {
     if (!pbState.session) return;
-    
+
     const modal = document.getElementById('annotationModal');
     if (!modal) return;
 
     // Prefill lap/sector if possible
     const lapInput = document.getElementById('annotationLapInput');
     const sectorInput = document.getElementById('annotationSectorInput');
-    
+
     // Try to guess current lap from playback state
     if (pbState.data && pbState.data.time) {
         const curTime = pbState.data.time[pbState.currentIndex];
@@ -1188,7 +1188,7 @@ async function submitAddAnnotation() {
             showToast('Note added', 'success');
             closeAnnotationModal();
             document.getElementById('annotationTextInput').value = '';
-            
+
             if (window.annotationSource === 'detail') {
                 loadAnnotationsForDetail(pbState.session.meta.session_id);
             } else {
@@ -1206,7 +1206,7 @@ async function deleteAnnotation(id) {
     try {
         await apiCall(`/api/annotations/${id}`, { method: 'DELETE' });
         showToast('Note deleted', 'success');
-        
+
         if (window.annotationSource === 'detail') {
             loadAnnotationsForDetail(pbState.session.meta.session_id);
         } else {
@@ -1223,9 +1223,9 @@ async function showJoinTeamModal(token) {
     pendingJoinToken = token;
     const modal = document.getElementById('joinTeamModal');
     if (!modal) return;
-    
+
     modal.classList.add('active');
-    
+
     // Optional: fetch team name if possible without joining
     // For now, we'll just show the modal
 }
@@ -1271,17 +1271,17 @@ async function submitJoinTeam() {
 async function loadTrackdayLeaderboard(trackdayId) {
     const container = document.getElementById('trackdayLeaderboardContent');
     if (!container) return;
-    
+
     container.innerHTML = '<div class="loading">Loading leaderboard...</div>';
-    
+
     try {
         const data = await apiCall(`/api/leaderboards/trackday/${trackdayId}`);
-        
+
         if (!data.leaderboard || data.leaderboard.length === 0) {
             container.innerHTML = '<p class="help-text">No public lap times recorded for this trackday yet.</p>';
             return;
         }
-        
+
         container.innerHTML = `
             <table class="data-table">
                 <thead>
@@ -1324,8 +1324,8 @@ function formatDate(dateStr) {
 function formatDateTimeAbbreviated(dateStr) {
     if (!dateStr) return '';
     const d = new Date(dateStr);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' + 
-           d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+        d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 function formatTime24h(dateStr) {
@@ -1492,7 +1492,7 @@ async function markPitLane(trackId) {
     try {
         showToast('Getting GPS from device...', 'info');
         const status = await fetch(`http://${deviceIP}/status`).then(r => r.json());
-        
+
         if (!status.gps_lat || !status.gps_lon) {
             showToast('No GPS fix on device', 'error');
             return;
@@ -1512,10 +1512,10 @@ async function markPitLane(trackId) {
         });
 
         showToast('Pit Lane marked at current location', 'success');
-        
+
         // Re-push to ESP32 to sync the new metadata
         await pushTrackToESP(trackId);
-        
+
     } catch (err) {
         console.error('Mark Pit Error:', err);
         showToast('Failed to mark pit lane', 'error');
@@ -1750,7 +1750,7 @@ async function togglePrivacy(sessionId, isPublic) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_public: isPublic })
         });
-        
+
         if (result && result.success) {
             showToast(isPublic ? 'Session is now PUBLIC' : 'Session is now PRIVATE', 'info');
             // Update UI without full reload
@@ -1767,7 +1767,7 @@ async function shareSession(sessionId) {
         const result = await apiCall(`/api/sessions/${sessionId}/share`, {
             method: 'POST'
         });
-        
+
         if (result && result.success) {
             const shareUrl = window.location.origin + result.share_url;
             document.getElementById('shareLinkInput').value = shareUrl;
@@ -2405,7 +2405,7 @@ async function exportSession(sessionId) {
         showUpgradeModal("Export");
         return;
     }
-    
+
     // Use window.open or fetch with blob if we need auth headers
     // Since our API uses cookies for JWT, window.open should work if the cookie is set
     window.open(`${API_BASE}/api/sessions/${sessionId}/export`);
@@ -2426,11 +2426,11 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
         if (shareToken) {
             endpoint = `/api/shared/${shareToken}`;
         }
-        
+
         // If it's a public view from community, we still use the main session endpoint but might need to adjust auth
         // Actually, the API I wrote for /api/public/sessions returns enough info to identify it.
         // But for details, we need the full session.
-        
+
         const session = await apiCall(endpoint);
         const isShared = session.is_shared_view || isPublicView;
 
@@ -2726,15 +2726,7 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
     }
 }
 
-    } catch (error) {
-        console.error(error);
-        container.innerHTML = `<div class="error-state">
-            <p>Failed to load session</p>
-            <p class="help-text" style="color: var(--error);">${error.message}</p>
-            <pre style="font-size: 0.7em; overflow: auto; text-align: left;">${error.stack}</pre>
-        </div>`;
-    }
-}
+
 
 // ============================================================================
 // PROCESS VIEW
@@ -2819,7 +2811,7 @@ function renderFileTable() {
         // Check if file is already processed
         const isProcessed = processedFiles.has(f.filename);
         const processedBadge = isProcessed ? '<span style="color:#4CAF50; margin-left:0.5rem;" title="Already Processed">✅</span>' : '';
-        
+
         const isLimitReached = limit && limit.tier === 'free' && limit.used >= limit.max;
         const processBtn = isProcessed
             ? '<button class="btn small" disabled style="opacity:0.5;" title="Already Processed">Processed</button>'
@@ -3377,8 +3369,8 @@ async function showComparison() {
     try {
         const s1 = comparisonSlots[0];
         const s2 = comparisonSlots[1];
-        
-        const data = await apiCall(`/api/compare?session1=${s1.sessionId}&lap1=${s1.lapNumber-1}&session2=${s2.sessionId}&lap2=${s2.lapNumber-1}`);
+
+        const data = await apiCall(`/api/compare?session1=${s1.sessionId}&lap1=${s1.lapNumber - 1}&session2=${s2.sessionId}&lap2=${s2.lapNumber - 1}`);
 
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
@@ -3415,10 +3407,10 @@ async function showComparison() {
                         </thead>
                         <tbody>
                             ${data.lap1.lap_info.sector_times.map((s1_time, i) => {
-                                const s2_time = data.lap2.lap_info.sector_times[i];
-                                const delta = s1_time - s2_time;
-                                const deltaColor = delta > 0 ? 'var(--success)' : 'var(--error)';
-                                return `
+            const s2_time = data.lap2.lap_info.sector_times[i];
+            const delta = s1_time - s2_time;
+            const deltaColor = delta > 0 ? 'var(--success)' : 'var(--error)';
+            return `
                                 <tr>
                                     <td>Sector ${i + 1}</td>
                                     <td style="font-family: monospace;">${formatTime(s1_time)}</td>
@@ -3428,7 +3420,7 @@ async function showComparison() {
                                     </td>
                                 </tr>
                                 `;
-                            }).join('')}
+        }).join('')}
                         </tbody>
                     </table>
                 </div>
@@ -3459,7 +3451,7 @@ function sliceTelemetry(lapData) {
     // For compare API, we already sliced it on the server (if it's my new API)
     // Wait, let's check my compare API return format.
     // Yes, lap1_data.telemetry is the sliced list.
-    
+
     // Actually, generateColorMapSVG expects { lats, lons, speeds, times }
     // But my sliced telemetry might be a list of dicts or something.
     // Let's assume it's a list of dicts.
@@ -5030,7 +5022,7 @@ async function openPlayback(sessionId, shareToken = null) {
         // 3. Fetch Data
         let endpoint = `/api/sessions/${sessionId}`;
         let teleEndpoint = `/api/sessions/${sessionId}/telemetry`;
-        
+
         if (shareToken) {
             endpoint = `/api/shared/${shareToken}`;
             teleEndpoint = `/api/shared/${shareToken}/telemetry`;
@@ -6437,11 +6429,11 @@ function toggleAutoShareWifi() {
 
 async function attemptAutoWifiShare(visibleNetworks) {
     if (!document.getElementById('autoShareWifiToggle').checked) return false;
-    
+
     const vault = getWifiVault();
     // Prioritize networks by vault presence
     const match = visibleNetworks.find(ssid => vault[ssid]);
-    
+
     if (match) {
         showToast(`Auto-configuring WiFi: ${match}...`, 'info');
         try {
@@ -6458,7 +6450,18 @@ function initBleSupportCheck() {
     console.log('Checking Web Bluetooth support...');
     const warning = document.getElementById('bleSupportWarning');
     const connectBtn = document.getElementById('btnBleConnect');
-    
+
+    // Check if DataloggerBLE class is loaded
+    if (typeof DataloggerBLE === 'undefined') {
+        console.warn('DataloggerBLE class not found. Skipping BLE check.');
+        if (warning) {
+            warning.style.display = 'block';
+            warning.innerHTML = '<i class="fas fa-exclamation-circle"></i> BLE Module failed to load';
+        }
+        if (connectBtn) connectBtn.disabled = true;
+        return;
+    }
+
     // Restore Auto-Share toggle state
     const autoShareEnabled = localStorage.getItem('autoShareWifiEnabled') !== 'false';
     const toggle = document.getElementById('autoShareWifiToggle');
@@ -6536,7 +6539,7 @@ async function handleBleWifiScan() {
             select.innerHTML = '<option value="">No networks found</option>';
         } else {
             select.innerHTML = networks.map(ssid => `<option value="${ssid}">${ssid}</option>`).join('');
-            
+
             // ATTEMPT AUTO-SHARE
             const autoSuccess = await attemptAutoWifiShare(networks);
             if (autoSuccess) {
