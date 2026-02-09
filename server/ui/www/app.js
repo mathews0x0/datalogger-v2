@@ -2949,9 +2949,7 @@ function renderFileTable() {
         const processedBadge = isProcessed ? '<span style="color:#4CAF50; margin-left:0.5rem;" title="Already Processed">✅</span>' : '';
 
         const isLimitReached = limit && limit.tier === 'free' && limit.used >= limit.max;
-        const processBtn = isProcessed
-            ? '<button class="btn small" disabled style="opacity:0.5;" title="Already Processed">Processed</button>'
-            : `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">Process</button>`;
+        const processBtn = `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">${isProcessed ? 'Re-process' : 'Process'}</button>`;
 
         return `
             <tr class="${rowClass}">
@@ -3202,14 +3200,12 @@ async function processAllFiles() {
     let filesToProcess = [];
 
     if (selectedCheckboxes.length > 0) {
-        // Process only selected unprocessed files
+        // Process only selected files (allowing re-processing)
         filesToProcess = Array.from(selectedCheckboxes)
-            .map(cb => cb.value)
-            .filter(filename => !processedFiles.has(filename));
+            .map(cb => cb.value);
     } else {
-        // Process all unprocessed files
+        // Process all files (allowing re-processing)
         filesToProcess = files
-            .filter(f => !processedFiles.has(f.filename))
             .map(f => f.filename);
     }
 
