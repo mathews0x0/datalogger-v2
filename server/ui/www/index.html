@@ -305,6 +305,20 @@
 
 
         <!-- NETWORK CONFIG -->
+        <div class="card" style="border-left: 4px solid var(--primary)">
+          <h3>Network Config</h3>
+          <div class="input-group">
+            <label>API Base URL (Cloud/Tunnel Override)</label>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+              <input type="text" id="customApiUrl" class="form-input" placeholder="https://your-tunnel.trycloudflare.com" style="flex: 1;">
+              <button class="btn btn-primary btn-sm" onclick="setCustomApiUrl()">Apply</button>
+            </div>
+            <p class="help-text" style="font-size: 0.7rem;">Default: <span id="defaultApiUrl" style="font-family: monospace;"></span></p>
+            <p class="help-text" style="font-size: 0.7rem; color: var(--warning); margin-top: 0.5rem;">
+              <i class="fas fa-exclamation-triangle"></i> Use this to connect to your Nitro 5 Cloudflare tunnel.
+            </p>
+          </div>
+        </div>
 
 
 

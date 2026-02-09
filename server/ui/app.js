@@ -2,8 +2,26 @@
 // DATALOGGER COMPANION - APPLICATION LOGIC
 // ============================================================================
 
-// API Base URL (change for production)
-const API_BASE = window.location.origin;
+// API Base URL (check localStorage for developer overrides)
+const API_BASE = localStorage.getItem('custom_api_url') || window.location.origin;
+
+function setCustomApiUrl() {
+    const url = document.getElementById('customApiUrl').value.trim();
+    if (url) {
+        // Ensure it starts with http/https
+        if (!url.startsWith('http')) {
+            showToast('URL must start with http:// or https://', 'error');
+            return;
+        }
+        localStorage.setItem('custom_api_url', url);
+        showToast('API URL Updated. Reloading...', 'success');
+        setTimeout(() => window.location.reload(), 1000);
+    } else {
+        localStorage.removeItem('custom_api_url');
+        showToast('Reset to default API URL. Reloading...', 'success');
+        setTimeout(() => window.location.reload(), 1000);
+    }
+}
 
 // State
 let currentView = 'home';
@@ -115,7 +133,11 @@ function showView(viewName) {
                 loadLearningFiles();
                 break;
             case 'settings':
-                // Settings loaded statically or via specific functions if needed
+                // Load custom API URL into input if it exists
+                const customUrlInput = document.getElementById('customApiUrl');
+                const defaultUrlSpan = document.getElementById('defaultApiUrl');
+                if (customUrlInput) customUrlInput.value = localStorage.getItem('custom_api_url') || '';
+                if (defaultUrlSpan) defaultUrlSpan.textContent = window.location.origin;
                 break;
         }
     }

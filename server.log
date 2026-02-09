@@ -1,0 +1,16 @@
+Starting Datalogger V2 on Port 6969...
+[Datalogger V2] Starting server...
+ * Serving Flask app 'api.main'
+ * Debug mode: on
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:6969
+ * Running on http://192.168.1.35:6969
+Press CTRL+C to quit
+ * Restarting with stat
+[Datalogger V2] Starting server...
+ * Debugger is active!
+ * Debugger PIN: 279-740-881
+127.0.0.1 - - [10/Feb/2026 01:42:30] "GET /api/tracks HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 01:42:45] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 01:43:48] "GET /api/status HTTP/1.1" 200 -
