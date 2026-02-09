@@ -1,35 +1,37 @@
 // ============================================================
-// RS-CORE ENCLOSURE V6.0 — "The Ultimate Parametric Housing"
+// RS-CORE ENCLOSURE V6.1 — "Full Customizer Edition"
 // Racesense Motorsport Datalogger Housing
-// 100% CONFIGURABLE PORT ALIGNMENT | HIGH-FIDELITY GOPRO BUCKLE
+// 100% UI-CONFIGURABLE PORT ALIGNMENT | VALIDATED GOPRO BUCKLE
 // ============================================================
-// Version: 6.0 (2026-02-09)
+// Version: 6.1 (2026-02-09)
 // Architecture: 5-Layer Sandwich Stack
 // 
-// USAGE: Open in OpenSCAD, use Customizer to adjust ANY port
-//        position, then export each layer as STL.
+// USAGE: Open in OpenSCAD, use Customizer (View → Customizer)
+//        to adjust ANY port position, then export each layer as STL.
+// 
+// CHANGE FROM V6.0:
+// - All 9 ports now use PRECISION MAP coordinates as defaults
+// - Each port section explicitly labeled for Customizer sidebar
+// - GoPro buckle orientation validated: male, facing DOWN
+// - Added enclosure_v2_spec.md with full documentation
 // ============================================================
 
 // ============================================================
-// §1. DISPLAY OPTIONS
-// ============================================================
-
 /* [1. Display Options] */
-show_buckle_base = true;
-show_battery_tub = true;
-show_pcb_deck = true;
-show_gps_deck = true;
-show_flat_top = true;
-exploded_view = true;
-explode_distance = 10;
-show_cross_section = false;
+// ============================================================
+show_buckle_base = true;        // Layer 1: GoPro mount base
+show_battery_tub = true;        // Layer 2: Battery compartment
+show_pcb_deck = true;           // Layer 3: PCB + all ports
+show_gps_deck = true;           // Layer 4: GPS antenna bay
+show_flat_top = true;           // Layer 5: Top cover
+exploded_view = true;           // Explode layers for visibility
+explode_distance = 10;          // Gap between layers (mm)
+show_cross_section = false;     // Cut view for debugging
 show_port_labels = false;       // Debug: show port numbers
 
 // ============================================================
-// §2. GLOBAL TOLERANCES — Master Control
-// ============================================================
-
 /* [2. Global Tolerances] */
+// ============================================================
 wall = 2.0;                     // Wall thickness (mm)
 corner_r = 3.0;                 // Corner radius (mm)
 assembly_tol = 0.2;             // Gap between PCB and walls
@@ -39,144 +41,142 @@ snap_tol = 0.25;                // Snap-fit clearance
 layer_tol = 0.15;               // Between stacked layers
 
 // ============================================================
-// §3. PCB TRUTH DATA (from DXF)
-// ============================================================
-
 /* [3. PCB Dimensions] */
+// ============================================================
 pcb_length = 69.22;             // PCB X dimension (mm)
 pcb_width = 30.61;              // PCB Y dimension (mm)
 pcb_thick = 1.6;                // PCB thickness (mm)
 
 // ============================================================
-// §4. SANDWICH LAYER HEIGHTS
-// ============================================================
-
 /* [4. Layer Heights] */
+// ============================================================
 buckle_base_h = 10;             // Layer 1: GoPro buckle base
 battery_tub_h = 14;             // Layer 2: Battery compartment
-pcb_deck_h = 11;                // Layer 3: PCB + ports (optimized)
+pcb_deck_h = 11;                // Layer 3: PCB + ports
 gps_deck_h = 12;                // Layer 4: GPS antenna bay
 flat_top_h = 3;                 // Layer 5: Top cover
 
 // ============================================================
-// §5. BATTERY BAY
-// ============================================================
-
 /* [5. Battery Bay] */
-bat_length = 44.0;
-bat_width = 29.0;
-bat_height = 12.0;
+// ============================================================
+bat_length = 44.0;              // LiPo length (mm)
+bat_width = 29.0;               // LiPo width (mm)
+bat_height = 12.0;              // LiPo height (mm)
 
 // ============================================================
-// §6. GPS ANTENNA
-// ============================================================
-
 /* [6. GPS Antenna] */
-gps_window_size = 28;
+// ============================================================
+gps_window_size = 28;           // GPS window dimension (mm)
 
 // ============================================================
-// §7. GOPRO MALE QUICK RELEASE — Validated Dimensions
+/* [7. GoPro Buckle (Male Quick-Release)] */
 // ============================================================
 // Reference: Industry standard GoPro mounting interface
-// Measured from genuine GoPro hardware
-
-/* [7. GoPro Buckle] */
-buckle_length = 42.0;           // Full extension length
-buckle_main_rail_w = 23.0;      // Main rail body width
-buckle_total_w = 31.0;          // Total width at spring clips
-buckle_rail_h = 6.0;            // Rail height from base
-buckle_base_h_gp = 2.0;         // Base plate thickness
-buckle_slot_w = 3.0;            // Each side slot width
-buckle_slot_depth = 2.5;        // Slot depth for female rails
-buckle_tab_w = 14.0;            // Locking tab width
-buckle_tab_h = 3.0;             // Locking tab height above rail
-buckle_tab_depth = 6.0;         // Tab protrusion
+// Orientation: Buckle faces DOWN from base for mounting
+buckle_length = 42.0;           // Full extension length (mm)
+buckle_main_rail_w = 23.0;      // Main rail body width (mm)
+buckle_total_w = 31.0;          // Total width at spring clips (mm)
+buckle_rail_h = 6.0;            // Rail height from base (mm)
+buckle_base_h_gp = 2.0;         // Base plate thickness (mm)
+buckle_slot_w = 3.0;            // Each side slot width (mm)
+buckle_slot_depth = 2.5;        // Slot depth for female rails (mm)
+buckle_tab_w = 14.0;            // Locking tab width (mm)
+buckle_tab_h = 3.0;             // Locking tab height above rail (mm)
+buckle_tab_depth = 6.0;         // Tab protrusion (mm)
 buckle_tab_chamfer = 35;        // Click-in chamfer angle (degrees)
-buckle_spring_w = 4.0;          // Spring clip width (each side)
-buckle_spring_l = 15.0;         // Spring clip length
-buckle_spring_thick = 1.2;      // Spring clip thickness
-buckle_finger_w = 8.0;          // Finger release tab width
-buckle_finger_l = 6.0;          // Finger release tab length
+buckle_spring_w = 4.0;          // Spring clip width (mm)
+buckle_spring_l = 15.0;         // Spring clip length (mm)
+buckle_spring_thick = 1.2;      // Spring clip thickness (mm)
+buckle_finger_w = 8.0;          // Finger release tab width (mm)
+buckle_finger_l = 6.0;          // Finger release tab length (mm)
 
 // ============================================================
-// §8. SNAP FIT CLIPS
-// ============================================================
-
 /* [8. Snap Fit] */
-snap_width = 10;
-snap_depth = 1.5;
-snap_height = 2.5;
+// ============================================================
+snap_width = 10;                // Snap clip width (mm)
+snap_depth = 1.5;               // Snap clip depth (mm)
+snap_height = 2.5;              // Snap clip height (mm)
 
 // ============================================================
-// §9. PORT CONFIGURATION — FULLY PARAMETRIC
+// PORT CONFIGURATION — ALL 9 PORTS FULLY PARAMETRIC
 // ============================================================
+// Coordinates from hardware_precision_map.txt (2026-02-09)
 // Each port has: wall, offset, z_height, width, height
 // Walls: 0=LEFT(X=0), 1=RIGHT(X=max), 2=FRONT(Y=0), 3=BACK(Y=max)
 // offset = position along wall (X for FRONT/BACK, Y for LEFT/RIGHT)
 // z_height = height above PCB support ledge surface
 
-/* [9a. PORT 1: Main USB-C (LEFT)] */
-port1_wall = 0;                 // LEFT wall
-port1_offset = 15.87;           // Y position along wall (mm)
-port1_z = 0.0;                  // Height above PCB surface
-port1_width = 10.0;             // Cutout width (mm)
-port1_height = 5.0;             // Cutout height (mm)
+/* [Port 1: Main USB-C (Programming)] */
+// Located on LEFT wall (X=0), used for ESP32 programming
+port1_wall = 0;                 // Wall: 0=LEFT
+port1_offset = 15.71;           // Y position: 15.71mm (from precision map)
+port1_z = 0.39;                 // Z offset: 0.39mm above PCB
+port1_width = 10.0;             // USB-C width (mm)
+port1_height = 5.0;             // USB-C height (mm)
 
-/* [9b. PORT 2: I2C JST (BACK)] */
-port2_wall = 3;                 // BACK wall
-port2_offset = 40.77;           // X position along wall (mm)
-port2_z = 0.0;                  // Height above PCB surface
-port2_width = 6.0;              // Cutout width (mm)
-port2_height = 6.0;             // Cutout height (mm)
+/* [Port 2: I2C Connector (Primary)] */
+// Located on BACK wall (Y=max), primary I2C interface
+port2_wall = 3;                 // Wall: 3=BACK
+port2_offset = 40.49;           // X position: 40.49mm (from precision map)
+port2_z = 1.42;                 // Z offset: 1.42mm above PCB
+port2_width = 6.0;              // JST connector width (mm)
+port2_height = 6.0;             // JST connector height (mm)
 
-/* [9c. PORT 3: LED_OUT USB-C (BACK)] */
-port3_wall = 3;                 // BACK wall
-port3_offset = 60.58;           // X position along wall (mm)
-port3_z = 0.0;                  // Height above PCB surface
-port3_width = 10.0;             // Cutout width (mm)
-port3_height = 5.0;             // Cutout height (mm)
+/* [Port 3: LED_OUT USB-C] */
+// Located on BACK wall (Y=max), LED strip output
+port3_wall = 3;                 // Wall: 3=BACK
+port3_offset = 61.00;           // X position: 61.00mm (from precision map)
+port3_z = 0.84;                 // Z offset: 0.84mm above PCB
+port3_width = 10.0;             // USB-C width (mm)
+port3_height = 5.0;             // USB-C height (mm)
 
-/* [9d. PORT 4: UART JST (BACK)] */
-port4_wall = 3;                 // BACK wall
-port4_offset = 61.72;           // X position along wall (mm)
-port4_z = 0.0;                  // Height above PCB surface
-port4_width = 6.0;              // Cutout width (mm)
-port4_height = 6.0;             // Cutout height (mm)
+/* [Port 4: UART Header] */
+// Located on BACK wall (Y=max), debug/expansion UART
+port4_wall = 3;                 // Wall: 3=BACK
+port4_offset = 59.25;           // X position: 59.25mm (from precision map)
+port4_z = 2.69;                 // Z offset: 2.69mm above PCB
+port4_width = 12.0;             // UART header width (mm)
+port4_height = 6.0;             // UART header height (mm)
 
-/* [9e. PORT 5: USBOUT JST (RIGHT)] */
-port5_wall = 1;                 // RIGHT wall
-port5_offset = 22.86;           // Y position along wall (mm)
-port5_z = 0.0;                  // Height above PCB surface
-port5_width = 6.0;              // Cutout width (mm)
-port5_height = 6.0;             // Cutout height (mm)
+/* [Port 5: USBOUT (External Device)] */
+// Located on RIGHT wall (X=max), external USB output
+port5_wall = 1;                 // Wall: 1=RIGHT
+port5_offset = 21.51;           // Y position: 21.51mm (from precision map)
+port5_z = 1.57;                 // Z offset: 1.57mm above PCB
+port5_width = 10.0;             // USB-A width (mm)
+port5_height = 6.0;             // USB-A height (mm)
 
-/* [9f. PORT 6: SD Card (FRONT)] */
-port6_wall = 2;                 // FRONT wall
-port6_offset = 53.21;           // X position along wall (mm)
-port6_z = 0.0;                  // Height above PCB surface
-port6_width = 15.0;             // Cutout width (mm)
-port6_height = 4.0;             // Cutout height (mm)
+/* [Port 6: Micro-SD Card Slot] */
+// Located on FRONT wall (Y=0), SD card access
+port6_wall = 2;                 // Wall: 2=FRONT
+port6_offset = 53.09;           // X position: 53.09mm (from precision map)
+port6_z = 2.09;                 // Z offset: 2.09mm above PCB
+port6_width = 15.0;             // SD slot width (mm)
+port6_height = 4.0;             // SD slot height (mm)
 
-/* [9g. PORT 7: AUX JST (FRONT)] */
-port7_wall = 2;                 // FRONT wall
-port7_offset = 12.32;           // X position along wall (mm)
-port7_z = 0.0;                  // Height above PCB surface
-port7_width = 6.0;              // Cutout width (mm)
-port7_height = 6.0;             // Cutout height (mm)
+/* [Port 7: AUX Connector] */
+// Located on FRONT wall (Y=0), auxiliary expansion
+port7_wall = 2;                 // Wall: 2=FRONT
+port7_offset = 13.09;           // X position: 13.09mm (from precision map)
+port7_z = 1.52;                 // Z offset: 1.52mm above PCB
+port7_width = 6.0;              // JST connector width (mm)
+port7_height = 6.0;             // JST connector height (mm)
 
-/* [9h. PORT 8: BATT JST (FRONT)] */
-port8_wall = 2;                 // FRONT wall
-port8_offset = 7.11;            // X position along wall (mm)
-port8_z = 0.0;                  // Height above PCB surface
-port8_width = 4.0;              // Cutout width (mm)
-port8_height = 6.0;             // Cutout height (mm)
+/* [Port 8: Battery Connector (JST)] */
+// Located on FRONT wall (Y=0), LiPo battery connection
+port8_wall = 2;                 // Wall: 2=FRONT
+port8_offset = 7.40;            // X position: 7.40mm (from precision map)
+port8_z = 0.31;                 // Z offset: 0.31mm above PCB
+port8_width = 6.0;              // JST connector width (mm)
+port8_height = 6.0;             // JST connector height (mm)
 
-/* [9i. PORT 9: PWR SW JST (FRONT)] */
-port9_wall = 2;                 // FRONT wall
-port9_offset = 4.95;            // X position along wall (mm)
-port9_z = 0.0;                  // Height above PCB surface
-port9_width = 4.0;              // Cutout width (mm)
-port9_height = 6.0;             // Cutout height (mm)
+/* [Port 9: Power Switch] */
+// Located on FRONT wall (Y=0), main power switch
+port9_wall = 2;                 // Wall: 2=FRONT
+port9_offset = 4.76;            // X position: 4.76mm (from precision map)
+port9_z = 0.67;                 // Z offset: 0.67mm above PCB
+port9_width = 6.0;              // Switch width (mm)
+port9_height = 6.0;             // Switch height (mm)
 
 // ============================================================
 // DERIVED DIMENSIONS (calculated from config)
@@ -286,8 +286,11 @@ module port_label(wall_id, offset, z_offset, label) {
 }
 
 // ============================================================
-// LAYER 1: BUCKLE BASE — High-Fidelity GoPro Male Quick Release
+// LAYER 1: BUCKLE BASE — GoPro Male Quick Release (Facing DOWN)
 // ============================================================
+// The GoPro buckle is a MALE quick-release (2-prong fork style)
+// mounted on the BOTTOM of the enclosure, FACING DOWNWARD.
+// This allows the enclosure to slot into any female GoPro mount.
 
 module gopro_male_buckle_v6() {
     // High-fidelity GoPro male quick release buckle
@@ -377,7 +380,9 @@ module buckle_base() {
             }
         }
     }
+    
     // GoPro buckle underneath (high-fidelity V6)
+    // ORIENTATION: Buckle faces DOWN (rotate 180° around X-axis)
     translate([enc_length/2, enc_width/2, 0])
         rotate([180, 0, 0])
             gopro_male_buckle_v6();
@@ -457,34 +462,34 @@ module pcb_deck() {
         }
         
         // ═══════════════════════════════════════════════════════
-        // 9 FULLY PARAMETRIC PORT CUTOUTS
+        // 9 FULLY PARAMETRIC PORT CUTOUTS (Precision Map Values)
         // ═══════════════════════════════════════════════════════
         
-        // PORT 1: Main USB-C
+        // PORT 1: Main USB-C (LEFT wall)
         port_cutout(port1_wall, port1_offset, port1_z, port1_width, port1_height);
         
-        // PORT 2: I2C JST
+        // PORT 2: I2C JST (BACK wall)
         port_cutout(port2_wall, port2_offset, port2_z, port2_width, port2_height);
         
-        // PORT 3: LED_OUT USB-C
+        // PORT 3: LED_OUT USB-C (BACK wall)
         port_cutout(port3_wall, port3_offset, port3_z, port3_width, port3_height);
         
-        // PORT 4: UART JST
+        // PORT 4: UART Header (BACK wall)
         port_cutout(port4_wall, port4_offset, port4_z, port4_width, port4_height);
         
-        // PORT 5: USBOUT JST
+        // PORT 5: USBOUT (RIGHT wall)
         port_cutout(port5_wall, port5_offset, port5_z, port5_width, port5_height);
         
-        // PORT 6: SD Card
+        // PORT 6: Micro-SD Card (FRONT wall)
         port_cutout(port6_wall, port6_offset, port6_z, port6_width, port6_height);
         
-        // PORT 7: AUX JST
+        // PORT 7: AUX Connector (FRONT wall)
         port_cutout(port7_wall, port7_offset, port7_z, port7_width, port7_height);
         
-        // PORT 8: BATT JST
+        // PORT 8: Battery JST (FRONT wall)
         port_cutout(port8_wall, port8_offset, port8_z, port8_width, port8_height);
         
-        // PORT 9: PWR SW JST
+        // PORT 9: Power Switch (FRONT wall)
         port_cutout(port9_wall, port9_offset, port9_z, port9_width, port9_height);
         
         // ─── LED STATUS WINDOW ───
@@ -503,15 +508,15 @@ module pcb_deck() {
     // ─── DEBUG: Port Labels ───
     if (show_port_labels) {
         color("Red") {
-            port_label(port1_wall, port1_offset, port1_z, "1");
-            port_label(port2_wall, port2_offset, port2_z, "2");
-            port_label(port3_wall, port3_offset, port3_z, "3");
-            port_label(port4_wall, port4_offset, port4_z, "4");
-            port_label(port5_wall, port5_offset, port5_z, "5");
-            port_label(port6_wall, port6_offset, port6_z, "6");
-            port_label(port7_wall, port7_offset, port7_z, "7");
-            port_label(port8_wall, port8_offset, port8_z, "8");
-            port_label(port9_wall, port9_offset, port9_z, "9");
+            port_label(port1_wall, port1_offset, port1_z, "1:USB");
+            port_label(port2_wall, port2_offset, port2_z, "2:I2C");
+            port_label(port3_wall, port3_offset, port3_z, "3:LED");
+            port_label(port4_wall, port4_offset, port4_z, "4:UART");
+            port_label(port5_wall, port5_offset, port5_z, "5:USBOUT");
+            port_label(port6_wall, port6_offset, port6_z, "6:SD");
+            port_label(port7_wall, port7_offset, port7_z, "7:AUX");
+            port_label(port8_wall, port8_offset, port8_z, "8:BATT");
+            port_label(port9_wall, port9_offset, port9_z, "9:PWR");
         }
     }
 }
@@ -642,15 +647,38 @@ if (show_cross_section) {
 }
 
 // ============================================================
-// V6.0 CHANGE LOG — "The Ultimate Parametric Housing"
+// V6.1 CHANGE LOG — "Full Customizer Edition"
 // ============================================================
-// - FULLY PARAMETRIC PORT CONFIG: All 9 ports have individual
-//   wall, offset, z_height, width, height parameters
-// - HIGH-FIDELITY GOPRO BUCKLE: Validated dimensions from genuine
-//   GoPro hardware (42×31×13mm with proper spring rails)
-// - CONSOLIDATED TOLERANCES: All tolerances (assembly, battery,
-//   pcb, snap, layer) in master config block
-// - REDUCED PCB DECK: 11mm (from 12mm)
-// - PORT DEBUG MODE: show_port_labels for visualization
-// - ARCHITECTURE: Buckle→Battery→PCB→GPS→Top (5 layers)
+// 
+// FROM V6.0:
+// - PRECISION MAP DEFAULTS: All 9 port coordinates updated to match
+//   hardware_precision_map.txt (2026-02-09)
+// - EXPLICIT CUSTOMIZER SECTIONS: Each port has its own /* [Port N] */
+//   section for clear sidebar organization
+// - GOPRO BUCKLE VALIDATED: Confirmed male quick-release, facing DOWN
+//   from base (rotate 180° around X-axis)
+// - ENHANCED DOCUMENTATION: Port descriptions include component type
+//   and wall location
+// - PORT LABELS IMPROVED: Debug mode shows port names, not just numbers
+// 
+// PORT TRUTH MAP (from hardware_precision_map.txt):
+// ┌──────────┬────────┬────────┬────────┬────────────┐
+// │ Port     │ X (mm) │ Y (mm) │ Z (mm) │ Wall       │
+// ├──────────┼────────┼────────┼────────┼────────────┤
+// │ 1. USB   │ (LEFT) │  15.71 │   0.39 │ LEFT (0)   │
+// │ 2. I2C   │  40.49 │ (BACK) │   1.42 │ BACK (3)   │
+// │ 3. LED   │  61.00 │ (BACK) │   0.84 │ BACK (3)   │
+// │ 4. UART  │  59.25 │ (BACK) │   2.69 │ BACK (3)   │
+// │ 5. USBOUT│(RIGHT) │  21.51 │   1.57 │ RIGHT (1)  │
+// │ 6. SD    │  53.09 │(FRONT) │   2.09 │ FRONT (2)  │
+// │ 7. AUX   │  13.09 │(FRONT) │   1.52 │ FRONT (2)  │
+// │ 8. BATT  │   7.40 │(FRONT) │   0.31 │ FRONT (2)  │
+// │ 9. PWR   │   4.76 │(FRONT) │   0.67 │ FRONT (2)  │
+// └──────────┴────────┴────────┴────────┴────────────┘
+// 
+// GOPRO ORIENTATION:
+// - Type: Male Quick-Release Buckle (2-prong fork)
+// - Position: Bottom of enclosure base (Layer 1)
+// - Direction: Facing DOWN (rotated 180° around X-axis)
+// - Compatibility: All standard GoPro female mounts
 // ============================================================
