@@ -1,7 +1,7 @@
-# RS-Core Enclosure V3.0 — High-Precision Mechanical Specification
+# RS-Core Enclosure V4.0 — Mathematical Precision Mechanical Specification
 
 **Document:** `enclosure_v2_spec.md`  
-**Version:** 3.0  
+**Version:** 4.0  
 **Date:** 2026-02-09  
 **Author:** Racesense Mechanical Engineering  
 
@@ -9,332 +9,327 @@
 
 ## 1. Overview
 
-This document specifies the **Version 3.0** 3D-printable enclosure for the **RS-Core V2** motorsport datalogger. The design features a modular layer-stack architecture with an integrated GoPro Quick Release Buckle (male) for rapid mounting/dismounting.
+This document specifies the **Version 4.0** 3D-printable enclosure for the **RS-Core V2** motorsport datalogger. The design uses mathematically derived "Truth Data" coordinates extracted directly from DXF measurements with **zero estimation**.
 
-### 1.1 Key Changes from V2.1
+### 1.1 Key Changes from V3.0
 
-| Feature | V2.1 | V3.0 |
+| Feature | V3.0 | V4.0 |
 |---------|------|------|
-| Connector Mapping | Estimated positions | HIGH-PRECISION DXF-derived coordinates |
-| Port Count | 8 ports (incomplete) | 9 ports (ALL connectors mapped) |
-| Edge Assignment | Multiple errors | Corrected per visual reference |
-| Cutout Accuracy | ±2mm tolerance | ±0.2mm tolerance from DXF |
+| Port Coordinates | DXF-derived with offsets | **MATHEMATICAL TRUTH DATA** - Direct center-point measurements |
+| Tolerance System | Variable | **Uniform 0.5mm clearance** on all ports |
+| Z-Height Blueprint | Estimated | **Exact depths per connector type** |
+| Architecture | Multi-layer | **Sandwich Layer Stack** - 5 discrete layers |
+| Coordinate Origin | PCB bottom-left | **PCB Bottom-Left (0,0)** - explicit |
 
-### 1.2 Corrected Port Edge Layout (From Visual Reference)
+### 1.2 Corrected Port Edge Layout (Mathematical Truth Data)
 
-Based on the 3D render of RS-CORE-V2 PCB:
+| Edge | Connectors | Measurement Reference |
+|------|------------|----------------------|
+| **LEFT (X=0)** | 1× USB-C (Main) | Y center-point |
+| **RIGHT (X=69.22)** | 1× Micro-SD Slot, 1× JST USBOUT | Y center-points |
+| **BOTTOM/FRONT (Y=0)** | 1× JST PWR-SW, 1× JST BATT, 1× JST AUX | X center-points |
+| **TOP/BACK (Y=30.61)** | 1× JST I2C, 1× USB-C LED_OUT, 1× JST UART | X center-points |
 
-| Edge | Connectors |
-|------|------------|
-| **LEFT (X-Min)** | 1× USB-C (Main Data/Charge) |
-| **TOP (Y-Max)** | 1× JST 4-pin (I2C), 1× USB-C (LED_OUT), 1× JST 4-pin (UART) |
-| **RIGHT (X-Max)** | 1× JST 4-pin (USBOUT), 1× Micro-SD Slot |
-| **BOTTOM (Y-Min)** | 1× JST 2-pin (PWR-SW), 1× JST 2-pin (BATT), 1× JST 4-pin (IO/AUX) |
+### 1.3 Design Philosophy: Sandwich Layer Architecture
 
-### 1.3 Design Philosophy
-
-- **Layered Stack Architecture:** Buckle → Battery → PCB → GPS → Cover
-- **Quick-Release Mounting:** Standard GoPro male buckle for flat adhesive mounts
-- **Side-by-Side GPS:** Module (36×26mm) and Antenna (26×26mm) placed horizontally
-- **Full Port Exposure:** All 9 connectors accessible without shell removal
-- **Premium Finish:** Chamfered edges, integrated branding, and professional aesthetics
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         FLAT TOP                                 │ Layer 5
+├─────────────────────────────────────────────────────────────────┤
+│                         GPS DECK                                 │ Layer 4
+├─────────────────────────────────────────────────────────────────┤
+│                         PCB DECK                                 │ Layer 3
+├─────────────────────────────────────────────────────────────────┤
+│                        BATTERY TUB                               │ Layer 2
+├─────────────────────────────────────────────────────────────────┤
+│                       BUCKLE BASE                                │ Layer 1
+│                    (GoPro Male Buckle)                           │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 2. Component Dimensions
+## 2. Truth Data: Component Dimensions
 
-### 2.1 Core Components
+### 2.1 Core Components (Exact Measurements)
 
-| Component | Dimensions (mm) | Notes |
-|-----------|-----------------|-------|
-| RS-Core PCB | 69.2 × 30.6 × 1.6 | From DXF: X=9.78→78.99, Y=55.63→86.23 |
-| LiPo Battery | 40 × 25 × 10 | +2mm tolerance all sides |
-| GPS Module | 36 × 26 × 4 | Main GPS receiver |
-| GPS Antenna | 26 × 26 × 9 | Ceramic patch (active) |
+| Component | Dimensions (mm) | Source |
+|-----------|-----------------|--------|
+| RS-Core PCB | **69.22 × 30.61 × 1.6** | DXF BoardOutLine |
+| Battery Bay | **44.0 × 29.0 × 12.0** | Generous tolerance cavity |
+| GPS Antenna | **26 × 26 × 9** | Centered in GPS Deck |
 
-### 2.2 Connector Inventory (Complete)
+### 2.2 Connector Inventory (Complete - 9 Ports)
 
-| # | Connector | Type | Edge | Footprint (mm) | Height (mm) |
-|---|-----------|------|------|----------------|-------------|
-| 1 | USB (Main) | USB-C 16-pin | LEFT | 9.0 × 7.5 | 3.2 |
-| 2 | I2C | JST SH 4-pin | TOP | 5.0 × 4.0 | 4.25 |
-| 3 | LED_OUT | USB-C 16-pin | TOP | 9.0 × 7.5 | 3.2 |
-| 4 | UART | JST SH 4-pin | TOP | 5.0 × 4.0 | 4.25 |
-| 5 | USBOUT | JST SH 4-pin | RIGHT | 5.0 × 4.0 | 4.25 |
-| 6 | MICRO-SD | Push-push TF | RIGHT | 14.0 × 15.0 | 2.0 |
-| 7 | PWR-SW | JST SH 2-pin | BOTTOM | 3.0 × 4.0 | 4.25 |
-| 8 | BATT | JST SH 2-pin | BOTTOM | 3.0 × 4.0 | 4.25 |
-| 9 | AUX (IO) | JST SH 4-pin | BOTTOM | 5.0 × 4.0 | 4.25 |
-
-### 2.3 GoPro Quick Release Buckle Dimensions
-
-| Parameter | Value | Notes |
-|-----------|-------|-------|
-| Buckle Length | 42mm | Standard GoPro male |
-| Buckle Width | 20mm | Fits standard flat mounts |
-| Buckle Height | 10mm | Including locking tab |
-| Tab Spring Width | 12mm | Center locking mechanism |
-| Interface Slot | 3mm deep | Engagement depth |
+| # | Connector | Type | Edge | Footprint (mm) | Height Above PCB |
+|---|-----------|------|------|----------------|------------------|
+| 1 | USB Main | USB-C 16-pin | LEFT | 9.0 × 3.2 | **5.0mm** |
+| 2 | Micro-SD | Push-push TF | RIGHT | 14.0 × 2.0 | **3.5mm** |
+| 3 | USBOUT | JST SH 4-pin | RIGHT | 5.0 × 4.25 | **6.0mm** |
+| 4 | PWR-SW | JST SH 2-pin | BOTTOM | 3.0 × 4.25 | **6.0mm** |
+| 5 | BATT | JST SH 2-pin | BOTTOM | 3.0 × 4.25 | **6.0mm** |
+| 6 | AUX | JST SH 4-pin | BOTTOM | 5.0 × 4.25 | **6.0mm** |
+| 7 | I2C | JST SH 4-pin | TOP | 5.0 × 4.25 | **6.0mm** |
+| 8 | LED_OUT | USB-C 16-pin | TOP | 9.0 × 3.2 | **5.0mm** |
+| 9 | UART | JST SH 4-pin | TOP | 5.0 × 4.25 | **6.0mm** |
 
 ---
 
-## 3. High-Precision Connector Mapping
+## 3. Mathematical Truth Data: Port Center-Points
 
-### 3.1 DXF Coordinate System
+### 3.1 Coordinate System
 
-**PCB Outline from DXF (BoardOutLine layer):**
-- **X-Min (Left Edge):** 9.78mm (DXF absolute)
-- **X-Max (Right Edge):** 78.99mm (DXF absolute)
-- **Y-Min (Bottom Edge):** 55.63mm (DXF absolute)
-- **Y-Max (Top Edge):** 86.23mm (DXF absolute)
-- **PCB Width:** 69.21mm
-- **PCB Height:** 30.60mm
+**Origin:** PCB Bottom-Left corner = (0, 0)
+**X-Axis:** Along 69.22mm edge (Left → Right)
+**Y-Axis:** Along 30.61mm edge (Front/Bottom → Back/Top)
+**Z-Axis:** Up from PCB surface
 
-**Coordinate Transformation:**
-```
-PCB_Local_X = DXF_X - 9.78
-PCB_Local_Y = DXF_Y - 55.63
-```
+### 3.2 HIGH-PRECISION PORT CENTER-POINTS
 
-### 3.2 Connector Positions (Extracted from DXF Text Labels)
+#### LEFT Wall Ports (X = 0mm edge)
 
-| Connector | DXF X | DXF Y | PCB Local X | PCB Local Y | Edge | Wall |
-|-----------|-------|-------|-------------|-------------|------|------|
-| **USB** | 18.54 | 71.50 | 8.76 | 15.87 | LEFT | Left Wall |
-| **PWR-SW** | 14.73 | 60.33 | 4.95 | 4.70 | BOTTOM | Front Wall |
-| **BATT** | 16.89 | 57.79 | 7.11 | 2.16 | BOTTOM | Front Wall |
-| **AUX** | 22.10 | 57.79 | 12.32 | 2.16 | BOTTOM | Front Wall |
-| **I2C** | 50.55 | 80.77 | 40.77 | 25.14 | TOP | Back Wall |
-| **LED_OUT** | 70.36 | 79.12 | 60.58 | 23.49 | TOP | Back Wall |
-| **UART** | 71.50 | 84.96 | 61.72 | 29.33 | TOP | Back Wall |
-| **USBOUT** | 73.66 | 78.49 | 63.88 | 22.86 | RIGHT | Right Wall |
-| **MICRO-SD** | 62.99 | 62.48 | 53.21 | 6.85 | RIGHT | Right Wall |
+| Port | Y Center (mm) | Cutout Height (mm) |
+|------|---------------|-------------------|
+| **USB-C Main** | **15.71** | 5.0 |
 
-### 3.3 Cutout Positions for Enclosure
+#### RIGHT Wall Ports (X = 69.22mm edge)
 
-**Enclosure Coordinate System:**
-- PCB sits centered in enclosure with 4.4mm offset from PCB edge to interior wall
-- Wall thickness: 2.0mm
-- Cutouts are positioned relative to enclosure origin (front-left-bottom corner)
+| Port | Y Center (mm) | Cutout Height (mm) |
+|------|---------------|-------------------|
+| **Micro-SD Slot** | **8.94** | 3.5 |
+| **USBOUT (JST)** | **21.51** | 6.0 |
 
-**Enclosure Dimensions:**
-- Length (X): 78mm
-- Width (Y): 68mm (to accommodate side-by-side GPS)
-- PCB Offset X: (78 - 69.2) / 2 = 4.4mm
-- PCB Offset Y: (68 - 30.6) / 2 = 18.7mm (for PCB layer, centered)
+#### BOTTOM/FRONT Wall Ports (Y = 0mm edge)
+
+| Port | X Center (mm) | Cutout Height (mm) |
+|------|---------------|-------------------|
+| **PWR-SW (JST)** | **4.76** | 6.0 |
+| **BATT (JST)** | **7.40** | 6.0 |
+| **AUX (JST)** | **13.09** | 6.0 |
+
+#### TOP/BACK Wall Ports (Y = 30.61mm edge)
+
+| Port | X Center (mm) | Cutout Height (mm) |
+|------|---------------|-------------------|
+| **I2C (JST)** | **40.49** | 6.0 |
+| **LED_OUT (USB-C)** | **61.00** | 5.0 |
+| **UART (JST)** | **59.25** | 6.0 |
+
+### 3.3 Cutout Dimensions with 0.5mm Clearance
+
+| Connector Type | Base Footprint | +0.5mm Clearance | Final Cutout Size |
+|----------------|----------------|------------------|-------------------|
+| USB-C | 9.0 × 3.2 | +1.0 × +1.0 | **10.0 × 4.2 mm** |
+| JST SH 4-pin | 5.0 × 4.25 | +1.0 × +1.0 | **6.0 × 5.25 mm** |
+| JST SH 2-pin | 3.0 × 4.25 | +1.0 × +1.0 | **4.0 × 5.25 mm** |
+| Micro-SD | 14.0 × 2.0 | +1.0 × +1.0 | **15.0 × 3.0 mm** |
 
 ---
 
 ## 4. Enclosure Architecture
 
-### 4.1 Layer Stack (Bottom to Top)
+### 4.1 Sandwich Layer Stack (Bottom to Top)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    TOP COVER (Antenna Window)                    │  3mm
-│   ╔═══════════════════════╗ ┌─────────────────────────────────┐ │
-│   ║   GPS Antenna Cutout  ║ │░░░░░░░░░ Solid Thin ░░░░░░░░░░░│ │
-│   ║      (28×28mm)        ║ │░░░░░░░░░  (1mm wall) ░░░░░░░░░░│ │
-│   ╚═══════════════════════╝ └─────────────────────────────────┘ │
-├─────────────────────────────────────────────────────────────────┤
-│                      GPS LAYER                                   │  11mm
-│   ┌────────────────────┐  ┌────────────────────┐                │
-│   │    GPS Module      │  │    GPS Antenna     │                │
-│   │    36 × 26 × 4     │  │    26 × 26 × 9     │                │
-│   └────────────────────┘  └────────────────────┘                │
-│          SIDE-BY-SIDE ARRANGEMENT (65mm total width)            │
-├─────────────────────────────────────────────────────────────────┤
-│                      PCB LAYER                                   │  15mm
+│                       LAYER 5: FLAT TOP                          │  3mm
 │   ┌─────────────────────────────────────────────────────────┐   │
-│   │                    RS-Core PCB                          │   │
-│   │                   69.2 × 30.6 mm                        │   │
-│   │                                                         │   │
-│   │ LEFT: USB(Main)                                         │   │
-│   │                    TOP: I2C, LED_OUT(USB-C), UART       │   │
-│   │                                      RIGHT: USBOUT, μSD │   │
-│   │             BOTTOM: PWR-SW, BATT, AUX                   │   │
-│   └─────────────────────────────────────────────────────────┘   │
-│                      ALL 9 PORTS EXPOSED                        │
-├─────────────────────────────────────────────────────────────────┤
-│                    BATTERY LAYER                                 │  13mm
-│   ┌─────────────────────────────────────────────────────────┐   │
-│   │                 LiPo Battery Bay                        │   │
-│   │              44 × 29 × 12 (with tolerance)              │   │
+│   │              GPS Antenna Window (28×28mm)               │   │
+│   │              Thin RF-transparent membrane                │   │
 │   └─────────────────────────────────────────────────────────┘   │
 ├─────────────────────────────────────────────────────────────────┤
-│                GOPRO QUICK RELEASE BUCKLE                        │  10mm
-│                    ┌─────────────────┐                          │
-│                    │ ▓▓▓▓ BUCKLE ▓▓▓▓│                          │
-│                    │    (male)       │                          │
-│                    └─────────────────┘                          │
-│              Snaps into standard GoPro flat mount               │
+│                       LAYER 4: GPS DECK                          │  12mm
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    GPS Antenna Bay                       │   │
+│   │                     26 × 26 × 9mm                        │   │
+│   │              (Centered in upper deck area)               │   │
+│   └─────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────┤
+│                       LAYER 3: PCB DECK                          │  15mm
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                    RS-Core V2 PCB                        │   │
+│   │                  69.22 × 30.61 × 1.6mm                   │   │
+│   │                                                          │   │
+│   │  LEFT WALL:                          RIGHT WALL:         │   │
+│   │   └─ USB Main (Y=15.71)               └─ SD (Y=8.94)     │   │
+│   │                                        └─ USBOUT(Y=21.51)│   │
+│   │                                                          │   │
+│   │  FRONT WALL:                         BACK WALL:          │   │
+│   │   └─ PWR-SW (X=4.76)                  └─ I2C (X=40.49)   │   │
+│   │   └─ BATT (X=7.40)                    └─ UART (X=59.25)  │   │
+│   │   └─ AUX (X=13.09)                    └─ LED_OUT(X=61.0) │   │
+│   └─────────────────────────────────────────────────────────┘   │
+│                    ★ ALL 9 PORTS ACCESSIBLE ★                   │
+├─────────────────────────────────────────────────────────────────┤
+│                      LAYER 2: BATTERY TUB                        │  14mm
+│   ┌─────────────────────────────────────────────────────────┐   │
+│   │                  LiPo Battery Cavity                     │   │
+│   │                 44.0 × 29.0 × 12.0mm                     │   │
+│   │              (Centered, generous tolerance)              │   │
+│   └─────────────────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────────────────┤
+│                     LAYER 1: BUCKLE BASE                         │  12mm
+│                    ┌─────────────────────┐                      │
+│                    │   GoPro Male Buckle │                      │
+│                    │      42 × 20mm      │                      │
+│                    └─────────────────────┘                      │
+│              Integrated Quick-Release Mounting System            │
 └─────────────────────────────────────────────────────────────────┘
-        TOTAL HEIGHT: 52mm (without mount attachment)
+                    TOTAL HEIGHT: 56mm
 ```
 
 ### 4.2 External Dimensions
 
 | Parameter | Value |
 |-----------|-------|
-| Length | 78 mm |
-| Width | 68 mm |
-| Height (total) | 52 mm |
+| Enclosure Length (X) | 78 mm |
+| Enclosure Width (Y) | 40 mm |
+| Total Height | 56 mm |
 | Wall Thickness | 2.0 mm |
-| Corner Radius | 4.0 mm |
+| Corner Radius | 3.0 mm |
 
-### 4.3 Port Cutout Positions (V3.0 High-Precision)
+### 4.3 PCB Positioning Within Enclosure
 
-**Reference: Enclosure interior, PCB floor at Z=0 within PCB layer**
+```
+PCB Offset X = (78 - 69.22) / 2 = 4.39mm
+PCB Offset Y = (40 - 30.61) / 2 = 4.695mm ≈ 4.7mm
+```
 
-#### 4.3.1 LEFT Wall Ports (Enclosure X=0)
-
-| Port | Position Along Wall (Y) | Height Above Floor (Z) | Cutout Size (W×H) |
-|------|------------------------|------------------------|-------------------|
-| USB-C (Main) | 15.87 + 18.7 = 34.57mm | 4mm | 10 × 4mm |
-
-#### 4.3.2 RIGHT Wall Ports (Enclosure X=78mm)
-
-| Port | Position Along Wall (Y) | Height Above Floor (Z) | Cutout Size (W×H) |
-|------|------------------------|------------------------|-------------------|
-| USBOUT (JST 4-pin) | 22.86 + 18.7 = 41.56mm | 4mm | 6 × 5mm |
-| MICRO-SD | 6.85 + 18.7 = 25.55mm | 4mm | 15 × 4mm |
-
-#### 4.3.3 FRONT Wall Ports (Enclosure Y=0, Bottom PCB Edge)
-
-| Port | Position Along Wall (X) | Height Above Floor (Z) | Cutout Size (W×H) |
-|------|------------------------|------------------------|-------------------|
-| PWR-SW (JST 2-pin) | 4.95 + 4.4 = 9.35mm | 4mm | 4 × 5mm |
-| BATT (JST 2-pin) | 7.11 + 4.4 = 11.51mm | 4mm | 4 × 5mm |
-| AUX (JST 4-pin) | 12.32 + 4.4 = 16.72mm | 4mm | 6 × 5mm |
-
-#### 4.3.4 BACK Wall Ports (Enclosure Y=68mm, Top PCB Edge)
-
-| Port | Position Along Wall (X) | Height Above Floor (Z) | Cutout Size (W×H) |
-|------|------------------------|------------------------|-------------------|
-| I2C (JST 4-pin) | 40.77 + 4.4 = 45.17mm | 4mm | 6 × 5mm |
-| LED_OUT (USB-C) | 60.58 + 4.4 = 64.98mm | 4mm | 10 × 4mm |
-| UART (JST 4-pin) | 61.72 + 4.4 = 66.12mm | 4mm | 6 × 5mm |
+**Enclosure-to-PCB Coordinate Transform:**
+```
+Enclosure_X = PCB_X + 4.39
+Enclosure_Y = PCB_Y + 4.70
+```
 
 ---
 
-## 5. OpenSCAD Model (V3.0)
+## 5. OpenSCAD Model V4.0
 
 ### 5.1 Complete OpenSCAD Script
 
 ```openscad
 // ============================================================
-// RS-CORE ENCLOSURE V3.0
+// RS-CORE ENCLOSURE V4.0
 // Racesense Motorsport Datalogger Housing
-// HIGH-PRECISION Port Mapping from DXF + Visual Reference
+// MATHEMATICAL PRECISION - Truth Data from DXF
 // ============================================================
-// Version: 3.0 (2026-02-09)
-// Changes: 
-//   - Corrected ALL 9 connector positions from DXF coordinates
-//   - Fixed edge assignments per visual reference
-//   - LEFT: USB (Main)
-//   - TOP: I2C, LED_OUT (USB-C), UART
-//   - RIGHT: USBOUT (JST), MICRO-SD
-//   - BOTTOM: PWR-SW, BATT, AUX
+// Version: 4.0 (2026-02-09)
+// Architecture: Sandwich Layer Stack
+//   Layer 1: Buckle Base (GoPro Male)
+//   Layer 2: Battery Tub
+//   Layer 3: PCB Deck (9 precision port cutouts)
+//   Layer 4: GPS Deck
+//   Layer 5: Flat Top (Antenna Window)
 // ============================================================
 
 /* [Display Options] */
-show_buckle_layer = true;
-show_battery_layer = true;
-show_pcb_layer = true;
-show_gps_layer = true;
-show_top_cover = true;
+show_buckle_base = true;
+show_battery_tub = true;
+show_pcb_deck = true;
+show_gps_deck = true;
+show_flat_top = true;
 exploded_view = true;
-explode_distance = 8;
+explode_distance = 10;
 show_cross_section = false;
 
 /* [Enclosure Dimensions] */
 enc_length = 78;      // X dimension
-enc_width = 68;       // Y dimension  
+enc_width = 40;       // Y dimension
 wall = 2.0;
-corner_r = 4.0;
+corner_r = 3.0;
 
-// Layer heights (internal cavity heights)
-buckle_layer_h = 10;
-battery_layer_h = 13;
-pcb_layer_h = 15;
-gps_layer_h = 11;
-cover_layer_h = 3;
+// Sandwich Layer Heights
+buckle_base_h = 12;
+battery_tub_h = 14;
+pcb_deck_h = 15;
+gps_deck_h = 12;
+flat_top_h = 3;
 
-/* [PCB Dimensions from DXF] */
-// PCB outline: X=9.78→78.99, Y=55.63→86.23
-pcb_length = 69.21;   // 78.99 - 9.78
-pcb_width = 30.60;    // 86.23 - 55.63
+/* [PCB TRUTH DATA] */
+// Exact PCB dimensions from DXF
+pcb_length = 69.22;
+pcb_width = 30.61;
 pcb_thick = 1.6;
-pcb_comp_height = 12;
 
 // PCB position within enclosure (centered)
-pcb_offset_x = (enc_length - pcb_length) / 2;  // 4.4mm
-pcb_offset_y = (enc_width - pcb_width) / 2;    // 18.7mm
+pcb_offset_x = (enc_length - pcb_length) / 2;  // 4.39mm
+pcb_offset_y = (enc_width - pcb_width) / 2;    // 4.695mm
 
-/* [Battery Dimensions] */
-bat_length = 44;  // 40 + 4mm tolerance
-bat_width = 29;   // 25 + 4mm tolerance  
-bat_height = 12;  // 10 + 2mm tolerance
+/* [Battery Bay TRUTH DATA] */
+bat_length = 44.0;
+bat_width = 29.0;
+bat_height = 12.0;
 
-/* [GPS Dimensions] */
-gps_mod_length = 36;
-gps_mod_width = 26;
-gps_mod_height = 4;
+/* [GPS Antenna TRUTH DATA] */
 gps_ant_size = 26;
 gps_ant_height = 9;
-gps_gap = 3;
 
-/* [GoPro Buckle] */
+/* [GoPro Buckle Dimensions] */
 buckle_length = 42;
 buckle_width = 20;
 buckle_body_h = 8;
 buckle_rail_w = 3;
 buckle_tab_w = 12;
 buckle_tab_h = 4;
-buckle_base_h = 2;
 
-/* [Cutout Dimensions] */
-// USB-C
-usbc_width = 10;
-usbc_height = 4;
+/* [Clearance] */
+port_clearance = 0.5;  // 0.5mm around all ports
 
-// MicroSD  
-sd_width = 15;
-sd_height = 4;
+/* ============================================================
+   PORT TRUTH DATA - Mathematical Precision
+   All coordinates relative to PCB (0,0) at bottom-left
+   ============================================================ */
 
-// JST SH 4-pin
-jst4_width = 6;    // 5mm connector + 1mm tolerance
-jst4_height = 5;   // 4.25mm connector + 0.75mm tolerance
+// Cutout heights above PCB surface
+jst_cutout_h = 6.0;
+usbc_cutout_h = 5.0;
+sd_cutout_h = 3.5;
 
-// JST SH 2-pin
-jst2_width = 4;    // 3mm connector + 1mm tolerance
-jst2_height = 5;   // 4.25mm connector + 0.75mm tolerance
+// Connector base dimensions
+usbc_base_w = 9.0;
+usbc_base_h = 3.2;
+jst4_base_w = 5.0;
+jst4_base_h = 4.25;
+jst2_base_w = 3.0;
+jst2_base_h = 4.25;
+sd_base_w = 14.0;
+sd_base_h = 2.0;
 
-/* [Port Positions - HIGH PRECISION from DXF] */
-// All positions are PCB-local coordinates from DXF extraction
-// Transformed: PCB_Local = DXF - Origin(9.78, 55.63)
+// Final cutout sizes with 0.5mm clearance on each side (total +1.0mm)
+usbc_cut_w = usbc_base_w + 2*port_clearance;   // 10.0mm
+usbc_cut_h = usbc_base_h + 2*port_clearance;   // 4.2mm
+jst4_cut_w = jst4_base_w + 2*port_clearance;   // 6.0mm
+jst4_cut_h = jst4_base_h + 2*port_clearance;   // 5.25mm
+jst2_cut_w = jst2_base_w + 2*port_clearance;   // 4.0mm
+jst2_cut_h = jst2_base_h + 2*port_clearance;   // 5.25mm
+sd_cut_w = sd_base_w + 2*port_clearance;       // 15.0mm
+sd_cut_h = sd_base_h + 2*port_clearance;       // 3.0mm
 
-// LEFT WALL (X-min edge, Y position along wall)
-usb_main_pcb_y = 15.87;    // USB Main - DXF Y=71.50 → Local Y=15.87
+/* ============================================================
+   HIGH-PRECISION PORT CENTER-POINTS (PCB-relative)
+   ============================================================ */
 
-// RIGHT WALL (X-max edge, Y position along wall)
-usbout_pcb_y = 22.86;      // USBOUT JST - DXF Y=78.49 → Local Y=22.86
-microsd_pcb_y = 6.85;      // MicroSD - DXF Y=62.48 → Local Y=6.85
+// LEFT WALL (X=0 edge) - Y center positions
+usb_main_y = 15.71;
 
-// FRONT WALL (Y-min edge, X position along wall)
-pwr_sw_pcb_x = 4.95;       // PWR-SW JST 2-pin - DXF X=14.73 → Local X=4.95
-batt_pcb_x = 7.11;         // BATT JST 2-pin - DXF X=16.89 → Local X=7.11
-aux_pcb_x = 12.32;         // AUX JST 4-pin - DXF X=22.10 → Local X=12.32
+// RIGHT WALL (X=69.22 edge) - Y center positions  
+micro_sd_y = 8.94;
+usbout_y = 21.51;
 
-// BACK WALL (Y-max edge, X position along wall)
-i2c_pcb_x = 40.77;         // I2C JST 4-pin - DXF X=50.55 → Local X=40.77
-led_out_pcb_x = 60.58;     // LED_OUT USB-C - DXF X=70.36 → Local X=60.58
-uart_pcb_x = 61.72;        // UART JST 4-pin - DXF X=71.50 → Local X=61.72
+// BOTTOM/FRONT WALL (Y=0 edge) - X center positions
+pwr_sw_x = 4.76;
+batt_x = 7.40;
+aux_x = 13.09;
+
+// TOP/BACK WALL (Y=30.61 edge) - X center positions
+i2c_x = 40.49;
+led_out_x = 61.00;
+uart_x = 59.25;
 
 /* [Snap Fit] */
-snap_width = 8;
+snap_width = 10;
 snap_depth = 1.5;
-snap_height = 2;
+snap_height = 2.5;
 
 // ============================================================
 // UTILITY MODULES
@@ -345,48 +340,57 @@ module rounded_box(l, w, h, r) {
         for (x = [r, l-r]) {
             for (y = [r, w-r]) {
                 translate([x, y, 0])
-                    cylinder(h=h, r=r, $fn=48);
+                    cylinder(h=h, r=r, $fn=32);
             }
         }
     }
 }
 
-// Snap-fit clip (positive - the bump)
-module snap_clip_male() {
-    hull() {
-        cube([snap_width, snap_depth/2, snap_height]);
-        translate([0, snap_depth, snap_height/2])
-            cube([snap_width, 0.1, snap_height/2]);
+module rounded_box_hollow(l, w, h, r, wall_t) {
+    difference() {
+        rounded_box(l, w, h, r);
+        translate([wall_t, wall_t, wall_t])
+            rounded_box(l - 2*wall_t, w - 2*wall_t, h, max(r - wall_t, 0.5));
     }
 }
 
-// Snap-fit receiver (negative - the slot)
+// Snap-fit clip (male)
+module snap_clip_male() {
+    hull() {
+        cube([snap_width, snap_depth * 0.5, snap_height]);
+        translate([0, snap_depth, snap_height * 0.5])
+            cube([snap_width, 0.1, snap_height * 0.5]);
+    }
+}
+
+// Snap-fit receiver (female)
 module snap_clip_female() {
-    translate([-0.2, -0.3, -0.2])
-        cube([snap_width + 0.4, snap_depth + 0.6, snap_height + 0.4]);
+    translate([-0.25, -0.4, -0.25])
+        cube([snap_width + 0.5, snap_depth + 0.8, snap_height + 0.5]);
 }
 
 // ============================================================
-// LAYER 1: GOPRO QUICK RELEASE BUCKLE
+// LAYER 1: BUCKLE BASE (GoPro Male Buckle Integrated)
 // ============================================================
 
-module gopro_buckle() {
+module gopro_male_buckle() {
+    // Standard GoPro quick-release male buckle
     difference() {
         union() {
             // Main body
             translate([-buckle_length/2, -buckle_width/2, 0])
                 cube([buckle_length, buckle_width, buckle_body_h]);
             
-            // Rails on sides
+            // Side rails for engagement
             for (dy = [-1, 1]) {
                 translate([-buckle_length/2, dy * (buckle_width/2 + buckle_rail_w/2) - buckle_rail_w/2, 0])
                     cube([buckle_length, buckle_rail_w, buckle_body_h - 2]);
             }
         }
         
-        // Center channel for the mount rails
+        // Center channel
         translate([-buckle_length/2 - 1, -buckle_width/2 + buckle_rail_w, buckle_body_h - 3])
-            cube([buckle_length + 2, buckle_width - buckle_rail_w*2, 4]);
+            cube([buckle_length + 2, buckle_width - buckle_rail_w * 2, 4]);
         
         // Locking tab slot
         translate([-buckle_tab_w/2, -buckle_width/2 - 1, buckle_body_h - buckle_tab_h])
@@ -405,196 +409,210 @@ module gopro_buckle() {
     }
 }
 
-module buckle_layer() {
+module buckle_base() {
+    base_floor = 2;
+    
     difference() {
         union() {
-            rounded_box(enc_length, enc_width, buckle_layer_h, corner_r);
+            // Solid base shell
+            rounded_box(enc_length, enc_width, buckle_base_h, corner_r);
             
-            for (x = [wall + 5, enc_length - wall - 5]) {
-                for (y = [wall + 5, enc_width - wall - 5]) {
-                    translate([x, y, buckle_layer_h])
-                        cylinder(h=3, d=8, $fn=24);
+            // Alignment posts for battery tub
+            for (x = [wall + 8, enc_length - wall - 8]) {
+                for (y = [wall + 6, enc_width - wall - 6]) {
+                    translate([x, y, buckle_base_h])
+                        cylinder(h = 3, d = 6, $fn = 24);
                 }
             }
         }
         
-        translate([wall, wall, buckle_base_h])
-            rounded_box(enc_length - wall*2, enc_width - wall*2, 
-                       buckle_layer_h, corner_r - wall/2);
+        // Hollow interior (above floor)
+        translate([wall, wall, base_floor])
+            rounded_box(enc_length - 2*wall, enc_width - 2*wall, 
+                       buckle_base_h, max(corner_r - wall, 0.5));
         
-        for (x = [wall + 5, enc_length - wall - 5]) {
-            for (y = [wall + 5, enc_width - wall - 5]) {
+        // Mounting screw holes
+        for (x = [wall + 8, enc_length - wall - 8]) {
+            for (y = [wall + 6, enc_width - wall - 6]) {
                 translate([x, y, -1])
-                    cylinder(h=buckle_layer_h + 5, d=3.2, $fn=24);
+                    cylinder(h = buckle_base_h + 5, d = 3.2, $fn = 24);
+                // Countersink
                 translate([x, y, -0.1])
-                    cylinder(h=2, d1=6, d2=3.2, $fn=24);
+                    cylinder(h = 2, d1 = 6, d2 = 3.2, $fn = 24);
             }
         }
     }
     
+    // GoPro buckle on bottom (inverted)
     translate([enc_length/2, enc_width/2, 0])
         rotate([180, 0, 0])
-            gopro_buckle();
+            gopro_male_buckle();
 }
 
 // ============================================================
-// LAYER 2: BATTERY COMPARTMENT
+// LAYER 2: BATTERY TUB
 // ============================================================
 
-module battery_layer() {
-    layer_h = battery_layer_h;
+module battery_tub() {
+    floor_t = 2;
     
     difference() {
         union() {
-            rounded_box(enc_length, enc_width, layer_h, corner_r);
+            rounded_box(enc_length, enc_width, battery_tub_h, corner_r);
             
-            for (x = [enc_length/4, enc_length*3/4]) {
-                for (y = [wall, enc_width - wall - snap_depth]) {
-                    translate([x - snap_width/2, y, layer_h])
-                        snap_clip_male();
-                }
-            }
-        }
-        
-        translate([wall, wall, wall])
-            rounded_box(enc_length - wall*2, enc_width - wall*2, 
-                       layer_h, corner_r - wall/2);
-        
-        for (x = [wall + 5, enc_length - wall - 5]) {
-            for (y = [wall + 5, enc_width - wall - 5]) {
-                translate([x, y, -1])
-                    cylinder(h=wall + 2, d=3.2, $fn=24);
-            }
-        }
-        
-        // Cable routing hole
-        translate([enc_length/2, enc_width/2, layer_h - 1])
-            cylinder(h=3, d=8, $fn=24);
-    }
-    
-    // Battery retention
-    bat_x = (enc_length - bat_length) / 2;
-    bat_y = (enc_width - bat_width) / 2;
-    
-    for (dx = [0, bat_length - 5]) {
-        for (dy = [0, bat_width - 5]) {
-            translate([bat_x + dx, bat_y + dy, wall])
-                cube([5, 5, 3]);
-        }
-    }
-}
-
-// ============================================================
-// LAYER 3: PCB COMPARTMENT (V3.0 HIGH-PRECISION CUTOUTS)
-// ============================================================
-
-module pcb_layer() {
-    layer_h = pcb_layer_h;
-    floor_offset = wall + 4;  // Height of cutouts above floor
-    
-    difference() {
-        union() {
-            rounded_box(enc_length, enc_width, layer_h, corner_r);
-            
-            for (x = [enc_length/4, enc_length*3/4]) {
-                for (y = [wall, enc_width - wall - snap_depth]) {
-                    translate([x - snap_width/2, y, layer_h])
+            // Snap clips for PCB deck
+            for (x = [enc_length * 0.25, enc_length * 0.75]) {
+                for (side = [0, 1]) {
+                    y_pos = side == 0 ? wall : enc_width - wall - snap_depth;
+                    translate([x - snap_width/2, y_pos, battery_tub_h])
                         snap_clip_male();
                 }
             }
         }
         
         // Hollow interior
-        translate([wall, wall, wall])
-            rounded_box(enc_length - wall*2, enc_width - wall*2,
-                       layer_h, corner_r - wall/2);
+        translate([wall, wall, floor_t])
+            rounded_box(enc_length - 2*wall, enc_width - 2*wall, 
+                       battery_tub_h, max(corner_r - wall, 0.5));
         
-        // Snap receivers
-        for (x = [enc_length/4, enc_length*3/4]) {
-            for (y = [wall - 0.5, enc_width - wall - snap_depth + 0.5]) {
-                translate([x - snap_width/2, y, -0.1])
+        // Alignment post holes (from buckle base)
+        for (x = [wall + 8, enc_length - wall - 8]) {
+            for (y = [wall + 6, enc_width - wall - 6]) {
+                translate([x, y, -1])
+                    cylinder(h = 4, d = 6.4, $fn = 24);
+            }
+        }
+        
+        // Cable pass-through
+        translate([enc_length/2, enc_width/2, battery_tub_h - 2])
+            cylinder(h = 4, d = 8, $fn = 24);
+    }
+    
+    // Battery retention corners
+    bat_x = (enc_length - bat_length) / 2;
+    bat_y = (enc_width - bat_width) / 2;
+    
+    for (dx = [0, bat_length - 6]) {
+        for (dy = [0, bat_width - 6]) {
+            translate([bat_x + dx, bat_y + dy, floor_t])
+                cube([6, 6, 3]);
+        }
+    }
+}
+
+// ============================================================
+// LAYER 3: PCB DECK (9 Precision Port Cutouts)
+// ============================================================
+
+module pcb_deck() {
+    floor_t = 2;
+    pcb_standoff_h = 3;
+    pcb_surface_z = floor_t + pcb_standoff_h + pcb_thick;
+    
+    difference() {
+        union() {
+            rounded_box(enc_length, enc_width, pcb_deck_h, corner_r);
+            
+            // Snap clips for GPS deck
+            for (x = [enc_length * 0.25, enc_length * 0.75]) {
+                for (side = [0, 1]) {
+                    y_pos = side == 0 ? wall : enc_width - wall - snap_depth;
+                    translate([x - snap_width/2, y_pos, pcb_deck_h])
+                        snap_clip_male();
+                }
+            }
+        }
+        
+        // Hollow interior
+        translate([wall, wall, floor_t])
+            rounded_box(enc_length - 2*wall, enc_width - 2*wall, 
+                       pcb_deck_h, max(corner_r - wall, 0.5));
+        
+        // Snap receivers (from battery tub)
+        for (x = [enc_length * 0.25, enc_length * 0.75]) {
+            for (side = [0, 1]) {
+                y_pos = side == 0 ? wall - 0.5 : enc_width - wall - snap_depth + 0.5;
+                translate([x - snap_width/2, y_pos, -0.1])
                     snap_clip_female();
             }
         }
         
         // ============================================================
-        // LEFT WALL CUTOUTS (X = 0, connectors on X-min PCB edge)
+        // PORT CUTOUTS - Mathematical Precision
+        // All centered on TRUTH DATA coordinates
         // ============================================================
         
-        // USB-C Main (Data/Charge) - LEFT WALL
-        // Position: PCB local Y = 15.87, enclosure Y = 15.87 + pcb_offset_y
-        translate([-0.1, pcb_offset_y + usb_main_pcb_y - usbc_width/2, floor_offset])
-            cube([wall + 0.2, usbc_width, usbc_height]);
+        // --- LEFT WALL (X = 0) ---
+        // USB-C Main: Y center = 15.71mm
+        translate([-0.1, 
+                   pcb_offset_y + usb_main_y - usbc_cut_w/2, 
+                   pcb_surface_z])
+            cube([wall + 0.2, usbc_cut_w, usbc_cutout_h]);
         
-        // ============================================================
-        // RIGHT WALL CUTOUTS (X = enc_length, connectors on X-max PCB edge)
-        // ============================================================
+        // --- RIGHT WALL (X = enc_length) ---
+        // Micro-SD Slot: Y center = 8.94mm
+        translate([enc_length - wall - 0.1, 
+                   pcb_offset_y + micro_sd_y - sd_cut_w/2, 
+                   pcb_surface_z])
+            cube([wall + 0.2, sd_cut_w, sd_cutout_h]);
         
-        // USBOUT JST 4-pin - RIGHT WALL
-        // Position: PCB local Y = 22.86
-        translate([enc_length - wall - 0.1, pcb_offset_y + usbout_pcb_y - jst4_width/2, floor_offset])
-            cube([wall + 0.2, jst4_width, jst4_height]);
+        // USBOUT (JST): Y center = 21.51mm
+        translate([enc_length - wall - 0.1, 
+                   pcb_offset_y + usbout_y - jst4_cut_w/2, 
+                   pcb_surface_z])
+            cube([wall + 0.2, jst4_cut_w, jst_cutout_h]);
         
-        // MICRO-SD Slot - RIGHT WALL  
-        // Position: PCB local Y = 6.85
-        translate([enc_length - wall - 0.1, pcb_offset_y + microsd_pcb_y - sd_width/2, floor_offset])
-            cube([wall + 0.2, sd_width, sd_height]);
+        // --- FRONT/BOTTOM WALL (Y = 0) ---
+        // PWR-SW (JST 2-pin): X center = 4.76mm
+        translate([pcb_offset_x + pwr_sw_x - jst2_cut_w/2, 
+                   -0.1, 
+                   pcb_surface_z])
+            cube([jst2_cut_w, wall + 0.2, jst_cutout_h]);
         
-        // ============================================================
-        // FRONT WALL CUTOUTS (Y = 0, connectors on Y-min PCB edge / Bottom)
-        // ============================================================
+        // BATT (JST 2-pin): X center = 7.40mm
+        translate([pcb_offset_x + batt_x - jst2_cut_w/2, 
+                   -0.1, 
+                   pcb_surface_z])
+            cube([jst2_cut_w, wall + 0.2, jst_cutout_h]);
         
-        // PWR-SW JST 2-pin - FRONT WALL
-        // Position: PCB local X = 4.95
-        translate([pcb_offset_x + pwr_sw_pcb_x - jst2_width/2, -0.1, floor_offset])
-            cube([jst2_width, wall + 0.2, jst2_height]);
+        // AUX (JST 4-pin): X center = 13.09mm
+        translate([pcb_offset_x + aux_x - jst4_cut_w/2, 
+                   -0.1, 
+                   pcb_surface_z])
+            cube([jst4_cut_w, wall + 0.2, jst_cutout_h]);
         
-        // BATT JST 2-pin - FRONT WALL
-        // Position: PCB local X = 7.11
-        translate([pcb_offset_x + batt_pcb_x - jst2_width/2, -0.1, floor_offset])
-            cube([jst2_width, wall + 0.2, jst2_height]);
+        // --- BACK/TOP WALL (Y = enc_width) ---
+        // I2C (JST 4-pin): X center = 40.49mm
+        translate([pcb_offset_x + i2c_x - jst4_cut_w/2, 
+                   enc_width - wall - 0.1, 
+                   pcb_surface_z])
+            cube([jst4_cut_w, wall + 0.2, jst_cutout_h]);
         
-        // AUX JST 4-pin - FRONT WALL
-        // Position: PCB local X = 12.32
-        translate([pcb_offset_x + aux_pcb_x - jst4_width/2, -0.1, floor_offset])
-            cube([jst4_width, wall + 0.2, jst4_height]);
+        // LED_OUT (USB-C): X center = 61.00mm
+        translate([pcb_offset_x + led_out_x - usbc_cut_w/2, 
+                   enc_width - wall - 0.1, 
+                   pcb_surface_z])
+            cube([usbc_cut_w, wall + 0.2, usbc_cutout_h]);
         
-        // ============================================================
-        // BACK WALL CUTOUTS (Y = enc_width, connectors on Y-max PCB edge / Top)
-        // ============================================================
+        // UART (JST 4-pin): X center = 59.25mm
+        translate([pcb_offset_x + uart_x - jst4_cut_w/2, 
+                   enc_width - wall - 0.1, 
+                   pcb_surface_z])
+            cube([jst4_cut_w, wall + 0.2, jst_cutout_h]);
         
-        // I2C JST 4-pin - BACK WALL
-        // Position: PCB local X = 40.77
-        translate([pcb_offset_x + i2c_pcb_x - jst4_width/2, enc_width - wall - 0.1, floor_offset])
-            cube([jst4_width, wall + 0.2, jst4_height]);
-        
-        // LED_OUT USB-C - BACK WALL
-        // Position: PCB local X = 60.58
-        translate([pcb_offset_x + led_out_pcb_x - usbc_width/2, enc_width - wall - 0.1, floor_offset])
-            cube([usbc_width, wall + 0.2, usbc_height]);
-        
-        // UART JST 4-pin - BACK WALL  
-        // Position: PCB local X = 61.72
-        translate([pcb_offset_x + uart_pcb_x - jst4_width/2, enc_width - wall - 0.1, floor_offset])
-            cube([jst4_width, wall + 0.2, jst4_height]);
-        
-        // ============================================================
-        // LED INDICATOR WINDOW (Front wall, for status LEDs)
-        // ============================================================
-        translate([enc_length/3 - 6, -0.1, wall + 6])
-            cube([12, wall - 0.5, 6]);
+        // LED window (status indicators)
+        translate([enc_length/3 - 8, -0.1, pcb_surface_z + 2])
+            cube([16, wall - 0.5, 5]);
     }
     
     // PCB mounting standoffs
-    standoff_h = 3;
-    
-    for (dx = [3, pcb_length - 3]) {
-        for (dy = [3, pcb_width - 3]) {
-            translate([pcb_offset_x + dx, pcb_offset_y + dy, wall]) {
+    for (dx = [4, pcb_length - 4]) {
+        for (dy = [4, pcb_width - 4]) {
+            translate([pcb_offset_x + dx, pcb_offset_y + dy, floor_t]) {
                 difference() {
-                    cylinder(h=standoff_h, d=5, $fn=24);
+                    cylinder(h = pcb_standoff_h, d = 5, $fn = 24);
                     translate([0, 0, -0.1])
-                        cylinder(h=standoff_h + 0.2, d=2.2, $fn=24);
+                        cylinder(h = pcb_standoff_h + 0.2, d = 2.2, $fn = 24);
                 }
             }
         }
@@ -602,111 +620,102 @@ module pcb_layer() {
 }
 
 // ============================================================
-// LAYER 4: GPS COMPARTMENT (Side-by-Side Layout)
+// LAYER 4: GPS DECK
 // ============================================================
 
-module gps_layer() {
-    layer_h = gps_layer_h;
-    gps_total_w = gps_mod_length + gps_gap + gps_ant_size;
+module gps_deck() {
+    floor_t = 2;
     
     difference() {
         union() {
-            rounded_box(enc_length, enc_width, layer_h, corner_r);
+            rounded_box(enc_length, enc_width, gps_deck_h, corner_r);
             
-            translate([wall - 0.5, wall - 0.5, layer_h])
+            // Lip for flat top
+            translate([wall - 0.5, wall - 0.5, gps_deck_h])
                 difference() {
-                    rounded_box(enc_length - wall*2 + 1, enc_width - wall*2 + 1, 2, corner_r - wall/2);
+                    rounded_box(enc_length - 2*wall + 1, enc_width - 2*wall + 1, 
+                               2, max(corner_r - wall, 0.5));
                     translate([1.5, 1.5, -0.1])
-                        rounded_box(enc_length - wall*2 - 2, enc_width - wall*2 - 2, 2.2, corner_r - wall);
+                        rounded_box(enc_length - 2*wall - 2, enc_width - 2*wall - 2, 
+                                   2.2, max(corner_r - wall - 1, 0.5));
                 }
         }
         
-        translate([wall, wall, wall])
-            rounded_box(enc_length - wall*2, enc_width - wall*2,
-                       layer_h, corner_r - wall/2);
+        // Hollow interior
+        translate([wall, wall, floor_t])
+            rounded_box(enc_length - 2*wall, enc_width - 2*wall, 
+                       gps_deck_h, max(corner_r - wall, 0.5));
         
-        for (x = [enc_length/4, enc_length*3/4]) {
-            for (y = [wall - 0.5, enc_width - wall - snap_depth + 0.5]) {
-                translate([x - snap_width/2, y, -0.1])
+        // Snap receivers
+        for (x = [enc_length * 0.25, enc_length * 0.75]) {
+            for (side = [0, 1]) {
+                y_pos = side == 0 ? wall - 0.5 : enc_width - wall - snap_depth + 0.5;
+                translate([x - snap_width/2, y_pos, -0.1])
                     snap_clip_female();
             }
         }
     }
     
-    // GPS pockets
-    gps_start_x = (enc_length - gps_total_w) / 2;
-    gps_y = (enc_width - gps_mod_width) / 2;
-    
-    module_pocket_d = gps_mod_height + 1;
-    translate([gps_start_x - 1, gps_y - 1, wall])
-        difference() {
-            cube([gps_mod_length + 2, gps_mod_width + 2, module_pocket_d]);
-            translate([1, 1, -0.1])
-                cube([gps_mod_length, gps_mod_width, module_pocket_d + 0.2]);
-        }
-    
-    ant_x = gps_start_x + gps_mod_length + gps_gap;
+    // GPS antenna pocket (centered)
+    ant_x = (enc_length - gps_ant_size) / 2;
     ant_y = (enc_width - gps_ant_size) / 2;
-    ant_pocket_d = gps_ant_height + 1;
     
-    translate([ant_x - 1, ant_y - 1, wall])
+    translate([ant_x - 1, ant_y - 1, floor_t])
         difference() {
-            cube([gps_ant_size + 2, gps_ant_size + 2, ant_pocket_d]);
+            cube([gps_ant_size + 2, gps_ant_size + 2, gps_ant_height + 1]);
             translate([1, 1, -0.1])
-                cube([gps_ant_size, gps_ant_size, ant_pocket_d + 0.2]);
+                cube([gps_ant_size, gps_ant_size, gps_ant_height + 1.2]);
         }
-    
-    translate([gps_start_x + gps_mod_length, enc_width/2 - 3, wall])
-        cube([gps_gap, 6, 3]);
 }
 
 // ============================================================
-// LAYER 5: TOP COVER (with Antenna Window)
+// LAYER 5: FLAT TOP (Antenna Window)
 // ============================================================
 
-module top_cover() {
-    layer_h = cover_layer_h;
-    
-    gps_total_w = gps_mod_length + gps_gap + gps_ant_size;
-    ant_x = (enc_length - gps_total_w) / 2 + gps_mod_length + gps_gap;
-    ant_y = (enc_width - gps_ant_size) / 2;
-    
-    window_size = 28;
-    window_x = ant_x + (gps_ant_size - window_size) / 2;
-    window_y = ant_y + (gps_ant_size - window_size) / 2;
+module flat_top() {
+    window_size = 28;  // Slightly larger than antenna
+    window_x = (enc_length - window_size) / 2;
+    window_y = (enc_width - window_size) / 2;
     
     difference() {
         union() {
-            rounded_box(enc_length, enc_width, layer_h, corner_r);
+            rounded_box(enc_length, enc_width, flat_top_h, corner_r);
             
+            // Lip to fit into GPS deck
             translate([wall + 0.3, wall + 0.3, -1.5])
-                rounded_box(enc_length - wall*2 - 0.6, enc_width - wall*2 - 0.6, 
-                           1.5, corner_r - wall/2 - 0.3);
+                rounded_box(enc_length - 2*wall - 0.6, enc_width - 2*wall - 0.6, 
+                           1.5, max(corner_r - wall - 0.3, 0.5));
         }
         
+        // Antenna window cutout (leave thin membrane)
         translate([window_x, window_y, 1])
-            cube([window_size, window_size, layer_h]);
+            cube([window_size, window_size, flat_top_h]);
         
-        translate([0, 0, layer_h])
-            for (angle = [0, 90, 180, 270]) {
-                rotate([0, 0, angle])
-                    translate([-1, -1, -2])
-                        rotate([0, 0, 45])
-                            cube([3, enc_length*2, 3]);
+        // Chamfered edges
+        for (x = [0, enc_length]) {
+            for (y = [0, enc_width]) {
+                translate([x, y, flat_top_h])
+                    rotate([0, 0, 45])
+                        translate([-2, -2, -1.5])
+                            cube([4, 4, 2]);
             }
+        }
     }
     
-    // Thin antenna window floor
+    // Thin antenna window floor (RF transparent)
     translate([window_x, window_y, 0])
-        cube([window_size, window_size, 1]);
+        cube([window_size, window_size, 0.8]);
     
-    // Branding
-    logo_x = (enc_length - gps_total_w) / 2 + gps_mod_length/2;
-    logo_y = enc_width / 2;
-    
-    translate([logo_x - 15, logo_y - 4, layer_h - 0.3])
+    // Branding text
+    translate([enc_length/2, enc_width - 8, flat_top_h - 0.3])
         linear_extrude(0.5)
-            text("RACESENSE", size=5, font="Liberation Sans:style=Bold", halign="center");
+            text("RACESENSE", size = 4, font = "Liberation Sans:style=Bold", 
+                 halign = "center", valign = "center");
+    
+    translate([enc_length/2, 8, flat_top_h - 0.3])
+        linear_extrude(0.5)
+            text("RS-CORE V2", size = 3, font = "Liberation Sans", 
+                 halign = "center", valign = "center");
 }
 
 // ============================================================
@@ -714,50 +723,53 @@ module top_cover() {
 // ============================================================
 
 module assembly() {
-    z_offset = 0;
+    z = 0;
     exp = exploded_view ? explode_distance : 0;
     
-    if (show_buckle_layer) {
+    if (show_buckle_base) {
         color("DimGray", 0.95)
-            translate([0, 0, z_offset])
-                buckle_layer();
+            translate([0, 0, z])
+                buckle_base();
     }
-    z_offset = z_offset + buckle_layer_h + exp;
     
-    if (show_battery_layer) {
+    z1 = buckle_base_h + exp;
+    if (show_battery_tub) {
         color("SlateGray", 0.9)
-            translate([0, 0, z_offset])
-                battery_layer();
+            translate([0, 0, z1])
+                battery_tub();
     }
-    z_offset = z_offset + battery_layer_h + exp;
     
-    if (show_pcb_layer) {
+    z2 = z1 + battery_tub_h + exp;
+    if (show_pcb_deck) {
         color("DarkSlateGray", 0.9)
-            translate([0, 0, z_offset])
-                pcb_layer();
+            translate([0, 0, z2])
+                pcb_deck();
     }
-    z_offset = z_offset + pcb_layer_h + exp;
     
-    if (show_gps_layer) {
+    z3 = z2 + pcb_deck_h + exp;
+    if (show_gps_deck) {
         color("CadetBlue", 0.9)
-            translate([0, 0, z_offset])
-                gps_layer();
+            translate([0, 0, z3])
+                gps_deck();
     }
-    z_offset = z_offset + gps_layer_h + exp;
     
-    if (show_top_cover) {
+    z4 = z3 + gps_deck_h + exp;
+    if (show_flat_top) {
         color("White", 0.95)
-            translate([0, 0, z_offset])
-                top_cover();
+            translate([0, 0, z4])
+                flat_top();
     }
 }
 
 module cross_section() {
     translate([enc_length/2, -10, -20])
-        cube([enc_length, enc_width + 20, 120]);
+        cube([enc_length, enc_width + 20, 150]);
 }
 
-// Render
+// ============================================================
+// RENDER
+// ============================================================
+
 if (show_cross_section) {
     difference() {
         assembly();
@@ -768,20 +780,20 @@ if (show_cross_section) {
 }
 
 // ============================================================
-// PORT CUTOUT VERIFICATION TABLE
+// PORT CUTOUT VERIFICATION TABLE (V4.0 Truth Data)
 // ============================================================
-// 
-// Connector    | Edge   | Enclosure Position      | Cutout
-// -------------|--------|-------------------------|--------
-// USB (Main)   | LEFT   | Y=34.57mm from front    | 10×4mm
-// PWR-SW       | FRONT  | X=9.35mm from left      | 4×5mm
-// BATT         | FRONT  | X=11.51mm from left     | 4×5mm
-// AUX          | FRONT  | X=16.72mm from left     | 6×5mm
-// I2C          | BACK   | X=45.17mm from left     | 6×5mm
-// LED_OUT      | BACK   | X=64.98mm from left     | 10×4mm
-// UART         | BACK   | X=66.12mm from left     | 6×5mm
-// USBOUT       | RIGHT  | Y=41.56mm from front    | 6×5mm
-// MICRO-SD     | RIGHT  | Y=25.55mm from front    | 15×4mm
+//
+// Port        | Wall   | PCB Center | Enc Position      | Cutout Size  | Z-Height
+// ------------|--------|------------|-------------------|--------------|----------
+// USB Main    | LEFT   | Y=15.71    | Y=20.41           | 10.0 × 4.2   | 5.0mm
+// Micro-SD    | RIGHT  | Y=8.94     | Y=13.64           | 15.0 × 3.0   | 3.5mm
+// USBOUT      | RIGHT  | Y=21.51    | Y=26.21           | 6.0 × 5.25   | 6.0mm
+// PWR-SW      | FRONT  | X=4.76     | X=9.15            | 4.0 × 5.25   | 6.0mm
+// BATT        | FRONT  | X=7.40     | X=11.79           | 4.0 × 5.25   | 6.0mm
+// AUX         | FRONT  | X=13.09    | X=17.48           | 6.0 × 5.25   | 6.0mm
+// I2C         | BACK   | X=40.49    | X=44.88           | 6.0 × 5.25   | 6.0mm
+// LED_OUT     | BACK   | X=61.00    | X=65.39           | 10.0 × 4.2   | 5.0mm
+// UART        | BACK   | X=59.25    | X=63.64           | 6.0 × 5.25   | 6.0mm
 //
 // ============================================================
 ```
@@ -792,61 +804,71 @@ if (show_cross_section) {
 
 | Parameter | Recommended |
 |-----------|-------------|
-| Material | PETG (body), White PLA (antenna cover) |
+| Material | PETG (all layers), White PLA (flat top only) |
 | Layer Height | 0.2mm |
-| Infill | 25% gyroid |
+| Infill | 20% gyroid |
 | Walls | 3 perimeters |
-| Supports | Minimal (buckle area only) |
+| Supports | Minimal (buckle rails only) |
 | Orientation | Each layer printed open-side-up |
 
-**⚠️ Antenna Window:** Use white or translucent filament for top cover. Avoid carbon-filled or metallic filaments which block GPS signals.
+**⚠️ GPS Antenna Window:** Use white or translucent filament for flat top. Avoid carbon-filled or metallic filaments which attenuate GPS signals.
 
 ---
 
-## 7. Revision History
-
-| Version | Date | Changes |
-|---------|------|---------|
-| 1.0 | 2026-02-09 | Initial V1 design (dual-fin GoPro) |
-| 2.0 | 2026-02-09 | V2: Quick release buckle, side-by-side GPS, multi-layer stack |
-| 2.1 | 2026-02-09 | V2.1: Added JST connector cutouts (estimated positions) |
-| 3.0 | 2026-02-09 | V3.0: HIGH-PRECISION mapping from DXF + visual reference. Corrected all 9 ports to correct edges. |
-
----
-
-## 8. Port Layout Diagram (V3.0 Corrected)
+## 7. Port Layout Diagram (V4.0 Mathematical Precision)
 
 ```
-                              78mm
+                              78mm (Enclosure)
     ┌──────────────────────────────────────────────────────────────────┐
     │                                                                  │
-    │  BACK WALL (Y-max)                                               │
-    │  [I2C]         [LED_OUT]  [UART]                                 │
-    │   JST4           USB-C     JST4                                  │
-    │   X=45.2mm       X=65mm    X=66.1mm                              │
+    │  BACK WALL (Y=40mm)                                              │
+    │     [I2C]              [UART]   [LED_OUT]                        │
+    │      JST4               JST4     USB-C                           │
+    │    X=44.88mm          X=63.64  X=65.39mm                         │
     │                                                                  │
     │                                                                  │
     │                                                                  │
- 68mm  USB ══                                             ══ USBOUT   │
-    │  (Main)                                                (JST4)   │
-    │  Y=34.6mm                                              Y=41.6mm │
+ 40mm  USB-C ══                                          ══ USBOUT     │
+    │  (Main)                                               (JST4)    │
+    │  Y=20.41mm                                           Y=26.21mm   │
     │                                                                  │
-    │                                                        ═══ μSD  │
-    │                                                         Y=25.5mm│
+    │                                                      ═══ μSD     │
+    │                                                       Y=13.64mm  │
     │                                                                  │
     │                                                                  │
-    │  FRONT WALL (Y-min)                                              │
-    │  [PWR][BATT][AUX]                                                │
-    │  X=9.4 X=11.5 X=16.7mm                                           │
+    │  FRONT WALL (Y=0mm)                                              │
+    │  [PWR][BATT] [AUX]                                               │
+    │  X=9.15 X=11.79 X=17.48mm                                        │
     │                                                                  │
     └──────────────────────────────────────────────────────────────────┘
     
-    LEFT WALL:  USB-C (Main Data/Charge)
-    RIGHT WALL: USBOUT (JST 4-pin), Micro-SD
-    FRONT WALL: PWR-SW (JST 2-pin), BATT (JST 2-pin), AUX (JST 4-pin)
-    BACK WALL:  I2C (JST 4-pin), LED_OUT (USB-C), UART (JST 4-pin)
+    ═══════════════════════════════════════════════════════════════════
+    MATHEMATICAL TRUTH DATA PORT MAP (Enclosure Coordinates)
+    ═══════════════════════════════════════════════════════════════════
+    LEFT WALL:   USB-C Main     → Enc Y = 15.71 + 4.70 = 20.41mm
+    RIGHT WALL:  Micro-SD       → Enc Y = 8.94 + 4.70 = 13.64mm
+                 USBOUT (JST)   → Enc Y = 21.51 + 4.70 = 26.21mm
+    FRONT WALL:  PWR-SW (JST)   → Enc X = 4.76 + 4.39 = 9.15mm
+                 BATT (JST)     → Enc X = 7.40 + 4.39 = 11.79mm
+                 AUX (JST)      → Enc X = 13.09 + 4.39 = 17.48mm
+    BACK WALL:   I2C (JST)      → Enc X = 40.49 + 4.39 = 44.88mm
+                 LED_OUT (USB-C)→ Enc X = 61.00 + 4.39 = 65.39mm
+                 UART (JST)     → Enc X = 59.25 + 4.39 = 63.64mm
+    ═══════════════════════════════════════════════════════════════════
 ```
 
 ---
 
-*End of Specification*
+## 8. Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-02-09 | Initial V1 design |
+| 2.0 | 2026-02-09 | V2: Quick release buckle, side-by-side GPS |
+| 2.1 | 2026-02-09 | V2.1: Added JST connector cutouts |
+| 3.0 | 2026-02-09 | V3.0: DXF-derived coordinates |
+| **4.0** | **2026-02-09** | **V4.0: MATHEMATICAL PRECISION TRUTH DATA** — Exact port center-points from measurements. Sandwich layer architecture. 0.5mm uniform clearance. Corrected Z-heights per connector type. |
+
+---
+
+*End of Specification V4.0*
