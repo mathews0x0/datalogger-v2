@@ -197,10 +197,17 @@ async function checkAuth() {
         if (user) {
             currentUser = user;
             updateAuthUI();
+        } else {
+            // No user - show login modal on mobile app
+            currentUser = null;
+            updateAuthUI();
+            showAuthModal();
         }
     } catch (e) {
         currentUser = null;
         updateAuthUI();
+        // Show login modal for unauthenticated users
+        showAuthModal();
     }
 }
 
@@ -1837,7 +1844,7 @@ function toggleActionsDropdown() {
     const dropdown = document.getElementById('sessionActionsDropdown');
     if (dropdown) {
         dropdown.classList.toggle('open');
-        
+
         // Close when clicking outside
         if (dropdown.classList.contains('open')) {
             setTimeout(() => {
@@ -2536,10 +2543,10 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
         }
 
         // Build telemetry info (IMU + Consistency consolidated)
-        const imuStatus = session.calibration?.calibrated 
+        const imuStatus = session.calibration?.calibrated
             ? (session.calibration.confidence === 'HIGH' ? 'green' : 'orange')
             : 'gray';
-        const imuLabel = session.calibration?.calibrated 
+        const imuLabel = session.calibration?.calibrated
             ? `IMU: ${session.calibration.confidence}`
             : 'IMU: RAW';
 
@@ -6888,15 +6895,15 @@ let adminPerPage = 50;
 async function loadAdminUsers(page = 1, query = '', tier = '') {
     const searchInput = document.getElementById('adminSearchInput');
     const tierFilter = document.getElementById('adminTierFilter');
-    
+
     query = query || (searchInput ? searchInput.value : '');
     tier = tier || (tierFilter ? tierFilter.value : '');
-    
+
     try {
         let url = `/api/admin/users?page=${page}&per_page=${adminPerPage}`;
         if (query) url += `&q=${encodeURIComponent(query)}`;
         if (tier) url += `&tier=${tier}`;
-        
+
         const result = await apiCall(url);
         if (result) {
             adminUsersData = result.users;
@@ -6913,7 +6920,7 @@ async function loadAdminUsers(page = 1, query = '', tier = '') {
 function renderAdminStats(data) {
     const statsEl = document.getElementById('adminStats');
     if (!statsEl) return;
-    
+
     statsEl.innerHTML = `
         <span>Total Users: <strong>${data.total}</strong></span>
         <span>Page <strong>${data.page}</strong> of <strong>${data.pages}</strong></span>
@@ -6923,7 +6930,7 @@ function renderAdminStats(data) {
 function renderAdminUsersTable(data) {
     const tbody = document.getElementById('adminUsersBody');
     if (!tbody) return;
-    
+
     if (data.users.length === 0) {
         tbody.innerHTML = `
             <tr>
@@ -6935,15 +6942,15 @@ function renderAdminUsersTable(data) {
         `;
         return;
     }
-    
+
     tbody.innerHTML = data.users.map(user => {
-        const joinDate = user.created_at 
-            ? new Date(user.created_at).toLocaleDateString() 
+        const joinDate = user.created_at
+            ? new Date(user.created_at).toLocaleDateString()
             : 'N/A';
-        
+
         const isCurrentUser = currentUser && currentUser.id === user.id;
         const adminBadge = user.is_admin ? '<i class="fas fa-crown admin-badge" title="Admin"></i>' : '';
-        
+
         return `
             <tr>
                 <td style="color: var(--text-dim); font-family: monospace;">#${user.id}</td>
@@ -6982,32 +6989,32 @@ function renderAdminUsersTable(data) {
 function renderAdminPagination(data) {
     const paginationEl = document.getElementById('adminPagination');
     if (!paginationEl) return;
-    
+
     if (data.pages <= 1) {
         paginationEl.innerHTML = '';
         return;
     }
-    
+
     let html = '';
-    
+
     // Previous button
     html += `<button onclick="loadAdminUsers(${data.page - 1})" ${data.page <= 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i></button>`;
-    
+
     // Page numbers (show max 5)
     const startPage = Math.max(1, data.page - 2);
     const endPage = Math.min(data.pages, data.page + 2);
-    
+
     if (startPage > 1) html += '<span style="color: var(--text-dim)">...</span>';
-    
+
     for (let i = startPage; i <= endPage; i++) {
         html += `<button onclick="loadAdminUsers(${i})" class="${i === data.page ? 'active' : ''}">${i}</button>`;
     }
-    
+
     if (endPage < data.pages) html += '<span style="color: var(--text-dim)">...</span>';
-    
+
     // Next button
     html += `<button onclick="loadAdminUsers(${data.page + 1})" ${data.page >= data.pages ? 'disabled' : ''}><i class="fas fa-chevron-right"></i></button>`;
-    
+
     paginationEl.innerHTML = html;
 }
 
@@ -7017,21 +7024,21 @@ async function adminSetUserTier(userId, newTier) {
         loadAdminUsers(adminCurrentPage);
         return;
     }
-    
+
     try {
         const result = await apiCall(`/api/admin/users/${userId}/tier`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ tier: newTier })
         });
-        
+
         if (result && result.success) {
             showToast(`User ${userId} updated to ${newTier}`, 'success');
-            
+
             if (currentUser && currentUser.id === userId) {
                 await checkAuth();
             }
-            
+
             loadAdminUsers(adminCurrentPage);
         }
     } catch (e) {
@@ -7043,14 +7050,14 @@ async function adminSetUserTier(userId, newTier) {
 async function adminToggleAdmin(userId, isAdmin) {
     const action = isAdmin ? 'GRANT' : 'REVOKE';
     if (!confirm(`${action} admin privileges for user ${userId}?`)) return;
-    
+
     try {
         const result = await apiCall(`/api/admin/users/${userId}/admin`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_admin: isAdmin })
         });
-        
+
         if (result && result.success) {
             showToast(`Admin privileges ${isAdmin ? 'granted' : 'revoked'} for user ${userId}`, 'success');
             loadAdminUsers(adminCurrentPage);
