@@ -1,18 +1,16 @@
 /*
  * RACESENSE RS-CORE ENCLOSURE v7.1
- * "The Ultimate Parametric Housing" - Production Edition
+ * "The Ultimate Parametric Housing" - Production Edition (Standalone)
  * 
  * Features:
  * - 5-Layer Sandwich Stack Architecture
  * - 100% Configurable XYZ Port Alignment
- * - Industry Standard GoPro Mount (via ridercz library)
+ * - Industry Standard GoPro Mount (Integrated library)
  * - Snap-fit assembly
  * 
  * Author: Racesense Team (Jane + Mathews)
  * Date: 2026-02-09
  */
-
-use <GoPro.scad>
 
 // ============================================================
 /* [1. Display Options] */
@@ -145,6 +143,31 @@ snap_w        = 10;
 snap_h        = 3;
 
 // ============================================================
+// GOPRO LIBRARY INTEGRATION (ridercz/GoProScad)
+// ============================================================
+__gopro_outer_diameter = 15;
+__gopro_leg_width = 3;
+__gopro_slit_width = 3.5;
+__gopro_hole_diameter = 5;
+__gopro_hole_tolerance = .5;
+
+module gopro_mount_m(base_height = 3, base_width = 20, leg_height = 17, center = false) {
+    base_depth = __gopro_leg_width * 2 + __gopro_slit_width;
+    hole_offset = [base_height + leg_height - __gopro_outer_diameter / 2, base_width / 2];
+
+    translate(center ? [0, -base_depth / 2] : [0, 0]) {
+        translate([-base_width / 2, 0]) cube([base_width, __gopro_leg_width * 2 + __gopro_slit_width, base_height]);
+        translate([0, __gopro_leg_width + __gopro_slit_width / 2]) rotate(90) translate([base_depth / 2, -hole_offset[1]]) rotate([0, -90, 0]) for(z_offset = [0, __gopro_leg_width + __gopro_slit_width]) translate([0, 0, z_offset]) linear_extrude(__gopro_leg_width) difference() {
+            hull() {
+                square([base_height, base_width]);
+                translate(hole_offset) circle(d = __gopro_outer_diameter, $fn = 64);
+            }
+            translate(hole_offset) circle(d = __gopro_hole_diameter + __gopro_hole_tolerance, $fn = 32);
+        }
+    }
+}
+
+// ============================================================
 // CORE MODULES
 // ============================================================
 
@@ -159,23 +182,23 @@ module rounded_box(l, w, h, r) {
 }
 
 module port_cutout(wall_id, offset, z_offset, cut_w, cut_h) {
-    w = cut_w + port_tol;
-    h = cut_h + port_tol;
+    cw = cut_w + port_tol;
+    ch = cut_h + port_tol;
     z_pos = pcb_surface_z + z_offset;
-    d = wall * 3; // Depth to ensure it pierces
+    d = wall * 3; 
     
     if (wall_id == 0) { // LEFT
-        translate([-d/2, pcb_offset_y + offset, z_pos + h/2]) 
-            cube([d, w, h], center=true);
+        translate([-d/2, pcb_offset_y + offset, z_pos + ch/2]) 
+            cube([d, cw, ch], center=true);
     } else if (wall_id == 1) { // RIGHT
-        translate([enc_length + d/2 - wall, pcb_offset_y + offset, z_pos + h/2]) 
-            cube([d, w, h], center=true);
+        translate([enc_length + d/2 - wall, pcb_offset_y + offset, z_pos + ch/2]) 
+            cube([d, cw, ch], center=true);
     } else if (wall_id == 2) { // FRONT
-        translate([pcb_offset_x + offset, -d/2, z_pos + h/2]) 
-            cube([w, d, h], center=true);
+        translate([pcb_offset_x + offset, -d/2, z_pos + ch/2]) 
+            cube([cw, d, ch], center=true);
     } else if (wall_id == 3) { // BACK
-        translate([pcb_offset_x + offset, enc_width + d/2 - wall, z_pos + h/2]) 
-            cube([w, d, h], center=true);
+        translate([pcb_offset_x + offset, enc_width + d/2 - wall, z_pos + ch/2]) 
+            cube([cw, d, ch], center=true);
     }
 }
 
@@ -198,13 +221,11 @@ module port_label(wall_id, offset, z_offset, label) {
 module layer_buckle_base() {
     difference() {
         rounded_box(enc_length, enc_width, buckle_base_h, corner_r);
-        // Hollow out slightly if needed or keep solid for strength
         translate([wall, wall, floor_t]) 
             rounded_box(enc_length-wall*2, enc_width-wall*2, buckle_base_h, corner_r-wall);
     }
-    // Standard GoPro Male Mount from library
     translate([enc_length/2, enc_width/2, 0]) 
-        rotate([180, 0, 90]) // Flipped 180 to face down, rotated 90 for bike orientation
+        rotate([180, 0, 90]) 
         gopro_mount_m(base_height=buckle_base_h, base_width=25, leg_height=18, center=true);
 }
 
@@ -215,7 +236,6 @@ module layer_battery_tub() {
         translate([wall, wall, floor_t]) 
             rounded_box(enc_length-wall*2, enc_width-wall*2, battery_tub_h, corner_r-wall);
         
-        // Internal battery clearance
         translate([(enc_length-bat_length)/2, (enc_width-bat_width)/2, floor_t])
             cube([bat_length, bat_width, bat_height+1]);
     }
@@ -228,11 +248,9 @@ module layer_pcb_deck() {
             rounded_box(enc_length, enc_width, pcb_deck_h, corner_r);
         }
         
-        // Main PCB cavity
         translate([pcb_offset_x - assembly_tol, pcb_offset_y - assembly_tol, floor_t])
             rounded_box(pcb_length + assembly_tol*2, pcb_width + assembly_tol*2, pcb_deck_h, 1);
             
-        // Cutouts
         port_cutout(port1_wall, port1_offset, port1_z, port1_w, port1_h);
         port_cutout(port2_wall, port2_offset, port2_z, port2_w, port2_h);
         port_cutout(port3_wall, port3_offset, port3_z, port3_w, port3_h);
@@ -244,7 +262,6 @@ module layer_pcb_deck() {
         port_cutout(port9_wall, port9_offset, port9_z, port9_w, port9_h);
     }
     
-    // Support Ledge for PCB
     difference() {
         translate([pcb_offset_x-1, pcb_offset_y-1, floor_t]) 
             rounded_box(pcb_length+2, pcb_width+2, pcb_surface_z-floor_t, 1.5);
@@ -277,11 +294,9 @@ module layer_flat_top() {
     difference() {
         rounded_box(enc_length, enc_width, flat_top_h, corner_r);
         
-        // GPS window cutout
         translate([(enc_length-gps_window_size)/2, (enc_width-gps_window_size)/2, -1])
             cube([gps_window_size, gps_window_size, flat_top_h+2]);
         
-        // Branding
         translate([enc_length/2, enc_width/2, flat_top_h-0.5])
             linear_extrude(1) text("RS-CORE", size=5, halign="center", valign="center", font="Liberation Sans:style=Bold");
     }
