@@ -52,5 +52,7 @@
 	<string>Racesense uses Bluetooth to communicate with your datalogger device for telemetry and configuration.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>Racesense uses Bluetooth to communicate with your datalogger device.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Racesense needs access to your local network to download telemetry data from the datalogger device via WiFi.</string>
 </dict>
 </plist>

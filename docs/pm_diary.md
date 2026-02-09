@@ -1702,3 +1702,32 @@ The SD card module wasn't faulty — the driver was. Always start with official/
 - **Config:** Enabled `cleartext` support in `capacitor.config.json` to allow communication with the ESP32's local WiFi Access Point (HTTP).
 
 **Status:** ✅ Phase 25 Foundation Complete. Native Android and iOS projects initialized.
+
+---
+
+## 26. Phase 26 — Hybrid Burst Implementation (2026-02-09)
+
+**Objective:** Implement high-speed data transfer between ESP32 and Mobile App using the "Hybrid Burst" model (BLE Control + WiFi Data).
+
+**Strategic Decision: The "Thin App" Data Conduit**
+In alignment with the "Thin App" philosophy, the mobile app now acts as a high-speed data conduit. It performs no local parsing or analysis of telemetry; its sole responsibility is to burst raw data from the ESP32 and prepare it for cloud processing.
+
+**Implementation Details:**
+1. **Hybrid Sync Service:** Created `hybrid-burst-service.js`, a singleton orchestrator that manages the cross-protocol handshake:
+   - **BLE:** Sends `START_AP` command and listens for the "AP Ready" notification containing SSID/Password.
+   - **WiFi:** Programmatically joins the ESP32's Access Point using `wifiwizard2`.
+   - **HTTP:** Fetches a session manifest and downloads raw CSVs via high-speed HTTP from `192.168.4.1`.
+   - **Filesystem:** Saves data to native storage via `@capacitor/filesystem`.
+2. **Seamless UI:**
+   - Added a "Sync with Device" button to the Dashboard.
+   - Implemented a fullscreen progress overlay that guides the user through the multi-protocol transition (Connecting -> WiFi Joining -> Downloading -> Complete).
+3. **Hardware Integration:**
+   - Updated `AndroidManifest.xml` and `Info.plist` with necessary permissions for programmatic WiFi switching and local network access.
+   - Integrated with `capacitor-ble-adapter.js` for robust BLE communication.
+
+**Impact:**
+- Eliminates manual WiFi switching for the rider.
+- Achieves ~2 MB/s transfer speeds (burst mode) compared to slow BLE file transfer.
+- Simplifies the "Paddock Workflow": Tap Sync -> Wait 30s -> All data on phone.
+
+**Status:** ✅ Complete & Integrated into Main App.

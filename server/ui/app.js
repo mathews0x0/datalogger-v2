@@ -6751,3 +6751,89 @@ function toggleDetailsSection(sectionId) {
     }
 }
 
+
+// ============================================================================
+// HYBRID BURST SYNC LOGIC
+// ============================================================================
+
+async function startHybridSync() {
+    const overlay = document.getElementById('syncOverlay');
+    const title = document.getElementById('syncStatusTitle');
+    const details = document.getElementById('syncStatusDetails');
+    const icon = document.getElementById('syncIcon');
+    const progressFill = document.getElementById('syncProgressFill');
+    const progressBar = document.getElementById('syncProgressBar');
+    const closeBtn = document.getElementById('syncCloseBtn');
+
+    // Show overlay
+    overlay.classList.add('active');
+    closeBtn.style.display = 'none';
+    progressBar.style.display = 'none';
+    icon.innerHTML = '<i class="fas fa-sync fa-spin"></i>';
+    icon.style.color = 'var(--primary)';
+    title.textContent = 'Syncing Data';
+    details.textContent = 'Initializing connection...';
+
+    try {
+        window.hybridBurstService.setProgressCallback(({ step, details: stepDetails }) => {
+            details.textContent = stepDetails;
+
+            switch (step) {
+                case 'BLE_CONNECTING':
+                    title.textContent = 'Connecting...';
+                    break;
+                case 'STARTING_AP':
+                    title.textContent = 'Activating WiFi';
+                    break;
+                case 'JOINING_WIFI':
+                    title.textContent = 'Joining Network';
+                    break;
+                case 'DOWNLOADING':
+                    title.textContent = 'Downloading CSVs';
+                    progressBar.style.display = 'block';
+                    // Update progress bar if stepDetails contains "X/Y"
+                    const match = stepDetails.match(/(\d+)\/(\d+)/);
+                    if (match) {
+                        const current = parseInt(match[1]);
+                        const total = parseInt(match[2]);
+                        progressFill.style.width = `${(current / total) * 100}%`;
+                    }
+                    break;
+                case 'AP_STOPPING':
+                    title.textContent = 'Wrapping Up';
+                    progressFill.style.width = '100%';
+                    break;
+                case 'SYNC_COMPLETE':
+                    title.textContent = 'Sync Success!';
+                    icon.innerHTML = '<i class="fas fa-check-circle"></i>';
+                    icon.style.color = 'var(--success)';
+                    closeBtn.style.display = 'block';
+                    showToast('Sync completed successfully!', 'success');
+                    // Refresh data
+                    loadHomeData();
+                    break;
+                case 'ERROR':
+                    title.textContent = 'Sync Failed';
+                    icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+                    icon.style.color = 'var(--error)';
+                    closeBtn.style.display = 'block';
+                    showToast('Sync failed: ' + stepDetails, 'error');
+                    break;
+            }
+        });
+
+        await window.hybridBurstService.startSync();
+    } catch (error) {
+        console.error('Hybrid sync failed:', error);
+        title.textContent = 'Sync Failed';
+        details.textContent = error.message;
+        icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
+        icon.style.color = 'var(--error)';
+        closeBtn.style.display = 'block';
+    }
+}
+
+function closeSyncOverlay() {
+    const overlay = document.getElementById('syncOverlay');
+    overlay.classList.remove('active');
+}
