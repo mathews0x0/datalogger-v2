@@ -1,19 +1,13 @@
 // ============================================================
-// RS-CORE ENCLOSURE V6.1 — "Full Customizer Edition"
+// RS-CORE ENCLOSURE V6.1 — "The Ultimate Parametric Housing"
 // Racesense Motorsport Datalogger Housing
-// 100% UI-CONFIGURABLE PORT ALIGNMENT | VALIDATED GOPRO BUCKLE
+// 100% CONFIGURABLE PORT ALIGNMENT | HIGH-FIDELITY GOPRO BUCKLE
 // ============================================================
 // Version: 6.1 (2026-02-09)
 // Architecture: 5-Layer Sandwich Stack
 // 
 // USAGE: Open in OpenSCAD, use Customizer (View → Customizer)
 //        to adjust ANY port position, then export each layer as STL.
-// 
-// CHANGE FROM V6.0:
-// - All 9 ports now use PRECISION MAP coordinates as defaults
-// - Each port section explicitly labeled for Customizer sidebar
-// - GoPro buckle orientation validated: male, facing DOWN
-// - Added enclosure_v2_spec.md with full documentation
 // ============================================================
 
 // ============================================================
@@ -34,7 +28,7 @@ show_port_labels = false;       // Debug: show port numbers
 // ============================================================
 wall = 2.0;                     // Wall thickness (mm)
 corner_r = 3.0;                 // Corner radius (mm)
-assembly_tol = 0.2;             // Gap between PCB and walls
+assembly_tol = 0.4;             // Gap between PCB and walls
 port_tol = 0.5;                 // Extra clearance around ports
 battery_tol = 1.0;              // Gap around battery cell
 snap_tol = 0.25;                // Snap-fit clearance
@@ -100,97 +94,78 @@ snap_height = 2.5;              // Snap clip height (mm)
 // ============================================================
 // PORT CONFIGURATION — ALL 9 PORTS FULLY PARAMETRIC
 // ============================================================
-// Coordinates from hardware_precision_map.txt (2026-02-09)
-// Each port has: wall, offset, z_height, width, height
-// Walls: 0=LEFT(X=0), 1=RIGHT(X=max), 2=FRONT(Y=0), 3=BACK(Y=max)
-// offset = position along wall (X for FRONT/BACK, Y for LEFT/RIGHT)
-// z_height = height above PCB support ledge surface
 
 /* [Port 1: Main USB-C (Programming)] */
-// Located on LEFT wall (X=0), used for ESP32 programming
 port1_wall = 0;                 // Wall: 0=LEFT
-port1_offset = 15.71;           // Y position: 15.71mm (from precision map)
-port1_z = 0.39;                 // Z offset: 0.39mm above PCB
-port1_width = 10.0;             // USB-C width (mm)
-port1_height = 5.0;             // USB-C height (mm)
+port1_offset = 15.71;           // Y position (mm)
+port1_z = 0.39;                 // Z offset above PCB
+port1_width = 11.0;             // width (mm)
+port1_height = 5.0;             // height (mm)
 
-/* [Port 2: I2C Connector (Primary)] */
-// Located on BACK wall (Y=max), primary I2C interface
+/* [Port 2: I2C Connector] */
 port2_wall = 3;                 // Wall: 3=BACK
-port2_offset = 40.49;           // X position: 40.49mm (from precision map)
-port2_z = 1.42;                 // Z offset: 1.42mm above PCB
-port2_width = 6.0;              // JST connector width (mm)
-port2_height = 6.0;             // JST connector height (mm)
+port2_offset = 40.49;           // X position (mm)
+port2_z = 0.42;                 // Z offset above PCB
+port2_width = 8.0;              // width (mm)
+port2_height = 6.0;             // height (mm)
 
 /* [Port 3: LED_OUT USB-C] */
-// Located on BACK wall (Y=max), LED strip output
 port3_wall = 3;                 // Wall: 3=BACK
-port3_offset = 61.00;           // X position: 61.00mm (from precision map)
-port3_z = 0.84;                 // Z offset: 0.84mm above PCB
-port3_width = 10.0;             // USB-C width (mm)
-port3_height = 5.0;             // USB-C height (mm)
+port3_offset = 54.00;           // X position (mm)
+port3_z = 0.84;                 // Z offset above PCB
+port3_width = 11.0;             // width (mm)
+port3_height = 6.0;             // height (mm)
 
 /* [Port 4: UART Header] */
-// Located on BACK wall (Y=max), debug/expansion UART
-port4_wall = 3;                 // Wall: 3=BACK
-port4_offset = 59.25;           // X position: 59.25mm (from precision map)
-port4_z = 2.69;                 // Z offset: 2.69mm above PCB
-port4_width = 12.0;             // UART header width (mm)
-port4_height = 6.0;             // UART header height (mm)
+port4_wall = 1;                 // Wall: 3=BACK
+port4_offset = 28.0;           // X position (mm)
+port4_z = 0.5;                 // Z offset above PCB
+port4_width = 12.0;             // width (mm)
+port4_height = 6.0;             // height (mm)
 
-/* [Port 5: USBOUT (External Device)] */
-// Located on RIGHT wall (X=max), external USB output
+/* [Port 5: USBOUT JST] */
 port5_wall = 1;                 // Wall: 1=RIGHT
-port5_offset = 21.51;           // Y position: 21.51mm (from precision map)
-port5_z = 1.57;                 // Z offset: 1.57mm above PCB
-port5_width = 10.0;             // USB-A width (mm)
-port5_height = 6.0;             // USB-A height (mm)
+port5_offset = 19.51;           // Y position (mm)
+port5_z = 0.57;                 // Z offset above PCB
+port5_width = 8.0;              // width (mm)
+port5_height = 6.0;             // height (mm)
 
-/* [Port 6: Micro-SD Card Slot] */
-// Located on FRONT wall (Y=0), SD card access
+/* [Port 6: Micro-SD Slot] */
 port6_wall = 2;                 // Wall: 2=FRONT
-port6_offset = 53.09;           // X position: 53.09mm (from precision map)
-port6_z = 2.09;                 // Z offset: 2.09mm above PCB
-port6_width = 15.0;             // SD slot width (mm)
-port6_height = 4.0;             // SD slot height (mm)
+port6_offset = 57.09;           // X position (mm)
+port6_z = 0.09;                 // Z offset above PCB
+port6_width = 20.0;             // width (mm)
+port6_height = 4.0;             // height (mm)
 
 /* [Port 7: AUX Connector] */
-// Located on FRONT wall (Y=0), auxiliary expansion
 port7_wall = 2;                 // Wall: 2=FRONT
-port7_offset = 13.09;           // X position: 13.09mm (from precision map)
-port7_z = 1.52;                 // Z offset: 1.52mm above PCB
-port7_width = 6.0;              // JST connector width (mm)
-port7_height = 6.0;             // JST connector height (mm)
+port7_offset = 14.32;           // X position (mm)
+port7_z = 0.52;                 // Z offset above PCB
+port7_width = 12.0;              // width (mm)
+port7_height = 6.0;             // height (mm)
 
-/* [Port 8: Battery Connector (JST)] */
-// Located on FRONT wall (Y=0), LiPo battery connection
+/* [Port 8: Battery Connector] */
 port8_wall = 2;                 // Wall: 2=FRONT
-port8_offset = 7.40;            // X position: 7.40mm (from precision map)
-port8_z = 0.31;                 // Z offset: 0.31mm above PCB
-port8_width = 6.0;              // JST connector width (mm)
-port8_height = 6.0;             // JST connector height (mm)
+port8_offset = 7.40;            // X position (mm)
+port8_z = 0.31;                 // Z offset above PCB
+port8_width = 6.0;              // width (mm)
+port8_height = 6.0;             // height (mm)
 
 /* [Port 9: Power Switch] */
-// Located on FRONT wall (Y=0), main power switch
 port9_wall = 2;                 // Wall: 2=FRONT
-port9_offset = 4.76;            // X position: 4.76mm (from precision map)
-port9_z = 0.67;                 // Z offset: 0.67mm above PCB
-port9_width = 6.0;              // Switch width (mm)
-port9_height = 6.0;             // Switch height (mm)
+port9_offset = 4.76;            // X position (mm)
+port9_z = 0.67;                 // Z offset above PCB
+port9_width = 6.0;              // width (mm)
+port9_height = 6.0;             // height (mm)
 
 // ============================================================
 // DERIVED DIMENSIONS (calculated from config)
 // ============================================================
 
-// Enclosure grows exactly around PCB with assembly tolerance
 enc_length = pcb_length + wall*2 + assembly_tol*2;
 enc_width = pcb_width + wall*2 + assembly_tol*2;
-
-// PCB offset inside enclosure (from origin)
 pcb_offset_x = wall + assembly_tol;
 pcb_offset_y = wall + assembly_tol;
-
-// PCB surface height within PCB deck
 floor_t = 2;
 support_ledge_h = 2;
 pcb_surface_z = floor_t + support_ledge_h;
@@ -223,41 +198,26 @@ module snap_clip_female() {
         cube([snap_width + snap_tol*2, snap_depth + snap_tol*4, snap_height + snap_tol*2]);
 }
 
-// ============================================================
-// PARAMETRIC PORT CUTOUT MODULE
-// ============================================================
-// wall_id: 0=LEFT, 1=RIGHT, 2=FRONT, 3=BACK
-// offset: position along wall (pcb-relative coordinate)
-// z_offset: height above pcb_surface_z
-// cut_w: cutout width (dimension parallel to wall)
-// cut_h: cutout height (Z dimension)
-
 module port_cutout(wall_id, offset, z_offset, cut_w, cut_h) {
-    // Add tolerance to cutout dimensions
     w = cut_w + 2*port_tol;
     h = cut_h;
     z_pos = pcb_surface_z + z_offset;
     
     if (wall_id == 0) {
-        // LEFT wall (X = 0)
         translate([-0.1, pcb_offset_y + offset - w/2, z_pos])
             cube([wall + 0.2, w, h]);
     } else if (wall_id == 1) {
-        // RIGHT wall (X = enc_length)
         translate([enc_length - wall - 0.1, pcb_offset_y + offset - w/2, z_pos])
             cube([wall + 0.2, w, h]);
     } else if (wall_id == 2) {
-        // FRONT wall (Y = 0)
         translate([pcb_offset_x + offset - w/2, -0.1, z_pos])
             cube([w, wall + 0.2, h]);
     } else if (wall_id == 3) {
-        // BACK wall (Y = enc_width)
         translate([pcb_offset_x + offset - w/2, enc_width - wall - 0.1, z_pos])
             cube([w, wall + 0.2, h]);
     }
 }
 
-// Debug: port label for visualization
 module port_label(wall_id, offset, z_offset, label) {
     if (show_port_labels) {
         z_pos = pcb_surface_z + z_offset + 3;
@@ -285,70 +245,36 @@ module port_label(wall_id, offset, z_offset, label) {
     }
 }
 
-// ============================================================
-// LAYER 1: BUCKLE BASE — GoPro Male Quick Release (Facing DOWN)
-// ============================================================
-// The GoPro buckle is a MALE quick-release (2-prong fork style)
-// mounted on the BOTTOM of the enclosure, FACING DOWNWARD.
-// This allows the enclosure to slot into any female GoPro mount.
-
 module gopro_male_buckle_v6() {
-    // High-fidelity GoPro male quick release buckle
-    // Based on measured genuine GoPro hardware dimensions
-    
     difference() {
         union() {
-            // ─── MAIN BODY (base plate) ───
             translate([-buckle_length/2, -buckle_main_rail_w/2, 0])
                 cube([buckle_length, buckle_main_rail_w, buckle_base_h_gp]);
-            
-            // ─── MAIN RAIL BODY ───
             translate([-buckle_length/2, -buckle_main_rail_w/2, 0])
                 cube([buckle_length, buckle_main_rail_w, buckle_rail_h]);
-            
-            // ─── SPRING CLIPS (both sides) ───
             for (side = [-1, 1]) {
-                // Outer spring rail
-                translate([-buckle_spring_l/2, 
-                           side * (buckle_main_rail_w/2 + buckle_spring_thick/2), 
-                           buckle_rail_h - buckle_spring_thick])
+                translate([-buckle_spring_l/2, side * (buckle_main_rail_w/2 + buckle_spring_thick/2), buckle_rail_h - buckle_spring_thick])
                     cube([buckle_spring_l, buckle_spring_w, buckle_spring_thick], center=true);
-                
-                // Connection to main body
-                translate([-buckle_spring_l/2, 
-                           side * buckle_main_rail_w/2, 
-                           buckle_rail_h - buckle_spring_thick])
+                translate([-buckle_spring_l/2, side * buckle_main_rail_w/2, buckle_rail_h - buckle_spring_thick])
                     cube([2, side * (buckle_spring_w - buckle_spring_thick), buckle_spring_thick]);
             }
-            
-            // ─── LOCKING TAB (front) ───
             translate([buckle_length/2 - buckle_tab_depth, -buckle_tab_w/2, buckle_rail_h]) {
                 difference() {
                     cube([buckle_tab_depth, buckle_tab_w, buckle_tab_h]);
-                    // Chamfer for click-in engagement
                     translate([-0.5, -0.5, buckle_tab_h - 1])
                         rotate([0, -buckle_tab_chamfer, 0])
                             cube([buckle_tab_depth + 2, buckle_tab_w + 1, buckle_tab_h]);
                 }
             }
-            
-            // ─── FINGER RELEASE TABS ───
             translate([buckle_length/2, 0, buckle_rail_h]) {
-                // Center finger tab
                 translate([0, -buckle_finger_w/2, 0])
                     cube([buckle_finger_l, buckle_finger_w, 1.5]);
             }
         }
-        
-        // ─── SIDE SLOTS (for female mount rails) ───
         for (side = [-1, 1]) {
-            translate([-buckle_length/2 - 0.5, 
-                       side * (buckle_main_rail_w/2 - buckle_slot_depth), 
-                       buckle_base_h_gp])
+            translate([-buckle_length/2 - 0.5, side * (buckle_main_rail_w/2 - buckle_slot_depth), buckle_base_h_gp])
                 cube([buckle_length + 1, buckle_slot_w, buckle_rail_h]);
         }
-        
-        // ─── CENTER RELIEF (weight reduction + flex) ───
         translate([-buckle_length/4, -buckle_main_rail_w/4, -0.1])
             cube([buckle_length/2, buckle_main_rail_w/2, buckle_base_h_gp + 0.2]);
     }
@@ -359,7 +285,6 @@ module buckle_base() {
     difference() {
         union() {
             rounded_box(enc_length, enc_width, buckle_base_h, corner_r);
-            // Alignment posts
             for (x = [wall + 8, enc_length - wall - 8]) {
                 for (y = [wall + 6, enc_width - wall - 6]) {
                     translate([x, y, buckle_base_h])
@@ -367,10 +292,8 @@ module buckle_base() {
                 }
             }
         }
-        // Hollow interior
         translate([wall, wall, base_floor])
             rounded_box(enc_length - 2*wall, enc_width - 2*wall, buckle_base_h, max(corner_r - wall, 0.5));
-        // Screw holes
         for (x = [wall + 8, enc_length - wall - 8]) {
             for (y = [wall + 6, enc_width - wall - 6]) {
                 translate([x, y, -1])
@@ -380,23 +303,15 @@ module buckle_base() {
             }
         }
     }
-    
-    // GoPro buckle underneath (high-fidelity V6)
-    // ORIENTATION: Buckle faces DOWN (rotate 180° around X-axis)
     translate([enc_length/2, enc_width/2, 0])
         rotate([180, 0, 0])
             gopro_male_buckle_v6();
 }
 
-// ============================================================
-// LAYER 2: BATTERY TUB
-// ============================================================
-
 module battery_tub() {
     difference() {
         union() {
             rounded_box(enc_length, enc_width, battery_tub_h, corner_r);
-            // Snap clips on top
             for (x = [enc_length * 0.25, enc_length * 0.75]) {
                 for (side = [0, 1]) {
                     y_pos = side == 0 ? wall : enc_width - wall - snap_depth;
@@ -405,21 +320,17 @@ module battery_tub() {
                 }
             }
         }
-        // Hollow interior
         translate([wall, wall, floor_t])
             rounded_box(enc_length - 2*wall, enc_width - 2*wall, battery_tub_h, max(corner_r - wall, 0.5));
-        // Alignment recesses
         for (x = [wall + 8, enc_length - wall - 8]) {
             for (y = [wall + 6, enc_width - wall - 6]) {
                 translate([x, y, -1])
                     cylinder(h = 4, d = 6 + layer_tol*2, $fn = 24);
             }
         }
-        // Wire pass-through
         translate([enc_length/2, enc_width/2, battery_tub_h - 2])
             cylinder(h = 4, d = 8, $fn = 24);
     }
-    // Battery corner supports (with tolerance)
     bat_x = (enc_length - bat_length - battery_tol) / 2;
     bat_y = (enc_width - bat_width - battery_tol) / 2;
     for (dx = [0, bat_length + battery_tol - 6]) {
@@ -430,15 +341,10 @@ module battery_tub() {
     }
 }
 
-// ============================================================
-// LAYER 3: PCB DECK — 9 Fully Parametric Port Cutouts
-// ============================================================
-
 module pcb_deck() {
     difference() {
         union() {
             rounded_box(enc_length, enc_width, pcb_deck_h, corner_r);
-            // Snap clips on top
             for (x = [enc_length * 0.25, enc_length * 0.75]) {
                 for (side = [0, 1]) {
                     y_pos = side == 0 ? wall : enc_width - wall - snap_depth;
@@ -447,12 +353,8 @@ module pcb_deck() {
                 }
             }
         }
-        
-        // ─── PI-STYLE SNUG FIT HOLLOW ───
         translate([pcb_offset_x - assembly_tol, pcb_offset_y - assembly_tol, floor_t])
             rounded_box(pcb_length + assembly_tol*2, pcb_width + assembly_tol*2, pcb_deck_h, 1.0);
-        
-        // ─── SNAP RECEIVERS (from battery tub) ───
         for (x = [enc_length * 0.25, enc_length * 0.75]) {
             for (side = [0, 1]) {
                 y_pos = side == 0 ? wall - snap_tol : enc_width - wall - snap_depth + snap_tol;
@@ -460,59 +362,31 @@ module pcb_deck() {
                     snap_clip_female();
             }
         }
-        
-        // ═══════════════════════════════════════════════════════
-        // 9 FULLY PARAMETRIC PORT CUTOUTS (Precision Map Values)
-        // ═══════════════════════════════════════════════════════
-        
-        // PORT 1: Main USB-C (LEFT wall)
         port_cutout(port1_wall, port1_offset, port1_z, port1_width, port1_height);
-        
-        // PORT 2: I2C JST (BACK wall)
         port_cutout(port2_wall, port2_offset, port2_z, port2_width, port2_height);
-        
-        // PORT 3: LED_OUT USB-C (BACK wall)
         port_cutout(port3_wall, port3_offset, port3_z, port3_width, port3_height);
-        
-        // PORT 4: UART Header (BACK wall)
         port_cutout(port4_wall, port4_offset, port4_z, port4_width, port4_height);
-        
-        // PORT 5: USBOUT (RIGHT wall)
         port_cutout(port5_wall, port5_offset, port5_z, port5_width, port5_height);
-        
-        // PORT 6: Micro-SD Card (FRONT wall)
         port_cutout(port6_wall, port6_offset, port6_z, port6_width, port6_height);
-        
-        // PORT 7: AUX Connector (FRONT wall)
         port_cutout(port7_wall, port7_offset, port7_z, port7_width, port7_height);
-        
-        // PORT 8: Battery JST (FRONT wall)
         port_cutout(port8_wall, port8_offset, port8_z, port8_width, port8_height);
-        
-        // PORT 9: Power Switch (FRONT wall)
         port_cutout(port9_wall, port9_offset, port9_z, port9_width, port9_height);
-        
-        // ─── LED STATUS WINDOW ───
         translate([enc_length/3 - 8, -0.1, pcb_surface_z + 2])
             cube([16, wall - 0.5, 5]);
     }
-    
-    // ─── SUPPORT LEDGE (continuous perimeter) ───
     difference() {
         translate([pcb_offset_x - 1, pcb_offset_y - 1, floor_t])
             rounded_box(pcb_length + 2, pcb_width + 2, support_ledge_h, 1.5);
         translate([pcb_offset_x + 1, pcb_offset_y + 1, floor_t - 0.1])
             rounded_box(pcb_length - 2, pcb_width - 2, support_ledge_h + 0.2, 1.5);
     }
-    
-    // ─── DEBUG: Port Labels ───
     if (show_port_labels) {
         color("Red") {
             port_label(port1_wall, port1_offset, port1_z, "1:USB");
             port_label(port2_wall, port2_offset, port2_z, "2:I2C");
             port_label(port3_wall, port3_offset, port3_z, "3:LED");
             port_label(port4_wall, port4_offset, port4_z, "4:UART");
-            port_label(port5_wall, port5_offset, port5_z, "5:USBOUT");
+            port_label(port5_wall, port5_offset, port5_z, "5:OUT");
             port_label(port6_wall, port6_offset, port6_z, "6:SD");
             port_label(port7_wall, port7_offset, port7_z, "7:AUX");
             port_label(port8_wall, port8_offset, port8_z, "8:BATT");
@@ -521,15 +395,10 @@ module pcb_deck() {
     }
 }
 
-// ============================================================
-// LAYER 4: GPS DECK — Empty Volume (No Dividers)
-// ============================================================
-
 module gps_deck() {
     difference() {
         union() {
             rounded_box(enc_length, enc_width, gps_deck_h, corner_r);
-            // Lip for top layer engagement
             translate([wall - layer_tol, wall - layer_tol, gps_deck_h])
                 difference() {
                     rounded_box(enc_length - 2*wall + layer_tol*2, enc_width - 2*wall + layer_tol*2, 2, max(corner_r - wall, 0.5));
@@ -537,12 +406,8 @@ module gps_deck() {
                         rounded_box(enc_length - 2*wall - 2, enc_width - 2*wall - 2, 2.2, max(corner_r - wall - 1, 0.5));
                 }
         }
-        
-        // ─── EMPTY INTERIOR (no dividers/pockets) ───
         translate([wall, wall, floor_t])
             rounded_box(enc_length - 2*wall, enc_width - 2*wall, gps_deck_h, max(corner_r - wall, 0.5));
-        
-        // Snap receivers
         for (x = [enc_length * 0.25, enc_length * 0.75]) {
             for (side = [0, 1]) {
                 y_pos = side == 0 ? wall - snap_tol : enc_width - wall - snap_depth + snap_tol;
@@ -553,27 +418,17 @@ module gps_deck() {
     }
 }
 
-// ============================================================
-// LAYER 5: FLAT TOP
-// ============================================================
-
 module flat_top() {
     window_x = (enc_length - gps_window_size) / 2;
     window_y = (enc_width - gps_window_size) / 2;
-    
     difference() {
         union() {
             rounded_box(enc_length, enc_width, flat_top_h, corner_r);
-            // Engagement lip
             translate([wall + layer_tol, wall + layer_tol, -1.5])
                 rounded_box(enc_length - 2*wall - layer_tol*2, enc_width - 2*wall - layer_tol*2, 1.5, max(corner_r - wall - layer_tol, 0.5));
         }
-        
-        // GPS window (open for signal)
         translate([window_x, window_y, 1])
             cube([gps_window_size, gps_window_size, flat_top_h]);
-        
-        // Corner chamfers
         for (x = [0, enc_length]) {
             for (y = [0, enc_width]) {
                 translate([x, y, flat_top_h])
@@ -583,58 +438,25 @@ module flat_top() {
             }
         }
     }
-    
-    // Thin GPS window cover (RF transparent)
     translate([window_x, window_y, 0])
-        cube([gps_window_size, gps_window_size, 0.8]);
-    
-    // Branding
-    translate([enc_length/2, enc_width - 8, flat_top_h - 0.3])
+        cube([gps_window_size, gps_window_size, 0.2]);
+    translate([enc_length/3.5, enc_width - 8, flat_top_h - 0.2])
         linear_extrude(0.5)
-            text("RACESENSE", size = 4, font = "Liberation Sans:style=Bold", halign = "center", valign = "center");
+            text("RS-CORE", size = 3, font = "Liberation Sans:style=Bold", halign = "right", valign = "center");
 }
-
-// ============================================================
-// ASSEMBLY
-// ============================================================
 
 module assembly() {
-    z = 0;
-    exp = exploded_view ? explode_distance : 0;
-    
-    if (show_buckle_base) 
-        color("DimGray", 0.95) 
-            translate([0, 0, z]) 
-                buckle_base();
-    
+    z = 0; exp = exploded_view ? explode_distance : 0;
+    if (show_buckle_base) color("DimGray", 0.95) translate([0, 0, z]) buckle_base();
     z1 = buckle_base_h + exp;
-    if (show_battery_tub) 
-        color("SlateGray", 0.9) 
-            translate([0, 0, z1]) 
-                battery_tub();
-    
+    if (show_battery_tub) color("SlateGray", 0.9) translate([0, 0, z1]) battery_tub();
     z2 = z1 + battery_tub_h + exp;
-    if (show_pcb_deck) 
-        color("DarkSlateGray", 0.9) 
-            translate([0, 0, z2]) 
-                pcb_deck();
-    
+    if (show_pcb_deck) color("DarkSlateGray", 0.9) translate([0, 0, z2]) pcb_deck();
     z3 = z2 + pcb_deck_h + exp;
-    if (show_gps_deck) 
-        color("CadetBlue", 0.9) 
-            translate([0, 0, z3]) 
-                gps_deck();
-    
+    if (show_gps_deck) color("CadetBlue", 0.9) translate([0, 0, z3]) gps_deck();
     z4 = z3 + gps_deck_h + exp;
-    if (show_flat_top) 
-        color("White", 0.95) 
-            translate([0, 0, z4]) 
-                flat_top();
+    if (show_flat_top) color("White", 0.95) translate([0, 0, z4]) flat_top();
 }
-
-// ============================================================
-// RENDER
-// ============================================================
 
 if (show_cross_section) {
     difference() {
@@ -645,40 +467,3 @@ if (show_cross_section) {
 } else {
     assembly();
 }
-
-// ============================================================
-// V6.1 CHANGE LOG — "Full Customizer Edition"
-// ============================================================
-// 
-// FROM V6.0:
-// - PRECISION MAP DEFAULTS: All 9 port coordinates updated to match
-//   hardware_precision_map.txt (2026-02-09)
-// - EXPLICIT CUSTOMIZER SECTIONS: Each port has its own /* [Port N] */
-//   section for clear sidebar organization
-// - GOPRO BUCKLE VALIDATED: Confirmed male quick-release, facing DOWN
-//   from base (rotate 180° around X-axis)
-// - ENHANCED DOCUMENTATION: Port descriptions include component type
-//   and wall location
-// - PORT LABELS IMPROVED: Debug mode shows port names, not just numbers
-// 
-// PORT TRUTH MAP (from hardware_precision_map.txt):
-// ┌──────────┬────────┬────────┬────────┬────────────┐
-// │ Port     │ X (mm) │ Y (mm) │ Z (mm) │ Wall       │
-// ├──────────┼────────┼────────┼────────┼────────────┤
-// │ 1. USB   │ (LEFT) │  15.71 │   0.39 │ LEFT (0)   │
-// │ 2. I2C   │  40.49 │ (BACK) │   1.42 │ BACK (3)   │
-// │ 3. LED   │  61.00 │ (BACK) │   0.84 │ BACK (3)   │
-// │ 4. UART  │  59.25 │ (BACK) │   2.69 │ BACK (3)   │
-// │ 5. USBOUT│(RIGHT) │  21.51 │   1.57 │ RIGHT (1)  │
-// │ 6. SD    │  53.09 │(FRONT) │   2.09 │ FRONT (2)  │
-// │ 7. AUX   │  13.09 │(FRONT) │   1.52 │ FRONT (2)  │
-// │ 8. BATT  │   7.40 │(FRONT) │   0.31 │ FRONT (2)  │
-// │ 9. PWR   │   4.76 │(FRONT) │   0.67 │ FRONT (2)  │
-// └──────────┴────────┴────────┴────────┴────────────┘
-// 
-// GOPRO ORIENTATION:
-// - Type: Male Quick-Release Buckle (2-prong fork)
-// - Position: Bottom of enclosure base (Layer 1)
-// - Direction: Facing DOWN (rotated 180° around X-axis)
-// - Compatibility: All standard GoPro female mounts
-// ============================================================
