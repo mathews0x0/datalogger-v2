@@ -16,6 +16,7 @@ class User(db.Model):
     home_track = db.Column(db.String(255))
     subscription_tier = db.Column(db.String(20), default='free')
     subscription_expires_at = db.Column(db.DateTime, nullable=True)
+    is_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, password):
@@ -34,6 +35,7 @@ class User(db.Model):
             "home_track": self.home_track,
             "subscription_tier": self.subscription_tier,
             "subscription_expires_at": self.subscription_expires_at.isoformat() if self.subscription_expires_at else None,
+            "is_admin": self.is_admin,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 

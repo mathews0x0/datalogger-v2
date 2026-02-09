@@ -1731,3 +1731,32 @@ In alignment with the "Thin App" philosophy, the mobile app now acts as a high-s
 - Simplifies the "Paddock Workflow": Tap Sync -> Wait 30s -> All data on phone.
 
 **Status:** ✅ Complete & Integrated into Main App.
+
+## 27. Phase 27 — Admin User Management (Complete)
+
+**Date:** 2026-02-09
+
+### Motivation
+As the user base grows, manual tier management via the command line or hardcoded checks became unsustainable. A formal admin system was required to manage subscriptions and user privileges.
+
+### Decisions
+1. **Database-Driven Privileges:** Added a formal `is_admin` boolean column to the `User` model. Removed hardcoded email domain checks.
+2. **Super Admin Role:** ID=1 is designated as the Super Admin, with the exclusive power to grant or revoke admin status for other users.
+3. **Protected API:** Implemented an `@admin_required` decorator to secure all management endpoints.
+4. **Admin UI:** Added a dedicated "Admin" tab in the companion app (visible only to admins) featuring:
+   - Searchable user list with pagination.
+   - Tier management (Free/Pro/Team) dropdowns.
+   - Session count and join date visibility.
+5. **Upgrade Messaging:** Updated the "Pro Upgrade" flow to direct users to contact support via email, providing a clear path to conversion while payment integration is in development.
+
+### Implementation Details
+- **Backend:** Flask endpoints for user listing, tier updates, and admin toggling.
+- **Frontend:** Responsive admin table, search/filter toolbar, and updated auth UI state management.
+- **Migration:** Automated script to add the `is_admin` column and bootstrap the first admin user.
+
+**Outcome:**
+- Centralized user management system.
+- Secure, scalable privilege model.
+- Improved UX for manual subscription activation.
+
+**Status:** ✅ Complete & Frozen

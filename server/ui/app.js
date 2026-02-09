@@ -108,6 +108,9 @@ function showView(viewName) {
             case 'teams':
                 loadTeams();
                 break;
+            case 'admin':
+                loadAdminUsers();
+                break;
             case 'process':
                 loadLearningFiles();
                 break;
@@ -186,6 +189,7 @@ function updateAuthUI() {
     const userProfileCard = document.getElementById('userProfileCard');
     const tierBadge = document.getElementById('tierBadge');
     const adminToolsCard = document.getElementById('adminToolsCard');
+    const adminNavBtn = document.getElementById('adminNavBtn');
 
     if (currentUser) {
         if (loginBtn) loginBtn.style.display = 'none';
@@ -198,8 +202,9 @@ function updateAuthUI() {
         }
 
         // Admin Check
-        const isAdmin = (currentUser.id === 1 || (currentUser.email && currentUser.email.endsWith('@racesense.v2')));
+        const isAdmin = !!currentUser.is_admin;
         if (adminToolsCard) adminToolsCard.style.display = isAdmin ? 'block' : 'none';
+        if (adminNavBtn) adminNavBtn.style.display = isAdmin ? 'flex' : 'none';
 
         if (userProfileCard) {
             userProfileCard.style.display = 'block';
@@ -249,14 +254,26 @@ function showUpgradeModal(featureName = "") {
     const modal = document.getElementById('upgradeModal');
     const title = document.getElementById('upgradeTitle');
     const message = document.getElementById('upgradeMessage');
+    const actionBtn = document.getElementById('upgradeActionBtn');
 
     if (featureName) {
         title.textContent = "Unlock " + featureName;
-        message.textContent = `The ${featureName} feature is available on our Pro plan. Upgrade now to get full access!`;
+        message.innerHTML = `
+            <p>The <strong>${featureName}</strong> feature is available on our Pro plan.</p>
+            <p style="margin-top: 1rem;">To upgrade your account, please contact:</p>
+            <a href="mailto:support@racesense.v2" class="upgrade-contact-btn">📧 support@racesense.v2</a>
+        `;
     } else {
         title.textContent = "Upgrade to Pro";
-        message.textContent = "Get unlimited session storage, CSV exports, and advanced telemetry features.";
+        message.innerHTML = `
+            <p>Get unlimited session storage, CSV exports, and advanced telemetry features.</p>
+            <p style="margin-top: 1rem;">To unlock Pro, contact our team:</p>
+            <a href="mailto:support@racesense.v2" class="upgrade-contact-btn">📧 support@racesense.v2</a>
+        `;
     }
+
+    // Hide the old upgrade button since we're using inline email link
+    if (actionBtn) actionBtn.style.display = 'none';
 
     if (modal) modal.classList.add('active');
 }
@@ -6836,4 +6853,198 @@ async function startHybridSync() {
 function closeSyncOverlay() {
     const overlay = document.getElementById('syncOverlay');
     overlay.classList.remove('active');
+}
+
+// ============================================================================
+// ADMIN USER MANAGEMENT
+// ============================================================================
+
+let adminUsersData = [];
+let adminCurrentPage = 1;
+let adminPerPage = 50;
+
+async function loadAdminUsers(page = 1, query = '', tier = '') {
+    const searchInput = document.getElementById('adminSearchInput');
+    const tierFilter = document.getElementById('adminTierFilter');
+    
+    query = query || (searchInput ? searchInput.value : '');
+    tier = tier || (tierFilter ? tierFilter.value : '');
+    
+    try {
+        let url = `/api/admin/users?page=${page}&per_page=${adminPerPage}`;
+        if (query) url += `&q=${encodeURIComponent(query)}`;
+        if (tier) url += `&tier=${tier}`;
+        
+        const result = await apiCall(url);
+        if (result) {
+            adminUsersData = result.users;
+            adminCurrentPage = result.page;
+            renderAdminUsersTable(result);
+            renderAdminPagination(result);
+            renderAdminStats(result);
+        }
+    } catch (e) {
+        showToast('Failed to load users: ' + e.message, 'error');
+    }
+}
+
+function renderAdminStats(data) {
+    const statsEl = document.getElementById('adminStats');
+    if (!statsEl) return;
+    
+    statsEl.innerHTML = `
+        <span>Total Users: <strong>${data.total}</strong></span>
+        <span>Page <strong>${data.page}</strong> of <strong>${data.pages}</strong></span>
+    `;
+}
+
+function renderAdminUsersTable(data) {
+    const tbody = document.getElementById('adminUsersBody');
+    if (!tbody) return;
+    
+    if (data.users.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-dim);">
+                    <i class="fas fa-user-slash" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.3; display: block;"></i>
+                    No users found matching your filters
+                </td>
+            </tr>
+        `;
+        return;
+    }
+    
+    tbody.innerHTML = data.users.map(user => {
+        const joinDate = user.created_at 
+            ? new Date(user.created_at).toLocaleDateString() 
+            : 'N/A';
+        
+        const isCurrentUser = currentUser && currentUser.id === user.id;
+        const adminBadge = user.is_admin ? '<i class="fas fa-crown admin-badge" title="Admin"></i>' : '';
+        
+        return `
+            <tr>
+                <td style="color: var(--text-dim); font-family: monospace;">#${user.id}</td>
+                <td>
+                    <div class="admin-user-info">
+                        <span class="admin-user-name">${user.name || 'Unnamed Rider'}${adminBadge}</span>
+                        <span class="admin-user-email">${user.email}</span>
+                    </div>
+                </td>
+                <td>
+                    <span class="tier-badge ${user.subscription_tier}">
+                        ${user.subscription_tier}
+                    </span>
+                </td>
+                <td style="text-align: center; font-weight: 700;">${user.session_count || 0}</td>
+                <td>${joinDate}</td>
+                <td>
+                    <div class="admin-actions">
+                        <select onchange="adminSetUserTier(${user.id}, this.value)" class="filter-select" style="min-width: 120px; padding: 0.35rem; font-size: 0.8rem;">
+                            <option value="free" ${user.subscription_tier === 'free' ? 'selected' : ''}>Free</option>
+                            <option value="pro" ${user.subscription_tier === 'pro' ? 'selected' : ''}>Pro</option>
+                            <option value="team" ${user.subscription_tier === 'team' ? 'selected' : ''}>Team</option>
+                        </select>
+                        ${(currentUser.id === 1 && user.id !== 1) ? `
+                            <button class="btn-icon" onclick="adminToggleAdmin(${user.id}, ${!user.is_admin})" title="${user.is_admin ? 'Revoke Admin' : 'Grant Admin'}">
+                                <i class="fas ${user.is_admin ? 'fa-user-minus' : 'fa-user-shield'}\"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+function renderAdminPagination(data) {
+    const paginationEl = document.getElementById('adminPagination');
+    if (!paginationEl) return;
+    
+    if (data.pages <= 1) {
+        paginationEl.innerHTML = '';
+        return;
+    }
+    
+    let html = '';
+    
+    // Previous button
+    html += `<button onclick="loadAdminUsers(${data.page - 1})" ${data.page <= 1 ? 'disabled' : ''}><i class="fas fa-chevron-left"></i></button>`;
+    
+    // Page numbers (show max 5)
+    const startPage = Math.max(1, data.page - 2);
+    const endPage = Math.min(data.pages, data.page + 2);
+    
+    if (startPage > 1) html += '<span style="color: var(--text-dim)">...</span>';
+    
+    for (let i = startPage; i <= endPage; i++) {
+        html += `<button onclick="loadAdminUsers(${i})" class="${i === data.page ? 'active' : ''}">${i}</button>`;
+    }
+    
+    if (endPage < data.pages) html += '<span style="color: var(--text-dim)">...</span>';
+    
+    // Next button
+    html += `<button onclick="loadAdminUsers(${data.page + 1})" ${data.page >= data.pages ? 'disabled' : ''}><i class="fas fa-chevron-right"></i></button>`;
+    
+    paginationEl.innerHTML = html;
+}
+
+async function adminSetUserTier(userId, newTier) {
+    const confirmMsg = `Change user ${userId} tier to ${newTier.toUpperCase()}?`;
+    if (!confirm(confirmMsg)) {
+        loadAdminUsers(adminCurrentPage);
+        return;
+    }
+    
+    try {
+        const result = await apiCall(`/api/admin/users/${userId}/tier`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tier: newTier })
+        });
+        
+        if (result && result.success) {
+            showToast(`User ${userId} updated to ${newTier}`, 'success');
+            
+            if (currentUser && currentUser.id === userId) {
+                await checkAuth();
+            }
+            
+            loadAdminUsers(adminCurrentPage);
+        }
+    } catch (e) {
+        showToast('Failed to update tier: ' + e.message, 'error');
+        loadAdminUsers(adminCurrentPage);
+    }
+}
+
+async function adminToggleAdmin(userId, isAdmin) {
+    const action = isAdmin ? 'GRANT' : 'REVOKE';
+    if (!confirm(`${action} admin privileges for user ${userId}?`)) return;
+    
+    try {
+        const result = await apiCall(`/api/admin/users/${userId}/admin`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_admin: isAdmin })
+        });
+        
+        if (result && result.success) {
+            showToast(`Admin privileges ${isAdmin ? 'granted' : 'revoked'} for user ${userId}`, 'success');
+            loadAdminUsers(adminCurrentPage);
+        }
+    } catch (e) {
+        showToast('Failed to toggle admin: ' + e.message, 'error');
+    }
+}
+
+function searchAdminUsers() {
+    const query = document.getElementById('adminSearchInput').value;
+    loadAdminUsers(1, query);
+}
+
+function filterAdminUsers() {
+    const tier = document.getElementById('adminTierFilter').value;
+    const query = document.getElementById('adminSearchInput').value;
+    loadAdminUsers(1, query, tier);
 }

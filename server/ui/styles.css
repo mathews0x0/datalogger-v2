@@ -1749,10 +1749,107 @@ input:checked+.slider:before {
   box-shadow: 0 0 10px rgba(156, 39, 176, 0.3);
 }
 
-/* Feature Locked Overlay */
-.locked-feature {
-  position: relative;
-  overflow: hidden;
+/* Admin Tab Icon */
+.nav-btn[data-view="admin"] i {
+    color: var(--warning);
+}
+
+/* Admin Table Styling */
+#adminUsersBody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+}
+
+#adminUsersBody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+#adminUsersBody td {
+    padding: 1rem;
+    vertical-align: middle;
+}
+
+.admin-user-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.admin-user-name {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.admin-user-email {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.admin-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+/* Pagination Styling */
+#adminPagination button {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 0.5rem;
+    background: var(--surface-light);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+#adminPagination button:hover:not(:disabled) {
+    border-color: var(--primary);
+    background: rgba(255, 107, 53, 0.1);
+}
+
+#adminPagination button.active {
+    background: var(--primary);
+    color: #000;
+    border-color: var(--primary);
+}
+
+#adminPagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Upgrade Modal Enhancements */
+.upgrade-message strong {
+    color: var(--primary);
+}
+
+.upgrade-contact-btn {
+    display: inline-block;
+    margin-top: 1.5rem;
+    padding: 0.85rem 2rem;
+    background: var(--primary);
+    color: #000;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.3s;
+    box-shadow: 0 5px 15px var(--primary-glow);
+}
+
+.upgrade-contact-btn:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.1);
+    box-shadow: 0 8px 25px var(--primary-glow);
+}
+
+.admin-badge {
+    color: var(--warning);
+    font-size: 0.8rem;
+    margin-left: 0.35rem;
 }
 
 .locked-overlay {

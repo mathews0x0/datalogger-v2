@@ -66,6 +66,7 @@
     <button class="nav-btn" data-view="teams"><i class="fas fa-users-cog"></i> Teams</button>
     <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
     <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
+    <button class="nav-btn" data-view="admin" id="adminNavBtn" style="display: none;"><i class="fas fa-user-shield"></i> Admin</button>
   </nav>
 
   <!-- Main Content -->
@@ -501,6 +502,57 @@
         <!-- Service Maintenance -->
 
 
+      </div>
+    </div>
+
+    <!-- Admin View -->
+    <div class="view" id="adminView">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h2 style="margin: 0;"><i class="fas fa-user-shield"></i> User Management</h2>
+        <div class="admin-stats" id="adminStats" style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-dim);">
+            <!-- Populated by JS -->
+        </div>
+      </div>
+      
+      <!-- Admin Toolbar -->
+      <div class="filter-bar" style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+        <div style="flex: 2; min-width: 200px; position: relative;">
+          <input type="text" id="adminSearchInput" class="filter-select" style="width: 100%; padding-left: 2.5rem;" placeholder="Search by email or name..." />
+          <i class="fas fa-search" style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted);"></i>
+        </div>
+        <select id="adminTierFilter" class="filter-select" style="flex: 1;" onchange="filterAdminUsers()">
+            <option value="">All Tiers</option>
+            <option value="free">Free</option>
+            <option value="pro">Pro</option>
+            <option value="team">Team</option>
+        </select>
+        <button onclick="searchAdminUsers()" class="btn btn-primary btn-sm">Search</button>
+      </div>
+      
+      <!-- Users Table -->
+      <div class="card" style="padding: 0; overflow: hidden; border: 1px solid var(--border);">
+          <div style="overflow-x: auto;">
+              <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                  <thead style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border);">
+                      <tr>
+                          <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">ID</th>
+                          <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Name / Email</th>
+                          <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Tier</th>
+                          <th style="padding: 1rem; text-align: center; font-weight: 600; color: var(--text-muted);">Sessions</th>
+                          <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Joined</th>
+                          <th style="padding: 1rem; text-align: right; font-weight: 600; color: var(--text-muted);">Actions</th>
+                      </tr>
+                  </thead>
+                  <tbody id="adminUsersBody">
+                      <!-- Populated by JS -->
+                  </tbody>
+              </table>
+          </div>
+      </div>
+      
+      <!-- Pagination -->
+      <div id="adminPagination" style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
+          <!-- Populated by JS -->
       </div>
     </div>
 
@@ -979,35 +1031,20 @@
   </div>
 
   <!-- Upgrade Modal -->
-  <div class="modal" id="upgradeModal">
-    <div class="modal-content" style="max-width: 500px; text-align: center;">
-      <span class="modal-close" onclick="closeUpgradeModal()">&times;</span>
-      <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--primary);">
-        <i class="fas fa-rocket"></i>
+  <div id="upgradeModal" class="modal">
+      <div class="modal-content" style="max-width: 500px; text-align: center; padding: 3rem 2rem;">
+          <button class="modal-close" onclick="closeUpgradeModal()">×</button>
+          <div style="font-size: 4rem; margin-bottom: 1.5rem; color: var(--primary); filter: drop-shadow(0 0 15px var(--primary-glow));">
+              🚀
+          </div>
+          <h3 id="upgradeTitle" style="font-size: 1.75rem; margin-bottom: 1rem;">Upgrade to Pro</h3>
+          <div id="upgradeMessage" style="color: var(--text-dim); margin-bottom: 2rem; line-height: 1.6;">
+              <!-- Populated by JS -->
+          </div>
+          <button id="upgradeActionBtn" onclick="handleUpgradeClick()" class="btn btn-primary" style="display: none; width: 100%; padding: 1rem;">
+              Upgrade Now
+          </button>
       </div>
-      <h3 id="upgradeTitle" style="margin-bottom: 1rem;">Upgrade to Pro</h3>
-      <p id="upgradeMessage" style="color: var(--text-dim); margin-bottom: 2rem;">
-        Get unlimited session storage, CSV exports, and advanced telemetry features.
-      </p>
-      
-      <div class="pricing-card" style="background: rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 12px; border: 1px solid var(--primary); margin-bottom: 2rem;">
-        <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: var(--primary); margin-bottom: 0.5rem;">Pro Plan</div>
-        <div style="font-size: 2.5rem; font-weight: 800; margin-bottom: 1rem;">$9.99<span style="font-size: 1rem; color: var(--text-muted);">/mo</span></div>
-        <ul style="text-align: left; font-size: 0.9rem; list-style: none; padding: 0; margin: 0 0 1.5rem 0;">
-          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Unlimited Session Storage</li>
-          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> CSV/JSON Data Exports</li>
-          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Advanced Analytics & TBL</li>
-          <li style="margin-bottom: 0.5rem;"><i class="fas fa-check" style="color: var(--success); margin-right: 0.5rem;"></i> Priority Cloud Processing</li>
-        </ul>
-        <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="handleUpgradeClick()">
-          Coming Soon
-        </button>
-      </div>
-      
-      <p style="font-size: 0.75rem; color: var(--text-muted);">
-        Payment integration is currently in development. Contact support to manual upgrade.
-      </p>
-    </div>
   </div>
 
   <!-- Create Team Modal -->
