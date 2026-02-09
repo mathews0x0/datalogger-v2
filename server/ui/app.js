@@ -6659,6 +6659,41 @@ async function handleBleConnect() {
     }
 }
 
+async function provisionHotspot() {
+    const ssid = document.getElementById('hotspotSSID').value;
+    const pass = document.getElementById('hotspotPass').value;
+
+    if (!ssid || !pass) {
+        showToast('Hotspot name and password required', 'warning');
+        return;
+    }
+
+    try {
+        // 1. Check if already connected via BLE
+        if (!bleConnector || !bleConnector.isConnected()) {
+            showToast('Connecting to ESP32 via Bluetooth...', 'info');
+            await handleBleConnect();
+        }
+
+        if (!bleConnector.isConnected()) return;
+
+        // 2. Send credentials
+        showToast(`Provisioning ESP32 for hotspot: ${ssid}...`, 'info');
+        await bleConnector.configureWifi(ssid, pass);
+        
+        // 3. Save to local storage for future auto-shares
+        saveToWifiVault(ssid, pass);
+        
+        showToast('Provisioned! ESP32 is now searching for your hotspot.', 'success');
+        
+        // 4. Start checking for connection
+        setTimeout(() => checkDeviceConnection(), 5000);
+        
+    } catch (e) {
+        showToast(`Provisioning failed: ${e.message}`, 'error');
+    }
+}
+
 async function handleBleWifiScan() {
     if (!bleConnector || !bleConnector.isConnected()) return;
 

@@ -445,6 +445,29 @@
               </button>
             </div>
           </div>
+
+          <!-- Hotspot One-Tap Setup -->
+          <div class="input-group" style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
+            <label>Mobile Hotspot One-Tap</label>
+            <div class="card" style="background: rgba(255, 107, 53, 0.05); border: 1px dashed var(--primary); padding: 1rem;">
+              <p class="help-text" style="font-size: 0.75rem; margin-bottom: 1rem;">
+                Enable your phone hotspot with these credentials, then tap 'Provision' to link the ESP32.
+              </p>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
+                <div class="input-group" style="margin: 0;">
+                  <label style="font-size: 0.7rem; opacity: 0.7;">Hotspot Name (SSID)</label>
+                  <input type="text" id="hotspotSSID" class="form-input" value="Racesense-Pit" style="font-size: 0.8rem; padding: 0.5rem;">
+                </div>
+                <div class="input-group" style="margin: 0;">
+                  <label style="font-size: 0.7rem; opacity: 0.7;">Password</label>
+                  <input type="text" id="hotspotPass" class="form-input" value="racesense123" style="font-size: 0.8rem; padding: 0.5rem;">
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="provisionHotspot()" style="width: 100%;">
+                <i class="fab fa-bluetooth-b"></i> Provision via BLE
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- ESP32 FIRMWARE CONFIG -->
