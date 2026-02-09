@@ -831,29 +831,10 @@
       </div>
 
       <!-- Dashboard Grid -->
-      <div style="
-            display: grid;
-            grid-template-columns: 1fr 320px;
-            gap: 1.25rem;
-            flex: 1;
-            min-height: 0;
-          ">
+      <div class="playback-grid">
         <!-- Map Container -->
-        <div class="glass" style="
-              position: relative;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              overflow: hidden;
-              border-radius: 12px;
-            ">
-          <canvas id="pbTrackCanvas" style="
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-              "></canvas>
+        <div class="glass playback-map-container">
+          <canvas id="pbTrackCanvas"></canvas>
 
           <!-- Map Layer Controls -->
           <div class="map-controls">

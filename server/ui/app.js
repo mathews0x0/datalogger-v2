@@ -152,6 +152,10 @@ async function apiCall(endpoint, options = {}) {
         // Prevent caching
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${API_BASE}${endpoint}${separator}_t=${Date.now()}`;
+        
+        // Ensure credentials are included for Capacitor mobile app cross-origin calls
+        options.credentials = 'include';
+        
         const response = await fetch(url, options);
 
         if (response.status === 401 && !endpoint.includes('/api/auth/')) {

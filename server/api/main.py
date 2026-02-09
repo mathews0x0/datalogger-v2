@@ -16,7 +16,14 @@ import shutil
 # Point to UI folder in same server directory
 static_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../ui'))
 app = Flask(__name__, static_folder=static_path, static_url_path='')
-CORS(app)  # Enable CORS for development
+# Allow standard Capacitor/Cordova origins for mobile app
+CORS(app, supports_credentials=True, origins=[
+    "http://localhost",
+    "https://localhost",
+    "capacitor://localhost",
+    "http://127.0.0.1",
+    "http://192.168.1.35:6969" # Local dev
+])
 
 @app.after_request
 def add_header(response):
@@ -1697,8 +1704,8 @@ def register_new_sessions(user_id):
                             session_name=data.get('meta', {}).get('session_name'),
                             start_time=data.get('meta', {}).get('start_time'),
                             duration_sec=data.get('meta', {}).get('duration_sec'),
-                            total_laps=data.get('summary', {}).get('total_laps', len(data.get('laps', []))),
-                            best_lap_time=data.get('summary', {}).get('best_lap_time')
+                            total_laps=data.get('summary', {}).get('total_laps') or data.get('aggregates', {}).get('total_laps') or len(data.get('laps', [])),
+                            best_lap_time=data.get('aggregates', {}).get('best_lap_time') or data.get('summary', {}).get('best_lap_time')
                         )
                         db.session.add(sm)
                         new_found = True

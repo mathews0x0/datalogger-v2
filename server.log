@@ -11,6 +11,128 @@ Press CTRL+C to quit
 [Datalogger V2] Starting server...
  * Debugger is active!
  * Debugger PIN: 279-740-881
-127.0.0.1 - - [10/Feb/2026 01:42:30] "GET /api/tracks HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 01:42:45] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 01:43:48] "GET /api/status HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:30] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:41] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:41] "GET /styles.css?v=5 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:41] "GET /ble-connector.js HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:41] "GET /app.js?v=5 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /hybrid-burst-service.js HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /api/device/scan?_t=1770671922699 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /api/auth/me?_t=1770671922704 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /api/tracks?_t=1770671922705 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /api/sessions?_t=1770671922705 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:48:42] "GET /api/health?_t=1770671922701 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:47] "POST /api/auth/login?_t=1770671926954 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:47] "GET /api/sessions?_t=1770671927053 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:47] "GET /api/tracks?_t=1770671927053 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:50] "GET /api/sessions?_t=1770671930263 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:50] "GET /api/tracks?_t=1770671930658 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:52] "GET /api/learning/processed?_t=1770671931932 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:52] "GET /api/learning/list?archived=false&_t=1770671931932 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:48:52] "GET /api/sessions/limit?_t=1770671931932 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:11] "POST /api/admin/set-tier?_t=1770671951432 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:11] "GET /api/auth/me?_t=1770671951740 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:18] "GET /api/sessions/limit?_t=1770671958629 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:18] "GET /api/learning/list?archived=false&_t=1770671958628 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:18] "GET /api/learning/processed?_t=1770671958629 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:22] "POST /api/process/all?_t=1770671961330 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:23] "GET /api/learning/list?archived=false&_t=1770671963216 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:23] "GET /api/sessions/limit?_t=1770671963217 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:23] "GET /api/learning/processed?_t=1770671963216 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:31] "GET /api/tracks?_t=1770671970529 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:33] "GET /api/sessions/limit?_t=1770671973647 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:33] "GET /api/learning/list?archived=false&_t=1770671973646 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:33] "GET /api/learning/processed?_t=1770671973647 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:38] "POST /api/process?_t=1770671978338 HTTP/1.1" 500 -
+127.0.0.1 - - [10/Feb/2026 02:49:50] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:50] "GET /ble-connector.js HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:50] "GET /styles.css?v=5 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:50] "GET /app.js?v=5 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /hybrid-burst-service.js HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /api/device/scan?_t=1770671991708 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /api/sessions?_t=1770671991711 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /api/tracks?_t=1770671991711 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /favicon.ico HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /api/health?_t=1770671991709 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:49:51] "GET /api/auth/me?_t=1770671991710 HTTP/1.1" 401 -
+127.0.0.1 - - [10/Feb/2026 02:50:20] "POST /api/auth/login?_t=1770672020121 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:20] "GET /api/tracks?_t=1770672020282 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:20] "GET /api/sessions?_t=1770672020283 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:23] "GET /api/learning/list?archived=false&_t=1770672023520 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:23] "GET /api/learning/processed?_t=1770672023520 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:23] "GET /api/sessions/limit?_t=1770672023520 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:29] "GET /api/learning/104138.csv/geo?_t=1770672029724 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:50:33] "POST /api/process?_t=1770672032811 HTTP/1.1" 500 -
+127.0.0.1 - - [10/Feb/2026 02:52:11] "GET /api/learning/104138.csv/geo?_t=1770672130623 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:20] "GET /api/sessions?_t=1770672139952 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:20] "GET /api/tracks?_t=1770672140588 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:22] "GET /api/tracks?_t=1770672142704 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:25] "GET /api/sessions/limit?_t=1770672145071 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:25] "GET /api/learning/list?archived=false&_t=1770672145070 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:25] "GET /api/learning/processed?_t=1770672145071 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:29] "GET /api/learning/104138.csv/geo?_t=1770672149425 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:36] "GET /api/learning/111341.csv/geo?_t=1770672156235 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:40] "POST /api/learning/archive?_t=1770672160589 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:40] "GET /api/learning/processed?_t=1770672160711 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:40] "GET /api/learning/list?archived=false&_t=1770672160711 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:40] "GET /api/sessions/limit?_t=1770672160711 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:47] "POST /api/learning/archive?_t=1770672167370 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:47] "GET /api/learning/list?archived=false&_t=1770672167513 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:47] "GET /api/learning/processed?_t=1770672167513 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:47] "GET /api/sessions/limit?_t=1770672167513 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:50] "GET /api/learning/123503.csv/geo?_t=1770672170665 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:58] "POST /api/process?_t=1770672176507 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:59] "GET /api/learning/list?archived=false&_t=1770672179161 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:59] "GET /api/learning/processed?_t=1770672179162 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:52:59] "GET /api/sessions/limit?_t=1770672179162 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:21] "POST /api/process/all?_t=1770672185315 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:22] "GET /api/sessions/limit?_t=1770672202422 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:22] "GET /api/learning/list?archived=false&_t=1770672202422 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:22] "GET /api/learning/processed?_t=1770672202422 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:24] "GET /api/sessions?_t=1770672204194 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:24] "GET /api/tracks?_t=1770672204785 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:31] "GET /api/sessions/jan18Session2?_t=1770672210876 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:31] "GET /api/tracks/1?_t=1770672211407 HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:53:31] "GET /api/sessions/jan18Session2/annotations?_t=1770672211763 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:33] "GET /api/sessions/jan18Session2/telemetry?_t=1770672213460 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:33] "GET /api/sessions/jan18Session2?_t=1770672213459 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:53:34] "GET /api/sessions/jan18Session2/annotations?_t=1770672213903 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:08] "GET /api/sessions?_t=1770672247896 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:09] "GET /api/tracks?_t=1770672248941 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:21] "GET /api/sessions/jan17Session4?_t=1770672261486 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:22] "GET /api/tracks/1?_t=1770672262069 HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:54:22] "GET /api/sessions/jan17Session4/annotations?_t=1770672262405 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:27] "GET /api/sessions?_t=1770672267779 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:28] "GET /api/tracks?_t=1770672268190 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:32] "GET /api/sessions/jan17Session1?_t=1770672272380 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:33] "GET /api/tracks/1?_t=1770672272905 HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:54:33] "GET /api/sessions/jan17Session1/annotations?_t=1770672273261 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:34] "GET /api/sessions?_t=1770672274419 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:34] "GET /api/tracks?_t=1770672274826 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:36] "GET /api/sessions/jan18Session2?_t=1770672276016 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:36] "GET /api/tracks/1?_t=1770672276425 HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:54:37] "GET /api/sessions/jan18Session2/annotations?_t=1770672276880 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:51] "POST /api/sessions/jan18Session2/rename?_t=1770672291058 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:51] "GET /api/sessions/jan18Session2?_t=1770672291419 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:54:52] "GET /api/tracks/1?_t=1770672291824 HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:54:52] "GET /api/sessions/jan18Session2/annotations?_t=1770672292398 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:55:10] "GET /api/sessions/jan18Session2/compare?lap1=3&lap2=3&_t=1770672309539 HTTP/1.1" 404 -
+127.0.0.1 - - [10/Feb/2026 02:55:21] "GET /api/sessions/jan18Session2?_t=1770672321444 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:55:21] "GET /api/sessions/jan18Session2/telemetry?_t=1770672321444 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 02:55:22] "GET /api/sessions/jan18Session2/annotations?_t=1770672321945 HTTP/1.1" 200 -
+ * Detected change in '/home/mj/datalogger-v2/server/api/main.py', reloading
+ * Restarting with stat
+[Datalogger V2] Starting server...
+ * Debugger is active!
+ * Debugger PIN: 279-740-881
+ * Detected change in '/home/mj/datalogger-v2/server/api/main.py', reloading
+ * Restarting with stat
+[Datalogger V2] Starting server...
+ * Debugger is active!
+ * Debugger PIN: 279-740-881
+ * Detected change in '/home/mj/datalogger-v2/server/api/main.py', reloading
+ * Restarting with stat
+[Datalogger V2] Starting server...
+ * Debugger is active!
+ * Debugger PIN: 279-740-881

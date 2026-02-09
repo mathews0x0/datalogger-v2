@@ -57,6 +57,9 @@ body {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   padding: 0.75rem 1.5rem;
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+  padding-left: max(1.5rem, env(safe-area-inset-left));
+  padding-right: max(1.5rem, env(safe-area-inset-right));
   border-bottom: 1px solid var(--border);
   display: flex;
   justify-content: space-between;
@@ -64,6 +67,8 @@ body {
   position: sticky;
   top: 0;
   z-index: 100;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .header h1 {
@@ -842,12 +847,59 @@ h2::before {
 
 /* Responsive */
 @media (max-width: 768px) {
+  .header {
+    padding: 0.5rem 1rem;
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+    gap: 0.5rem;
+  }
+
   .header h1 {
-    font-size: 1.2rem;
+    font-size: 1rem;
+  }
+
+  /* Hide status badges on mobile header to save space */
+  .header .status-badge,
+  .header #storageIndicator,
+  .header #activeTrackBadge {
+    display: none !important;
+  }
+
+  /* Compact login button */
+  .header #loginBtn {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.75rem;
   }
 
   .main {
     padding: 1rem;
+    padding-left: max(1rem, env(safe-area-inset-left));
+    padding-right: max(1rem, env(safe-area-inset-right));
+  }
+
+  .nav {
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+    justify-content: flex-start;
+  }
+
+  .nav-btn {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+  }
+
+  .nav-btn i {
+    font-size: 0.9rem;
+  }
+
+  /* Hide text on smaller screens, show only icons */
+  @media (max-width: 480px) {
+    .nav-btn {
+      padding: 0.6rem;
+    }
+    .nav-btn span,
+    .nav-btn:not(:has(i))::after {
+      display: none;
+    }
   }
 
   .tracks-grid {
@@ -868,6 +920,48 @@ h2::before {
 
   .details-section-content {
       padding: 1rem;
+  }
+}
+
+/* Playback View Grid */
+.playback-grid {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 1.25rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.playback-map-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 12px;
+  min-height: 400px; /* Ensure map has height on mobile */
+}
+
+#pbTrackCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+@media (max-width: 992px) {
+  .playback-grid {
+    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  
+  .playback-map-container {
+    min-height: 300px;
+    height: 300px;
+    flex-shrink: 0;
   }
 }
 
@@ -1749,10 +1843,107 @@ input:checked+.slider:before {
   box-shadow: 0 0 10px rgba(156, 39, 176, 0.3);
 }
 
-/* Feature Locked Overlay */
-.locked-feature {
-  position: relative;
-  overflow: hidden;
+/* Admin Tab Icon */
+.nav-btn[data-view="admin"] i {
+    color: var(--warning);
+}
+
+/* Admin Table Styling */
+#adminUsersBody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+}
+
+#adminUsersBody tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+#adminUsersBody td {
+    padding: 1rem;
+    vertical-align: middle;
+}
+
+.admin-user-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.admin-user-name {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.admin-user-email {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+}
+
+.admin-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+}
+
+/* Pagination Styling */
+#adminPagination button {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 0.5rem;
+    background: var(--surface-light);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s;
+}
+
+#adminPagination button:hover:not(:disabled) {
+    border-color: var(--primary);
+    background: rgba(255, 107, 53, 0.1);
+}
+
+#adminPagination button.active {
+    background: var(--primary);
+    color: #000;
+    border-color: var(--primary);
+}
+
+#adminPagination button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* Upgrade Modal Enhancements */
+.upgrade-message strong {
+    color: var(--primary);
+}
+
+.upgrade-contact-btn {
+    display: inline-block;
+    margin-top: 1.5rem;
+    padding: 0.85rem 2rem;
+    background: var(--primary);
+    color: #000;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    transition: all 0.3s;
+    box-shadow: 0 5px 15px var(--primary-glow);
+}
+
+.upgrade-contact-btn:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.1);
+    box-shadow: 0 8px 25px var(--primary-glow);
+}
+
+.admin-badge {
+    color: var(--warning);
+    font-size: 0.8rem;
+    margin-left: 0.35rem;
 }
 
 .locked-overlay {
@@ -2370,4 +2561,98 @@ input:checked + .toggle-slider:before {
   width: 0%;
   transition: width 0.4s ease;
   box-shadow: 0 0 10px var(--primary-glow);
+}
+
+/* ============================================================================
+   iOS / CAPACITOR APP STYLES
+   ============================================================================ */
+
+/* Safe area support for iOS devices (notch, Dynamic Island, home indicator) */
+@supports (padding-top: env(safe-area-inset-top)) {
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .header {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+  }
+
+  .main {
+    padding-bottom: max(1.5rem, calc(env(safe-area-inset-bottom) + 1rem));
+  }
+
+  .modal-content {
+    margin-bottom: env(safe-area-inset-bottom);
+  }
+}
+
+/* Extra small screens (iPhone SE, older iPhones) */
+@media (max-width: 380px) {
+  .header {
+    padding: 0.4rem 0.75rem;
+    padding-top: max(0.4rem, env(safe-area-inset-top));
+  }
+
+  .header h1 {
+    font-size: 0.9rem;
+    gap: 0.25rem;
+  }
+
+  .header h1 i {
+    font-size: 0.9rem;
+  }
+
+  /* Stack header items on very small screens */
+  .header > div:first-child {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  /* Minimal login button */
+  .header #loginBtn {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  .nav-btn {
+    padding: 0.5rem 0.5rem;
+    font-size: 0.7rem;
+  }
+
+  h2 {
+    font-size: 1.1rem;
+  }
+
+  .main {
+    padding: 0.75rem;
+  }
+}
+
+/* Disable hover effects on touch devices (prevents sticky hover states) */
+@media (hover: none) and (pointer: coarse) {
+  .btn:hover {
+    transform: none;
+    box-shadow: none;
+    filter: none;
+  }
+
+  .stat-card:hover {
+    transform: none;
+  }
+
+  .session-card:hover {
+    transform: none;
+  }
+
+  .track-card:hover {
+    transform: none;
+  }
+
+  .nav-btn:hover {
+    background: transparent;
+  }
+
+  .nav-btn.active:hover {
+    background: var(--primary);
+  }
 }
