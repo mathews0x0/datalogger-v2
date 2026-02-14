@@ -1662,7 +1662,16 @@ def upload_file():
         with open(save_path, 'w') as f:
             f.write(content)
             
-        return jsonify({"success": True, "filename": safe_name})
+        # AUTO-TRIGGER Analysis for seamless experience
+        try:
+            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
+            # Run in background to not block the ESP32 handshake
+            subprocess.Popen(['python3', script_path, str(save_path)])
+            print(f"[Upload] Auto-triggered analysis for {safe_name}")
+        except Exception as ae:
+            print(f"[Upload] Failed to auto-trigger analysis: {ae}")
+            
+        return jsonify({"success": True, "filename": safe_name, "auto_analysis": True})
         
     except Exception as e:
         print(f"Upload Error: {e}")
@@ -1692,8 +1701,8 @@ def register_new_sessions(user_id):
                                 track_meta = TrackMeta(
                                     track_id=track_id,
                                     user_id=user_id,
-                                    track_name=data.get('track', {}).get('track_name'),
-                                    folder_name=data.get('track', {}).get('folder_name')
+                                    track_name=data.get('track', {}).get('track_name') or f"Track {track_id}",
+                                    folder_name=data.get('track', {}).get('folder_name') or f"track_{track_id}"
                                 )
                                 db.session.add(track_meta)
                         

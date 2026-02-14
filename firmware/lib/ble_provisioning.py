@@ -38,7 +38,7 @@ class BLEProvisioning:
         
         # Get MAC address for advertising name
         mac = ubinascii.hexlify(network.WLAN().config('mac'), ':').decode().replace(':', '')
-        self._device_name = "Datalogger-" + mac[-4:].upper()
+        self._device_name = "Racesense-Core" # Friendly Name for Paddock visibility
         
         # Initial values
         self._networks_json = b"[]"
@@ -69,14 +69,18 @@ class BLEProvisioning:
         # Flags: General Discoverable Mode, BR/EDR Not Supported
         payload = bytearray(b'\x02\x01\x06')
         
-        # Name (Complete Local Name)
+        # Service UUID (128-bit Complete List) - CRITICAL for macOS/iOS visibility
+        payload += struct.pack('B', len(_SERVICE_UUID_ADV) + 1) + b'\x07' + _SERVICE_UUID_ADV
+        
+        # Name (Short Local Name to save space in 31-byte packet)
         name = self._device_name.encode()
-        payload += struct.pack('B', len(name) + 1) + b'\x09' + name
+        payload += struct.pack('B', len(name) + 1) + b'\x08' + name
         return payload
 
     def _get_resp_data(self):
-        # Service UUID (128-bit Complete List)
-        payload = struct.pack('B', len(_SERVICE_UUID_ADV) + 1) + b'\x07' + _SERVICE_UUID_ADV
+        # Complete Name in response data
+        name = self._device_name.encode()
+        payload = struct.pack('B', len(name) + 1) + b'\x09' + name
         return payload
 
     def start(self):
@@ -147,44 +151,50 @@ class BLEProvisioning:
             if value == "SCAN":
                 self._scan_networks()
             elif value == "START_AP":
-                # Notify via status that we are moving to AP
                 self.notify_wifi_status(False, "Setup", "192.168.4.1", "AP")
-                # Triggering AP mode via wlan
                 self._wlan.active(False)
                 import network
                 ap = network.WLAN(network.AP_IF)
                 ap.active(True)
-                ap.config(essid="Datalogger-Setup", password="password123", authmode=3)
+                ap.config(essid="Racesense-Pit", password="password123", authmode=3)
+            elif value == "SYNC":
+                # Manual trigger if WiFi is already connected
+                if self._wlan.isconnected():
+                    import _thread
+                    import lib.uploader as uploader
+                    _thread.start_new_thread(uploader.upload_all, (self.sm,))
             else:
-                # Try parsing as JSON: {ssid, password}
+                # Try parsing as JSON: {ssid, password, api_url}
                 try:
                     data = json.loads(value)
                     ssid = data.get("ssid")
                     password = data.get("password")
+                    api_url = data.get("api_url")
                     if ssid:
-                        print(f"[BLE] Configuring WiFi: {ssid}")
-                        if self.wifi_mgr:
-                            # Save to credentials file
-                            self.wifi_mgr.add_credential(ssid, password)
-                            # Start non-blocking connection attempt
-                            import _thread
-                            _thread.start_new_thread(self._connect_to_wifi, (ssid, password))
+                        print(f"[BLE] Provisioning WiFi: {ssid}")
+                        import _thread
+                        _thread.start_new_thread(self._connect_to_wifi, (ssid, password, api_url))
                 except:
                     print(f"[BLE] Unknown command or invalid JSON: {value}")
         except Exception as e:
             print(f"[BLE] Command error: {e}")
 
-    def _connect_to_wifi(self, ssid, password):
+    def _connect_to_wifi(self, ssid, password, api_url=None):
         print(f"[BLE] Attempting WiFi connection to {ssid}...")
         self._wlan.active(True)
         self._wlan.connect(ssid, password)
         
-        # Poll for 20s (longer timeout for stability)
+        # Poll for 20s
         for i in range(20):
             if self._wlan.isconnected():
                 ip = self._wlan.ifconfig()[0]
                 print(f"[BLE] WiFi connected to {ssid}, IP: {ip}")
                 self.notify_wifi_status(True, ssid, ip, "STA")
+                
+                # If we have an api_url, trigger an automatic upload
+                if api_url:
+                    import lib.uploader as uploader
+                    uploader.upload_all(self.sm, api_url=api_url, ble=self)
                 return
             time.sleep(1)
             
@@ -207,13 +217,32 @@ class BLEProvisioning:
         except:
             pass
 
-    def notify_wifi_status(self, connected: bool, ssid: str, ip: str, mode: str):
+    def notify_sync_progress(self, progress: int, filename: str):
+        # Update the status JSON with progress
+        status = json.loads(self._status_json.decode())
+        status['sync_progress'] = progress
+        status['sync_file'] = filename
+        
+        self._status_json = json.dumps(status).encode()
+        self.ble.gatts_write(self._h_status, self._status_json)
+        
+        # Notify all connected centrals
+        for conn_handle in self._connections:
+            try:
+                self.ble.gatts_notify(conn_handle, self._h_status)
+            except:
+                pass
+
+    def notify_wifi_status(self, connected: bool, ssid: str, ip: str, mode: str, progress=None):
         status = {
             "connected": connected,
             "ssid": ssid,
             "ip": ip,
             "mode": mode
         }
+        if progress is not None:
+            status['sync_progress'] = progress
+            
         self._status_json = json.dumps(status).encode()
         self.ble.gatts_write(self._h_status, self._status_json)
         # Notify all connected centrals

@@ -11,39 +11,4 @@ Press CTRL+C to quit
 [Datalogger V2] Starting server...
  * Debugger is active!
  * Debugger PIN: 279-740-881
-127.0.0.1 - - [10/Feb/2026 03:04:20] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:43] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:43] "GET /app.js?v=5 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:43] "GET /styles.css?v=5 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:43] "GET /ble-connector.js HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /hybrid-burst-service.js HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /api/auth/me?_t=1770672884417 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /api/health?_t=1770672884416 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /api/device/scan?_t=1770672884416 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /api/tracks?_t=1770672884418 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /api/sessions?_t=1770672884418 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:44] "GET /favicon.ico HTTP/1.1" 404 -
-127.0.0.1 - - [10/Feb/2026 03:04:46] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:46] "GET /styles.css?v=5 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:46] "GET /ble-connector.js HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:46] "GET /app.js?v=5 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /hybrid-burst-service.js HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /api/device/scan?_t=1770672888210 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /api/sessions?_t=1770672888211 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /api/health?_t=1770672888210 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /api/auth/me?_t=1770672888211 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /favicon.ico HTTP/1.1" 404 -
-127.0.0.1 - - [10/Feb/2026 03:04:48] "GET /api/tracks?_t=1770672888211 HTTP/1.1" 401 -
-127.0.0.1 - - [10/Feb/2026 03:04:50] "POST /api/auth/login?_t=1770672889908 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:50] "GET /api/tracks?_t=1770672890144 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:50] "GET /api/sessions?_t=1770672890144 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:52] "GET /api/sessions?_t=1770672892258 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:52] "GET /api/tracks?_t=1770672892805 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:55] "GET /api/sessions/jan18Session3?_t=1770672895512 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:04:56] "GET /api/tracks/1?_t=1770672895999 HTTP/1.1" 404 -
-127.0.0.1 - - [10/Feb/2026 03:04:56] "GET /api/sessions/jan18Session3/annotations?_t=1770672896408 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:05:00] "GET /api/sessions/jan18Session3/compare?lap1=4&lap2=6&_t=1770672900151 HTTP/1.1" 404 -
-127.0.0.1 - - [10/Feb/2026 03:05:02] "GET /api/sessions/jan18Session3/compare?lap1=4&lap2=6&_t=1770672902767 HTTP/1.1" 404 -
-127.0.0.1 - - [10/Feb/2026 03:05:11] "GET /api/sessions/jan18Session3/telemetry?_t=1770672911162 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:05:11] "GET /api/sessions/jan18Session3?_t=1770672911162 HTTP/1.1" 200 -
-127.0.0.1 - - [10/Feb/2026 03:05:11] "GET /api/sessions/jan18Session3/annotations?_t=1770672911757 HTTP/1.1" 200 -
+127.0.0.1 - - [10/Feb/2026 18:37:36] "GET / HTTP/1.1" 200 -

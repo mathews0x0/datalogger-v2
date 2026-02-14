@@ -23,8 +23,133 @@ function setCustomApiUrl() {
     }
 }
 
-// State
-let currentView = 'home';
+// BLE Instance
+const ble = new DataloggerBLE();
+
+/**
+ * Platform Detection & Guide
+ */
+function getPlatformGuide() {
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const isChrome = !!window.chrome;
+
+    if (isIOS) {
+        return `<div style="color: var(--warning)"><i class="fas fa-mobile-alt"></i> <strong>iPhone Detected:</strong> Please ensure you are using the <strong>Bluefy Browser</strong> to enable Bluetooth syncing.</div>`;
+    }
+    if (isMac && !isChrome) {
+        return `<div style="color: var(--warning)"><i class="fas fa-laptop"></i> <strong>macOS Detected:</strong> Please use <strong>Google Chrome</strong> and ensure "Bluetooth" permissions are granted in System Settings.</div>`;
+    }
+    return '';
+}
+
+/**
+ * Sync Wizard Handlers
+ */
+function startSyncWizard() {
+    const modal = document.getElementById('syncWizardModal');
+    modal.classList.add('active');
+    
+    // Reset steps
+    document.getElementById('syncStep1').style.display = 'block';
+    document.getElementById('syncStep2').style.display = 'none';
+    document.getElementById('syncStep3').style.display = 'none';
+    
+    // Show platform guide if needed
+    const guideEl = document.getElementById('platformGuide');
+    const guideHtml = getPlatformGuide();
+    if (guideHtml) {
+        guideEl.innerHTML = guideHtml;
+        guideEl.style.display = 'block';
+    } else {
+        guideEl.style.display = 'none';
+    }
+}
+
+function closeSyncWizard() {
+    const modal = document.getElementById('syncWizardModal');
+    modal.classList.remove('active');
+    if (ble.isConnected()) {
+        // Keep connected for a few seconds to finish notifications, then disconnect
+        setTimeout(() => ble.disconnect(), 5000);
+    }
+    // Refresh sessions if we finished step 3
+    if (document.getElementById('syncStep3').style.display === 'block') {
+        showView('sessions');
+    }
+}
+
+async function handleSyncStep1() {
+    try {
+        showToast('Pairing with Racesense-Core...', 'info');
+        await ble.connect();
+        showToast('Handshake Successful!', 'success');
+        
+        // Move to Step 2
+        document.getElementById('syncStep1').style.display = 'none';
+        document.getElementById('syncStep2').style.display = 'block';
+        
+        // Setup status listener
+        ble.onStatusChange = (status) => {
+            updateSyncProgress(status);
+        };
+        
+    } catch (err) {
+        console.error('Sync Handshake Error:', err);
+        showToast('Connection Failed: ' + err.message, 'error');
+    }
+}
+
+async function handleSyncStep2() {
+    const ssid = document.getElementById('hotspotSSID').value;
+    const pass = document.getElementById('hotspotPass').value;
+    const apiUrl = API_BASE + '/api/upload'; // Tell ESP32 where to POST
+
+    try {
+        document.getElementById('btnStartUpload').disabled = true;
+        document.getElementById('btnStartUpload').textContent = 'Waiting for Hotspot...';
+        document.getElementById('syncProgressArea').style.display = 'block';
+        
+        showToast('Provisioning ESP32...', 'info');
+        // This triggers the ESP32 to join the hotspot and upload
+        await ble.configureWifi(ssid, pass, apiUrl);
+        
+    } catch (err) {
+        showToast('Sync Failed: ' + err.message, 'error');
+        document.getElementById('btnStartUpload').disabled = false;
+        document.getElementById('btnStartUpload').textContent = 'START SYNC';
+    }
+}
+
+function updateSyncProgress(status) {
+    const label = document.getElementById('syncStatusLabel');
+    const bar = document.getElementById('syncProgressBar');
+    const pctText = document.getElementById('syncProgressPct');
+    
+    if (status.mode === 'STA' && status.connected) {
+        label.textContent = 'Uploading CSVs to Nitro...';
+    } else if (status.mode === 'STA' && !status.connected) {
+        label.textContent = 'Connecting to Hotspot...';
+    }
+    
+    // progress field in status JSON (from ESP32 uploader)
+    if (status.sync_progress !== undefined) {
+        const pct = status.sync_progress;
+        bar.style.width = pct + '%';
+        pctText.textContent = pct + '%';
+        
+        if (pct >= 100) {
+            // Done!
+            document.getElementById('syncStep2').style.display = 'none';
+            document.getElementById('syncStep3').style.display = 'block';
+        }
+    }
+}
+
+// Map the old button function to the new wizard
+function startHybridSync() {
+    startSyncWizard();
+}
 let tracks = [];
 let sessions = [];
 let activeTrackId = null;  // Track identified by ESP32 status

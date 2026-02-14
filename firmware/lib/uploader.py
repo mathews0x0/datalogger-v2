@@ -2,28 +2,40 @@
 import urequests
 import secrets
 
-def upload_all(session_mgr):
+def upload_all(session_mgr, api_url=None, ble=None):
     """
     Uploads all CSV sessions from internal flash to Cloud Backend.
     Deletes successfully uploaded files to free space.
     """
-    print("Starting cloud sync...")
+    if not api_url:
+        import secrets
+        api_url = secrets.API_URL
+
+    print(f"Starting cloud sync to {api_url}...")
     
     # Get all sessions from flash
     sessions = session_mgr.list_sessions()
     
     if not sessions:
         print("No sessions to upload")
+        if ble:
+            ble.notify_wifi_status(True, "No Data", "STA", progress=100)
         return 0
     
-    print(f"Found {len(sessions)} sessions to upload")
+    total = len(sessions)
+    print(f"Found {total} sessions to upload")
     
     count_success = 0
     count_failed = 0
     
-    for filename in sessions:
+    for i, filename in enumerate(sessions):
         print(f"Uploading {filename}...")
         
+        # Notify progress via BLE
+        if ble:
+            progress = int((i / total) * 100)
+            ble.notify_sync_progress(progress, filename)
+
         try:
             # Read session content
             content = session_mgr.get_session_data(filename)
@@ -40,7 +52,8 @@ def upload_all(session_mgr):
             
             # POST to cloud backend
             headers = {'Content-Type': 'application/json'}
-            res = urequests.post(secrets.API_URL, json=payload, headers=headers)
+            import urequests
+            res = urequests.post(api_url, json=payload, headers=headers)
             
             if res.status_code == 200 or res.status_code == 201:
                 print(f"  ✓ Success! Deleting local copy...")
@@ -56,5 +69,8 @@ def upload_all(session_mgr):
             print(f"  ✗ Error: {e}")
             count_failed += 1
     
+    if ble:
+        ble.notify_sync_progress(100, "Complete")
+
     print(f"\nSync complete: {count_success} uploaded, {count_failed} failed")
     return count_success

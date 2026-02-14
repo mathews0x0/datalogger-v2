@@ -1155,6 +1155,69 @@
     window.hybridBurstService = hybridBurstService;
   </script>
   <script src="app.js?v=5"></script>
+  <!-- Sync Wizard Modal -->
+  <div id="syncWizardModal" class="modal">
+    <div class="modal-content" style="max-width: 450px;">
+      <div class="modal-header">
+        <h3><i class="fas fa-sync-alt"></i> Paddock Sync Wizard</h3>
+        <button class="close-btn" onclick="closeSyncWizard()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="syncStep1">
+          <h4>Step 1: Handshake</h4>
+          <p class="help-text">Connecting to your Racesense-Core via Bluetooth to prepare the data transfer.</p>
+          <div id="platformGuide" style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 8px; font-size: 0.85rem; display: none;">
+            <!-- Dynamic Platform Guide -->
+          </div>
+          <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="handleSyncStep1()">
+            <i class="fab fa-bluetooth-b"></i> Start BLE Handshake
+          </button>
+        </div>
+
+        <div id="syncStep2" style="display: none;">
+          <h4>Step 2: Enable Hotspot</h4>
+          <p class="help-text">Handshake successful! Now enable your phone's personal hotspot to burst the data to the server.</p>
+          
+          <div class="card" style="background: rgba(255, 107, 53, 0.05); border: 1px dashed var(--primary); padding: 1rem; margin-bottom: 1rem;">
+             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <span style="font-size: 0.8rem; opacity: 0.7;">Hotspot SSID</span>
+                <span id="wizardHotspotSSID" style="font-weight: 700;">Racesense-Pit</span>
+             </div>
+             <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 0.8rem; opacity: 0.7;">Password</span>
+                <span id="wizardHotspotPass" style="font-weight: 700;">racesense123</span>
+             </div>
+          </div>
+
+          <div id="syncProgressArea" style="display: none; margin-top: 1rem;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.5rem;">
+              <span id="syncStatusLabel">Waiting for Hotspot...</span>
+              <span id="syncProgressPct">0%</span>
+            </div>
+            <div class="storage-bar" style="height: 10px; background: rgba(255,255,255,0.05);">
+              <div id="syncProgressBar" class="storage-bar-fill" style="width: 0%; background: var(--primary);"></div>
+            </div>
+          </div>
+
+          <button id="btnStartUpload" class="btn btn-success" style="width: 100%; padding: 1rem; margin-top: 1rem;" onclick="handleSyncStep2()">
+            <i class="fas fa-cloud-upload-alt"></i> I've Turned it On - START SYNC
+          </button>
+        </div>
+
+        <div id="syncStep3" style="display: none; text-align: center; padding: 1rem 0;">
+           <div style="font-size: 3rem; color: var(--success); margin-bottom: 1rem;">
+             <i class="fas fa-check-circle"></i>
+           </div>
+           <h4>Sync Complete!</h4>
+           <p class="help-text">12 Laps successfully uploaded and processed. You can now turn off your hotspot.</p>
+           <button class="btn btn-primary" style="width: 100%; margin-top: 1rem;" onclick="closeSyncWizard()">
+             View New Sessions
+           </button>
+        </div>
+      </div>
+    </div>
+  </div>
 </body>
+
 
 </html>

@@ -38,7 +38,7 @@ class DataloggerBLE {
     }
 
     /**
-     * Scan for and connect to a Datalogger BLE device.
+     * Scan for and connect to a Racesense Core BLE device.
      */
     async connect() {
         if (!DataloggerBLE.isSupported()) {
@@ -46,9 +46,14 @@ class DataloggerBLE {
         }
 
         try {
-            console.log('Requesting BLE device...');
+            console.log('Requesting BLE device with service filtering...');
+            // Explicitly filter by Service UUID - CRITICAL for macOS/iOS visibility
             this.device = await navigator.bluetooth.requestDevice({
-                filters: [{ namePrefix: 'Datalogger' }],
+                filters: [
+                    { services: [this.SERVICE_UUID] },
+                    { namePrefix: 'Racesense' },
+                    { namePrefix: 'Datalogger' }
+                ],
                 optionalServices: [this.SERVICE_UUID]
             });
 
@@ -158,9 +163,14 @@ class DataloggerBLE {
         return this._decodeJSON(value);
     }
 
-    async configureWifi(ssid, password) {
-        const payload = JSON.stringify({ ssid, password });
-        return await this._writeCommand(payload);
+    async configureWifi(ssid, password, apiUrl = null) {
+        const payload = { ssid, password };
+        if (apiUrl) payload.api_url = apiUrl;
+        return await this._writeCommand(JSON.stringify(payload));
+    }
+
+    async triggerSync() {
+        return await this._writeCommand("SYNC");
     }
 
     async startAPMode() {
