@@ -85,6 +85,7 @@ class BLEProvisioning:
 
     def start(self):
         try:
+            self.stop() # Ensure previous advertising is stopped
             adv = self._get_adv_data()
             resp = self._get_resp_data()
             self.ble.gap_advertise(100000, adv_data=adv, resp_data=resp)
