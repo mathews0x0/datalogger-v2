@@ -54,6 +54,12 @@ function startSyncWizard() {
     document.getElementById('syncStep1').style.display = 'block';
     document.getElementById('syncStep2').style.display = 'none';
     document.getElementById('syncStep3').style.display = 'none';
+
+    // Load saved credentials
+    const savedSSID = localStorage.getItem('wizard_hotspot_ssid');
+    const savedPass = localStorage.getItem('wizard_hotspot_pass');
+    if (savedSSID) document.getElementById('wizardHotspotSSID').value = savedSSID;
+    if (savedPass) document.getElementById('wizardHotspotPass').value = savedPass;
     
     // Show platform guide if needed
     const guideEl = document.getElementById('platformGuide');
@@ -66,58 +72,41 @@ function startSyncWizard() {
     }
 }
 
-function closeSyncWizard() {
-    const modal = document.getElementById('syncWizardModal');
-    modal.classList.remove('active');
-    if (ble.isConnected()) {
-        // Keep connected for a few seconds to finish notifications, then disconnect
-        setTimeout(() => ble.disconnect(), 5000);
-    }
-    // Refresh sessions if we finished step 3
-    if (document.getElementById('syncStep3').style.display === 'block') {
-        showView('sessions');
-    }
-}
-
-async function handleSyncStep1() {
-    try {
-        showToast('Pairing with Racesense-Core...', 'info');
-        await ble.connect();
-        showToast('Handshake Successful!', 'success');
-        
-        // Move to Step 2
-        document.getElementById('syncStep1').style.display = 'none';
-        document.getElementById('syncStep2').style.display = 'block';
-        
-        // Setup status listener
-        ble.onStatusChange = (status) => {
-            updateSyncProgress(status);
-        };
-        
-    } catch (err) {
-        console.error('Sync Handshake Error:', err);
-        showToast('Connection Failed: ' + err.message, 'error');
-    }
-}
+let syncTimeoutTimer = null;
 
 async function handleSyncStep2() {
-    const ssid = document.getElementById('hotspotSSID').value;
-    const pass = document.getElementById('hotspotPass').value;
-    const apiUrl = API_BASE + '/api/upload'; // Tell ESP32 where to POST
+    const ssid = document.getElementById('wizardHotspotSSID').value;
+    const pass = document.getElementById('wizardHotspotPass').value;
+    const remember = document.getElementById('wizardRememberCreds').checked;
+    const apiUrl = API_BASE + '/api/upload'; 
+
+    if (remember) {
+        localStorage.setItem('wizard_hotspot_ssid', ssid);
+        localStorage.setItem('wizard_hotspot_pass', pass);
+    }
 
     try {
         document.getElementById('btnStartUpload').disabled = true;
-        document.getElementById('btnStartUpload').textContent = 'Waiting for Hotspot...';
+        document.getElementById('btnStartUpload').innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Connecting to Hotspot...';
         document.getElementById('syncProgressArea').style.display = 'block';
         
         showToast('Provisioning ESP32...', 'info');
-        // This triggers the ESP32 to join the hotspot and upload
+        
+        // Start a safety timeout (30 seconds)
+        syncTimeoutTimer = setTimeout(() => {
+            const label = document.getElementById('syncStatusLabel');
+            label.innerHTML = '<span style="color: var(--error)">Connection Stalled. Please check if your hotspot is active.</span>';
+            document.getElementById('btnStartUpload').disabled = false;
+            document.getElementById('btnStartUpload').textContent = 'RETRY CONNECTION';
+        }, 30000);
+
         await ble.configureWifi(ssid, pass, apiUrl);
         
     } catch (err) {
         showToast('Sync Failed: ' + err.message, 'error');
         document.getElementById('btnStartUpload').disabled = false;
         document.getElementById('btnStartUpload').textContent = 'START SYNC';
+        if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
     }
 }
 
@@ -127,21 +116,26 @@ function updateSyncProgress(status) {
     const pctText = document.getElementById('syncProgressPct');
     
     if (status.mode === 'STA' && status.connected) {
+        if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
         label.textContent = 'Uploading CSVs to Nitro...';
     } else if (status.mode === 'STA' && !status.connected) {
-        label.textContent = 'Connecting to Hotspot...';
+        label.textContent = 'ESP32 Joining Hotspot...';
     }
     
-    // progress field in status JSON (from ESP32 uploader)
     if (status.sync_progress !== undefined) {
         const pct = status.sync_progress;
         bar.style.width = pct + '%';
         pctText.textContent = pct + '%';
         
+        if (status.sync_file) {
+            label.textContent = `Syncing: ${status.sync_file} (${pct}%)`;
+        }
+        
         if (pct >= 100) {
-            // Done!
+            if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
             document.getElementById('syncStep2').style.display = 'none';
             document.getElementById('syncStep3').style.display = 'block';
+            showToast('Sync Complete! Auto-processing started.', 'success');
         }
     }
 }
