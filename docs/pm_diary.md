@@ -1760,3 +1760,42 @@ As the user base grows, manual tier management via the command line or hardcoded
 - Improved UX for manual subscription activation.
 
 **Status:** ✅ Complete & Frozen
+
+---
+
+## 28. Phase 28 — Web MVP & Reverse Hotspot Sync (2026-02-14)
+
+**Objective:** Transition to a "Zero-Install" Web UI for the March MVP, bypassing app store friction while maintaining seamless sync.
+
+### Strategic Pivot: The "Reverse Hotspot"
+Since mobile browsers cannot programmatically join the ESP32's WiFi, we flipped the connection logic.
+1. **Handshake:** Web UI (browser) connects to ESP32 via **Web-BLE**.
+2. **Provisioning:** Browser sends the phone's hotspot credentials and the Nitro 5 backend URL to the ESP32.
+3. **Execution:** ESP32 joins the phone's hotspot and blasts raw CSVs directly to the Nitro backend.
+4. **Visibility Fix:** Renamed device to `Racesense-Core` and implemented explicit **Service UUID advertising** to fix macOS/iOS "invisible device" issues.
+
+### Implementation Details:
+- **Firmware:** Updated `ble_provisioning.py` with STA-mode priority and `uploader.py` with progress notifications.
+- **Backend:** Hardened `/api/upload` to auto-trigger the analysis pipeline immediately upon CSV receipt.
+- **Frontend:** Built a responsive **Sync Wizard** in the Web UI with platform detection (Chrome/macOS, Bluefy/iOS).
+- **Handover:** Created `CONNECTIVITY_HANDOVER.md` for troubleshooting platform-specific permissions.
+
+**Status:** ✅ Web MVP Infrastructure Complete. Verified on Linux/Nitro hardware.
+
+---
+
+## 29. Phase 29 — Distributed Brain Architecture (2026-02-15)
+
+**Objective:** Offload heavy implementation logic to the MacBook Air M4 while keeping the Nitro 5 focused on hardware and background services.
+
+### Infrastructure:
+- **Node Mac (The Brain):** Running **Ollama** (`192.168.1.38`) with `qwen2.5-coder:14b` and `deepseek-r1:14b`.
+- **Node Nitro (The Muscle):** Orchestrates project files, GitHub synchronization, and ESP32 hardware interactions.
+- **Network Bridge:** OpenClaw on Nitro routes coding tasks to the M4's Unified Memory via a local API bridge.
+
+### Outcomes:
+- **Zero Latency:** Coding responses dropped from ~50s (Nitro local) to <3s (Mac M4).
+- **Privacy:** Proprietary code stays on the local network (M4 reasoning loop).
+- **Cost Efficiency:** Shifted 90% of development workload to local silicon ($0 token cost).
+
+**Status:** 🚀 Distributed Brain Setup Live & Verified.
