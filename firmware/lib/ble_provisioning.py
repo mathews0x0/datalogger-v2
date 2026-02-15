@@ -190,6 +190,15 @@ class BLEProvisioning:
             if self._wlan.isconnected():
                 ip = self._wlan.ifconfig()[0]
                 print(f"[BLE] WiFi connected to {ssid}, IP: {ip}")
+                
+                # Store credentials for next boot
+                if self.wifi_mgr:
+                    try:
+                        self.wifi_mgr.add_credential(ssid, password)
+                        print(f"[BLE] Saved credentials for {ssid}")
+                    except Exception as e:
+                        print(f"[BLE] Failed to save credentials: {e}")
+                
                 self.notify_wifi_status(True, ssid, ip, "STA")
                 
                 # If we have an api_url, trigger an automatic upload

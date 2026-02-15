@@ -55,6 +55,11 @@ function startSyncWizard() {
     document.getElementById('syncStep2').style.display = 'none';
     document.getElementById('syncStep3').style.display = 'none';
 
+    // Reset button in step 1
+    const btn = document.querySelector('#syncStep1 .btn-primary');
+    btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Start BLE Handshake';
+    btn.disabled = false;
+
     // Load saved credentials
     const savedSSID = localStorage.getItem('wizard_hotspot_ssid');
     const savedPass = localStorage.getItem('wizard_hotspot_pass');
@@ -69,6 +74,67 @@ function startSyncWizard() {
         guideEl.style.display = 'block';
     } else {
         guideEl.style.display = 'none';
+    }
+}
+
+function closeSyncWizard() {
+    const modal = document.getElementById('syncWizardModal');
+    modal.classList.remove('active');
+    if (ble.isConnected()) {
+        // Keep connected for a few seconds to finish notifications, then disconnect
+        setTimeout(() => ble.disconnect(), 5000);
+    }
+    // Refresh sessions if we finished step 3
+    if (document.getElementById('syncStep3').style.display === 'block') {
+        showView('sessions');
+    }
+}
+
+async function handleSyncStep1() {
+    const btn = document.querySelector('#syncStep1 .btn-primary');
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Pairing...';
+        
+        showToast('Pairing with Racesense-Core...', 'info');
+        await ble.connect();
+        showToast('Handshake Successful!', 'success');
+        
+        // Setup status listener
+        ble.onStatusChange = (status) => {
+            updateSyncProgress(status);
+        };
+
+        // Check if device is already connected (using saved credentials)
+        const status = await ble.getWifiStatus();
+        if (status.connected) {
+            showToast('Device already connected to ' + status.ssid, 'success');
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i> DEVICE READY - START SYNC';
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-success');
+            btn.disabled = false;
+            // Update onclick to trigger SYNC directly
+            btn.onclick = async () => {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Syncing...';
+                // Trigger Step 2 UI but skip provisioning
+                document.getElementById('syncStep1').style.display = 'none';
+                document.getElementById('syncStep2').style.display = 'block';
+                document.getElementById('syncProgressArea').style.display = 'block';
+                document.getElementById('btnStartUpload').style.display = 'none'; // Hide provision button
+                await ble.triggerSync();
+            };
+        } else {
+            // Move to Step 2 for manual provisioning
+            document.getElementById('syncStep1').style.display = 'none';
+            document.getElementById('syncStep2').style.display = 'block';
+        }
+        
+    } catch (err) {
+        console.error('Sync Handshake Error:', err);
+        showToast('Connection Failed: ' + err.message, 'error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Retry Handshake';
     }
 }
 

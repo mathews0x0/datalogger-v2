@@ -17,6 +17,16 @@ def load_credentials():
 def save_credentials(credentials):
     """Save WiFi credentials list to file"""
     try:
+        # Ensure directory exists
+        parts = CREDENTIALS_FILE.split('/')
+        path = ""
+        for i in range(1, len(parts)-1):
+            path += "/" + parts[i]
+            try:
+                os.mkdir(path)
+            except:
+                pass
+                
         with open(CREDENTIALS_FILE, 'w') as f:
             json.dump(credentials, f)
         return True
