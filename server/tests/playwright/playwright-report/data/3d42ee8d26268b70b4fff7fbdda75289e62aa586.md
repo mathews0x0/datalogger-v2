@@ -1,0 +1,84 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - heading " RaceSense" [level=1] [ref=e4]:
+        - generic [ref=e5]: 
+        - text: RaceSense
+      - generic [ref=e6]:
+        - generic [ref=e9]: Connected
+        - text:  
+    - generic [ref=e10]:
+      - text: 
+      - button "Login / Register" [ref=e11] [cursor=pointer]
+  - navigation [ref=e12]:
+    - button " Home" [ref=e13] [cursor=pointer]:
+      - generic [ref=e14]: 
+      - text: Home
+    - button " Tracks" [ref=e15] [cursor=pointer]:
+      - generic [ref=e16]: 
+      - text: Tracks
+    - button " Sessions" [ref=e17] [cursor=pointer]:
+      - generic [ref=e18]: 
+      - text: Sessions
+    - button " Community" [ref=e19] [cursor=pointer]:
+      - generic [ref=e20]: 
+      - text: Community
+    - button " Teams" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: 
+      - text: Teams
+    - button " Process" [ref=e23] [cursor=pointer]:
+      - generic [ref=e24]: 
+      - text: Process
+    - button " Settings" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: 
+      - text: Settings
+    - text: 
+  - main [ref=e27]:
+    - generic [ref=e28]:
+      - heading " Dashboard" [level=2] [ref=e29]:
+        - generic [ref=e30]: 
+        - text: Dashboard
+      - generic [ref=e31]:
+        - generic [ref=e32]:
+          - generic [ref=e34]: 
+          - generic [ref=e35]:
+            - generic [ref=e36]: Total Tracks
+            - generic [ref=e37]: "-"
+        - generic [ref=e38]:
+          - generic [ref=e40]: 
+          - generic [ref=e41]:
+            - generic [ref=e42]: Total Sessions
+            - generic [ref=e43]: "-"
+        - generic [ref=e44]:
+          - generic [ref=e46]: 
+          - generic [ref=e47]:
+            - generic [ref=e48]: Last Session
+            - generic [ref=e49]: "-"
+      - button " Sync with Device" [ref=e51] [cursor=pointer]:
+        - generic [ref=e52]: 
+        - text: Sync with Device
+      - generic [ref=e53]:
+        - heading "Recent Sessions" [level=3] [ref=e54]
+        - generic [ref=e56]: Loading...
+    - text:                   +      
+  - text:      +
+  - generic [ref=e59]:
+    - generic [ref=e60] [cursor=pointer]: ×
+    - generic [ref=e61]:
+      - heading "🔑 Login" [level=3] [ref=e62]
+      - generic [ref=e63]:
+        - generic [ref=e64]: Email
+        - textbox "email@example.com" [ref=e65]
+      - generic [ref=e66]:
+        - generic [ref=e67]: Password
+        - textbox "••••••••" [ref=e68]
+      - button "Login" [ref=e70] [cursor=pointer]
+      - paragraph [ref=e71]:
+        - text: Don't have an account?
+        - link "Register" [ref=e72] [cursor=pointer]:
+          - /url: "#"
+  - text:       
+```

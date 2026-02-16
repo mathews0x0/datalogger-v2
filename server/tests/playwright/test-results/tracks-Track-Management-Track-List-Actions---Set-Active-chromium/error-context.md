@@ -1,0 +1,56 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - heading " RaceSense" [level=1] [ref=e4]:
+        - generic [ref=e5]: 
+        - text: RaceSense
+      - generic [ref=e6]:
+        - generic [ref=e9]: Connected
+        - text:  
+    - generic [ref=e11]:
+      - generic [ref=e12]: TEAM
+      - generic [ref=e13] [cursor=pointer]: Admin Updated
+      - button "" [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: 
+  - navigation [ref=e16]:
+    - button " Home" [ref=e17] [cursor=pointer]:
+      - generic [ref=e18]: 
+      - text: Home
+    - button " Tracks" [active] [ref=e19] [cursor=pointer]:
+      - generic [ref=e20]: 
+      - text: Tracks
+    - button " Sessions" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: 
+      - text: Sessions
+    - button " Community" [ref=e23] [cursor=pointer]:
+      - generic [ref=e24]: 
+      - text: Community
+    - button " Teams" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: 
+      - text: Teams
+    - button " Process" [ref=e27] [cursor=pointer]:
+      - generic [ref=e28]: 
+      - text: Process
+    - button " Settings" [ref=e29] [cursor=pointer]:
+      - generic [ref=e30]: 
+      - text: Settings
+    - button " Admin" [ref=e31] [cursor=pointer]:
+      - generic [ref=e32]: 
+      - text: Admin
+  - main [ref=e33]:
+    - text:     
+    - generic [ref=e34]:
+      - heading "Tracks" [level=2] [ref=e35]
+      - generic [ref=e37]:
+        - generic [ref=e38]: 🗺️
+        - generic [ref=e39]: No tracks yet
+        - generic [ref=e40]: Process your first session and we'll automatically learn the track layout.
+        - button "Process Files" [ref=e41] [cursor=pointer]
+    - text:                   +      
+  - text:      +
+  - generic [ref=e42]: Logged in successfully
+  - text:       
+```

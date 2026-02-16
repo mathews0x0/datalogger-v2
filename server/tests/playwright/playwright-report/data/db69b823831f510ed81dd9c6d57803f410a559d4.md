@@ -1,0 +1,220 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - heading " RaceSense" [level=1] [ref=e4]:
+        - generic [ref=e5]: 
+        - text: RaceSense
+      - generic [ref=e6]:
+        - generic [ref=e9]: Connected
+        - text:  
+    - generic [ref=e11]:
+      - generic [ref=e12]: FREE
+      - generic [ref=e13] [cursor=pointer]: Admin Updated
+      - button "" [ref=e14] [cursor=pointer]:
+        - generic [ref=e15]: 
+  - navigation [ref=e16]:
+    - button " Home" [ref=e17] [cursor=pointer]:
+      - generic [ref=e18]: 
+      - text: Home
+    - button " Tracks" [ref=e19] [cursor=pointer]:
+      - generic [ref=e20]: 
+      - text: Tracks
+    - button " Sessions" [ref=e21] [cursor=pointer]:
+      - generic [ref=e22]: 
+      - text: Sessions
+    - button " Community" [ref=e23] [cursor=pointer]:
+      - generic [ref=e24]: 
+      - text: Community
+    - button " Teams" [ref=e25] [cursor=pointer]:
+      - generic [ref=e26]: 
+      - text: Teams
+    - button " Process" [active] [ref=e27] [cursor=pointer]:
+      - generic [ref=e28]: 
+      - text: Process
+    - button " Settings" [ref=e29] [cursor=pointer]:
+      - generic [ref=e30]: 
+      - text: Settings
+    - button " Admin" [ref=e31] [cursor=pointer]:
+      - generic [ref=e32]: 
+      - text: Admin
+  - main [ref=e33]:
+    - text:             
+    - generic [ref=e34]:
+      - heading "Process New Session" [level=2] [ref=e35]
+      - generic [ref=e36]:
+        - paragraph [ref=e37]: Select a CSV file from learning data to process
+        - generic [ref=e38]:
+          - generic [ref=e39] [cursor=pointer]:
+            - generic [ref=e40]: Show Archives
+            - generic [ref=e41]:
+              - checkbox "Show Archives"
+          - button " Sync from Device" [ref=e43] [cursor=pointer]:
+            - generic [ref=e44]: 
+            - text: Sync from Device
+      - generic [ref=e45]:
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - strong [ref=e49]: Free Tier Storage
+            - paragraph [ref=e50]: You have used 1 of 5 available sessions. Upgrade to Pro to remove this limit.
+          - button "Upgrade" [ref=e51] [cursor=pointer]
+        - button "🚀 Process All (1)" [ref=e55] [cursor=pointer]
+        - table [ref=e57]:
+          - rowgroup [ref=e58]:
+            - row "Filename Size | Date Lock Actions" [ref=e59]:
+              - columnheader [ref=e60]:
+                - checkbox [ref=e61]
+              - columnheader "Filename" [ref=e62]
+              - columnheader "Size | Date" [ref=e63]
+              - columnheader "Lock" [ref=e64]
+              - columnheader "Actions" [ref=e65]
+          - rowgroup [ref=e66]:
+            - row "pradeep.csv ✅ 73.54 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e67]:
+              - cell [ref=e68]:
+                - checkbox [ref=e69]
+              - cell "pradeep.csv ✅" [ref=e70]:
+                - generic [ref=e71]:
+                  - text: pradeep.csv
+                  - generic "Already Processed" [ref=e72]: ✅
+              - cell "73.54 KB 2/10/2026" [ref=e73]:
+                - generic [ref=e74]: 73.54 KB
+                - generic [ref=e75]: 2/10/2026
+              - cell "🔓" [ref=e76]:
+                - button "🔓" [ref=e77] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e78]:
+                - button "🗺️" [ref=e79] [cursor=pointer]
+                - button "👁️" [ref=e80] [cursor=pointer]
+                - button "✎" [ref=e81] [cursor=pointer]
+                - button "Re-process" [ref=e82] [cursor=pointer]
+                - button "🗑️" [ref=e83] [cursor=pointer]
+            - row "212447.csv ✅ 723.68 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e84]:
+              - cell [ref=e85]:
+                - checkbox [ref=e86]
+              - cell "212447.csv ✅" [ref=e87]:
+                - generic [ref=e88]:
+                  - text: 212447.csv
+                  - generic "Already Processed" [ref=e89]: ✅
+              - cell "723.68 KB 2/10/2026" [ref=e90]:
+                - generic [ref=e91]: 723.68 KB
+                - generic [ref=e92]: 2/10/2026
+              - cell "🔓" [ref=e93]:
+                - button "🔓" [ref=e94] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e95]:
+                - button "🗺️" [ref=e96] [cursor=pointer]
+                - button "👁️" [ref=e97] [cursor=pointer]
+                - button "✎" [ref=e98] [cursor=pointer]
+                - button "Re-process" [ref=e99] [cursor=pointer]
+                - button "🗑️" [ref=e100] [cursor=pointer]
+            - row "190530.csv ✅ 866.16 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e101]:
+              - cell [ref=e102]:
+                - checkbox [ref=e103]
+              - cell "190530.csv ✅" [ref=e104]:
+                - generic [ref=e105]:
+                  - text: 190530.csv
+                  - generic "Already Processed" [ref=e106]: ✅
+              - cell "866.16 KB 2/10/2026" [ref=e107]:
+                - generic [ref=e108]: 866.16 KB
+                - generic [ref=e109]: 2/10/2026
+              - cell "🔓" [ref=e110]:
+                - button "🔓" [ref=e111] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e112]:
+                - button "🗺️" [ref=e113] [cursor=pointer]
+                - button "👁️" [ref=e114] [cursor=pointer]
+                - button "✎" [ref=e115] [cursor=pointer]
+                - button "Re-process" [ref=e116] [cursor=pointer]
+                - button "🗑️" [ref=e117] [cursor=pointer]
+            - row "152955.csv ✅ 889.74 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e118]:
+              - cell [ref=e119]:
+                - checkbox [ref=e120]
+              - cell "152955.csv ✅" [ref=e121]:
+                - generic [ref=e122]:
+                  - text: 152955.csv
+                  - generic "Already Processed" [ref=e123]: ✅
+              - cell "889.74 KB 2/10/2026" [ref=e124]:
+                - generic [ref=e125]: 889.74 KB
+                - generic [ref=e126]: 2/10/2026
+              - cell "🔓" [ref=e127]:
+                - button "🔓" [ref=e128] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e129]:
+                - button "🗺️" [ref=e130] [cursor=pointer]
+                - button "👁️" [ref=e131] [cursor=pointer]
+                - button "✎" [ref=e132] [cursor=pointer]
+                - button "Re-process" [ref=e133] [cursor=pointer]
+                - button "🗑️" [ref=e134] [cursor=pointer]
+            - row "145949.csv ✅ 1004.23 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e135]:
+              - cell [ref=e136]:
+                - checkbox [ref=e137]
+              - cell "145949.csv ✅" [ref=e138]:
+                - generic [ref=e139]:
+                  - text: 145949.csv
+                  - generic "Already Processed" [ref=e140]: ✅
+              - cell "1004.23 KB 2/10/2026" [ref=e141]:
+                - generic [ref=e142]: 1004.23 KB
+                - generic [ref=e143]: 2/10/2026
+              - cell "🔓" [ref=e144]:
+                - button "🔓" [ref=e145] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e146]:
+                - button "🗺️" [ref=e147] [cursor=pointer]
+                - button "👁️" [ref=e148] [cursor=pointer]
+                - button "✎" [ref=e149] [cursor=pointer]
+                - button "Re-process" [ref=e150] [cursor=pointer]
+                - button "🗑️" [ref=e151] [cursor=pointer]
+            - row "140804.csv 489.06 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Process 🗑️" [ref=e152]:
+              - cell [ref=e153]:
+                - checkbox [ref=e154]
+              - cell "140804.csv" [ref=e155]:
+                - generic [ref=e156]: 140804.csv
+              - cell "489.06 KB 2/10/2026" [ref=e157]:
+                - generic [ref=e158]: 489.06 KB
+                - generic [ref=e159]: 2/10/2026
+              - cell "🔓" [ref=e160]:
+                - button "🔓" [ref=e161] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Process 🗑️" [ref=e162]:
+                - button "🗺️" [ref=e163] [cursor=pointer]
+                - button "👁️" [ref=e164] [cursor=pointer]
+                - button "✎" [ref=e165] [cursor=pointer]
+                - button "Process" [ref=e166] [cursor=pointer]
+                - button "🗑️" [ref=e167] [cursor=pointer]
+            - row "134909.csv ✅ 961.42 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e168]:
+              - cell [ref=e169]:
+                - checkbox [ref=e170]
+              - cell "134909.csv ✅" [ref=e171]:
+                - generic [ref=e172]:
+                  - text: 134909.csv
+                  - generic "Already Processed" [ref=e173]: ✅
+              - cell "961.42 KB 2/10/2026" [ref=e174]:
+                - generic [ref=e175]: 961.42 KB
+                - generic [ref=e176]: 2/10/2026
+              - cell "🔓" [ref=e177]:
+                - button "🔓" [ref=e178] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e179]:
+                - button "🗺️" [ref=e180] [cursor=pointer]
+                - button "👁️" [ref=e181] [cursor=pointer]
+                - button "✎" [ref=e182] [cursor=pointer]
+                - button "Re-process" [ref=e183] [cursor=pointer]
+                - button "🗑️" [ref=e184] [cursor=pointer]
+            - row "123503.csv ✅ 821.88 KB 2/10/2026 🔓 🗺️ 👁️ ✎ Re-process 🗑️" [ref=e185]:
+              - cell [ref=e186]:
+                - checkbox [ref=e187]
+              - cell "123503.csv ✅" [ref=e188]:
+                - generic [ref=e189]:
+                  - text: 123503.csv
+                  - generic "Already Processed" [ref=e190]: ✅
+              - cell "821.88 KB 2/10/2026" [ref=e191]:
+                - generic [ref=e192]: 821.88 KB
+                - generic [ref=e193]: 2/10/2026
+              - cell "🔓" [ref=e194]:
+                - button "🔓" [ref=e195] [cursor=pointer]
+              - cell "🗺️ 👁️ ✎ Re-process 🗑️" [ref=e196]:
+                - button "🗺️" [ref=e197] [cursor=pointer]
+                - button "👁️" [ref=e198] [cursor=pointer]
+                - button "✎" [ref=e199] [cursor=pointer]
+                - button "Re-process" [ref=e200] [cursor=pointer]
+                - button "🗑️" [ref=e201] [cursor=pointer]
+    - text:          +      
+  - text:      +
+  - generic [ref=e202]: Logged in successfully
+  - text:       
+```

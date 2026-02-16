@@ -1,0 +1,8 @@
+{
+  "name": "racesense-playwright-tests",
+  "version": "1.0.0",
+  "description": "Browser tests for Racesense",
+  "devDependencies": {
+    "@playwright/test": "^1.41.2"
+  }
+}
