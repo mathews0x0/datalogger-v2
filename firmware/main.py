@@ -13,7 +13,6 @@ from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
 from lib.wifi_manager import connect_or_ap
 from lib.miniserver import MiniServer
-from lib.ble_provisioning import BLEProvisioning
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_LED_STATUS = 4   # Neopixel LED_DATA
@@ -83,27 +82,35 @@ def setup():
     track_eng = TrackEngine()
     track_eng.load_track()
 
-    # 9. BLE Provisioning
-    import lib.wifi_manager as wm
-    ble = BLEProvisioning(wifi_manager=wm, session_manager=sm)
-    ble.start()
-
-    # 10. WiFi
+    # 9. WiFi (STA or AP)
     print("Starting WiFi Radio...")
     mode, ip = connect_or_ap()
     print(f"WiFi Status: {mode}, IP: {ip}")
-    
-    ble.notify_wifi_status(mode=="STA", "", ip, mode)
+
+    if mode == 'AP':
+        # No saved WiFi config — launch captive portal for setup
+        print("[System] No WiFi config. Starting Captive Portal...")
+        from lib.captive_portal import start_captive_portal
+        start_captive_portal()  # Blocks until user submits, then reboots
+        # Will never reach here — machine.reset() is called in portal
+
+    # 10. Auto-Upload in background (STA mode only)
+    try:
+        from lib.uploader import upload_all
+        _thread.start_new_thread(upload_all, (sm, led))
+        print("[Upload] Background upload started")
+    except Exception as e:
+        print(f"[Upload] Skip: {e}")
 
     # 11. Start MiniServer (Second Core)
     server = MiniServer(sm, led=led, gps_state=gps, track_engine=track_eng)
     _thread.start_new_thread(server.start, ())
     print("Server: Listening in background (Core 1)")
 
-    return led, gps, imu, sm, track_eng, mode, ble, vbat_adc
+    return led, gps, imu, sm, track_eng, mode, vbat_adc
 
 def main_loop():
-    led, gps, imu, sm, track_eng, wifi_mode, ble, vbat_adc = setup()
+    led, gps, imu, sm, track_eng, wifi_mode, vbat_adc = setup()
     
     # Debug LED for AP Mode / Status
     onboard_led = machine.Pin(PIN_DEBUG_LED, machine.Pin.OUT)
@@ -112,7 +119,6 @@ def main_loop():
     log_file = sm.get_log_file()
     
     time_synced = False
-    ble_update_tick = 0
     
     # State Machine Variables
     current_state = "LOGGING"
@@ -124,10 +130,6 @@ def main_loop():
         f.write("time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,vbat\n")
         
         while True:
-            ble_update_tick += 1
-            if ble_update_tick >= 20: # Every 2s
-                ble_update_tick = 0
-            
             # 1. Update GPS
             fix = gps.update()
             
@@ -139,15 +141,6 @@ def main_loop():
                 vbat = (raw_v / 4095.0) * 3.3 * 2.0
             except:
                 vbat = 0.0
-
-            # 3. BLE Status Update
-            if ble_update_tick == 0:
-                try:
-                    s_info = sm.get_storage_info()
-                    usage = (s_info['used_kb'] / s_info['total_kb']) * 100 if s_info else 0
-                except:
-                    usage = 0
-                ble.update_device_info(gps_valid=fix['valid'], storage_pct=usage)
             
             # 4. Time Sync
             if not time_synced and fix['timestamp']:

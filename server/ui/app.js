@@ -320,6 +320,7 @@ function showView(viewName) {
                 const defaultUrlSpan = document.getElementById('defaultApiUrl');
                 if (customUrlInput) customUrlInput.value = localStorage.getItem('custom_api_url') || '';
                 if (defaultUrlSpan) defaultUrlSpan.textContent = window.location.origin;
+                if (currentUser) loadDeviceTokens();
                 break;
         }
     }
@@ -436,6 +437,10 @@ function updateAuthUI() {
         if (userProfileCard) userProfileCard.style.display = 'none';
         if (adminToolsCard) adminToolsCard.style.display = 'none';
     }
+
+    // My Devices card visibility
+    const myDevicesCard = document.getElementById('myDevicesCard');
+    if (myDevicesCard) myDevicesCard.style.display = currentUser ? 'block' : 'none';
 }
 
 async function adminSetTier() {
@@ -520,6 +525,81 @@ async function saveProfile() {
         }
     } catch (e) {
         showToast('Failed to update profile: ' + e.message, 'error');
+    }
+}
+
+// ============================================================================
+// DEVICE TOKEN MANAGEMENT
+// ============================================================================
+
+async function loadDeviceTokens() {
+    const container = document.getElementById('deviceTokensList');
+    if (!container) return;
+
+    try {
+        const devices = await apiCall('/api/devices');
+        if (!devices || devices.length === 0) {
+            container.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No devices registered. Generate a token above.</span>';
+            return;
+        }
+
+        container.innerHTML = devices.map(d => `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--border);">
+                <div>
+                    <span style="font-weight: 600;">${d.device_name}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem; font-family: monospace;">rsk_••••${d.token ? d.token.slice(-4) : '????'}</span>
+                    ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ACTIVE</span>'}
+                </div>
+                ${!d.revoked ? `<button class="btn btn-danger btn-sm" onclick="revokeDeviceToken(${d.id})" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">Revoke</button>` : ''}
+            </div>
+        `).join('');
+    } catch (e) {
+        container.innerHTML = '<span style="color: var(--error); font-size: 0.85rem;">Failed to load devices.</span>';
+    }
+}
+
+async function generateDeviceToken() {
+    const nameInput = document.getElementById('newDeviceName');
+    const deviceName = nameInput.value.trim() || 'RS-Core';
+
+    try {
+        const result = await apiCall('/api/devices/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_name: deviceName })
+        });
+
+        if (result && result.token) {
+            // Show token once
+            const display = document.getElementById('newTokenDisplay');
+            const tokenInput = document.getElementById('newTokenValue');
+            display.style.display = 'block';
+            tokenInput.value = result.token;
+            nameInput.value = '';
+            showToast('Device token generated!', 'success');
+            loadDeviceTokens();
+        }
+    } catch (e) {
+        showToast('Failed to generate token: ' + e.message, 'error');
+    }
+}
+
+function copyDeviceToken() {
+    const tokenInput = document.getElementById('newTokenValue');
+    tokenInput.select();
+    document.execCommand('copy');
+    showToast('Token copied to clipboard!', 'success');
+}
+
+async function revokeDeviceToken(tokenId) {
+    if (!confirm('Revoke this device token? The device will no longer be able to upload data.')) return;
+
+    try {
+        await apiCall(`/api/devices/${tokenId}`, { method: 'DELETE' });
+        showToast('Token revoked', 'info');
+        loadDeviceTokens();
+    } catch (e) {
+        showToast('Failed to revoke: ' + e.message, 'error');
     }
 }
 

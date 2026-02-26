@@ -159,3 +159,21 @@ class Annotation(db.Model):
             "text": self.text,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
+
+class DeviceToken(db.Model):
+    __tablename__ = 'device_tokens'
+    id = db.Column(db.Integer, primary_key=True)
+    token = db.Column(db.String(100), unique=True, nullable=False)  # rsk_<uuid4>
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    device_name = db.Column(db.String(100), default='RS-Core')
+    revoked = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "token": self.token,
+            "device_name": self.device_name,
+            "revoked": self.revoked,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }

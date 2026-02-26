@@ -45,7 +45,7 @@ def add_header(response):
     return response
 
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, set_access_cookies, unset_jwt_cookies, verify_jwt_in_request
-from models import db, bcrypt, User, SessionMeta, TrackMeta, TrackDayMeta, Follow, Team, TeamMember, TeamInvite, Annotation
+from models import db, bcrypt, User, SessionMeta, TrackMeta, TrackDayMeta, Follow, Team, TeamMember, TeamInvite, Annotation, DeviceToken
 
 # Base directory
 import config
@@ -1653,45 +1653,103 @@ def get_public_sessions():
     
     return jsonify(sessions)
 
+# ============================================================================
+# DEVICE TOKEN MANAGEMENT
+# ============================================================================
+
+@app.route('/api/devices/token', methods=['POST'])
+@jwt_required()
+def create_device_token():
+    """Generate a new device upload token"""
+    user_id = get_jwt_identity()
+    data = request.get_json() or {}
+    device_name = data.get('device_name', 'RS-Core')
+
+    token_str = 'rsk_' + str(uuid.uuid4()).replace('-', '')
+    dt = DeviceToken(token=token_str, user_id=user_id, device_name=device_name)
+    db.session.add(dt)
+    db.session.commit()
+
+    return jsonify({"success": True, "token": token_str, "device": dt.to_dict()}), 201
+
+@app.route('/api/devices')
+@jwt_required()
+def list_device_tokens():
+    """List all device tokens for the current user"""
+    user_id = get_jwt_identity()
+    tokens = DeviceToken.query.filter_by(user_id=user_id).order_by(DeviceToken.created_at.desc()).all()
+    return jsonify([t.to_dict() for t in tokens])
+
+@app.route('/api/devices/<int:token_id>', methods=['DELETE'])
+@jwt_required()
+def revoke_device_token(token_id):
+    """Revoke a device token"""
+    user_id = get_jwt_identity()
+    dt = DeviceToken.query.filter_by(id=token_id, user_id=user_id).first()
+    if not dt:
+        return jsonify({"error": "Token not found"}), 404
+    dt.revoked = True
+    db.session.commit()
+    return jsonify({"success": True})
+
+# ============================================================================
+# CSV UPLOAD (Dual-Auth: JWT or Device Token)
+# ============================================================================
+
+def _resolve_upload_user():
+    """Resolve user_id from either JWT or Device Token in Authorization header."""
+    auth_header = request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer rsk_'):
+        token_str = auth_header.split('Bearer ', 1)[1]
+        dt = DeviceToken.query.filter_by(token=token_str, revoked=False).first()
+        if not dt:
+            return None, 'Invalid or revoked device token'
+        return dt.user_id, None
+    else:
+        try:
+            verify_jwt_in_request()
+            return get_jwt_identity(), None
+        except Exception:
+            return None, 'Authentication required'
 
 @app.route('/api/upload', methods=['POST'])
-@jwt_required()
 def upload_file():
-    """Receiver for Phone Proxy raw CSV uploads"""
+    """Receiver for CSV uploads from ESP32 (Device Token) or Browser (JWT)"""
+    user_id, error = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+
     try:
-        user_id = get_jwt_identity()
         data = request.get_json()
         filename = data.get('filename')
         content = data.get('content')
-        
+
         if not filename or not content:
             return jsonify({"error": "filename and content required"}), 400
-            
+
         safe_name = os.path.basename(filename)
-        # Enforce .csv extension for safety
         if not safe_name.lower().endswith('.csv'):
              safe_name += '.csv'
-             
+
         save_path = config.LEARNING_DIR / safe_name
-        
+
         with open(save_path, 'w') as f:
             f.write(content)
-            
-        # AUTO-TRIGGER Analysis synchronously for seamless experience
+
+        # Auto-trigger analysis
         try:
             script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-            # Run synchronously so we can safely register the resulting session to this user ID
             result = subprocess.run(['python3', script_path, str(save_path)], capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 register_new_sessions(user_id)
-                print(f"[Upload] Auto-triggered analysis and registered session for user {user_id}")
+                print(f"[Upload] Analyzed and registered session for user {user_id}")
             else:
                 print(f"[Upload] Analysis failed: {result.stderr}")
         except Exception as ae:
             print(f"[Upload] Failed to auto-trigger analysis: {ae}")
-            
+
         return jsonify({"success": True, "filename": safe_name, "auto_analysis": True})
-        
+
     except Exception as e:
         print(f"Upload Error: {e}")
         return jsonify({"error": str(e)}), 500
