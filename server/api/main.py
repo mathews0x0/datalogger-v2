@@ -1697,25 +1697,27 @@ def revoke_device_token(token_id):
 # ============================================================================
 
 def _resolve_upload_user():
-    """Resolve user_id from either JWT or Device Token in Authorization header."""
+    """Resolve user_id from either JWT or Device Token in Authorization header.
+    Returns: (user_id, error_message, device_token_obj_or_None)
+    """
     auth_header = request.headers.get('Authorization', '')
     if auth_header.startswith('Bearer rsk_'):
         token_str = auth_header.split('Bearer ', 1)[1]
         dt = DeviceToken.query.filter_by(token=token_str, revoked=False).first()
         if not dt:
-            return None, 'Invalid or revoked device token'
-        return dt.user_id, None
+            return None, 'Invalid or revoked device token', None
+        return dt.user_id, None, dt
     else:
         try:
             verify_jwt_in_request()
-            return get_jwt_identity(), None
+            return get_jwt_identity(), None, None
         except Exception:
-            return None, 'Authentication required'
+            return None, 'Authentication required', None
 
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     """Receiver for CSV uploads from ESP32 (Device Token) or Browser (JWT)"""
-    user_id, error = _resolve_upload_user()
+    user_id, error, device_token = _resolve_upload_user()
     if error:
         return jsonify({"error": error}), 401
 
@@ -1747,6 +1749,11 @@ def upload_file():
                 print(f"[Upload] Analysis failed: {result.stderr}")
         except Exception as ae:
             print(f"[Upload] Failed to auto-trigger analysis: {ae}")
+
+        # Update last_sync on device token
+        if device_token:
+            device_token.last_sync = datetime.utcnow()
+            db.session.commit()
 
         return jsonify({"success": True, "filename": safe_name, "auto_analysis": True})
 

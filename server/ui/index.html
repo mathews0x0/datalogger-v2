@@ -102,11 +102,23 @@
         </div>
       </div>
 
-      <div style="margin: 1.5rem 0; display: flex; justify-content: center;">
-        <button class="btn btn-primary" onclick="startSyncWizard()"
-          style="padding: 1rem 2rem; font-size: 1.1rem; border-radius: 50px; box-shadow: 0 4px 15px var(--primary-glow);">
-          <i class="fas fa-sync-alt"></i> Sync with Device
-        </button>
+      <!-- Device Sync Status Banner -->
+      <div id="deviceSyncBanner"
+        style="display: none; margin: 1.5rem 0; background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.3); border-radius: 12px; padding: 1rem 1.5rem;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <i class="fas fa-satellite-dish" style="font-size: 1.2rem; color: var(--success);"></i>
+            <div>
+              <span id="syncBannerTitle" style="font-weight: 600;">RS-Core Connected</span>
+              <span id="syncBannerDetail" style="display: block; font-size: 0.8rem; color: var(--text-muted);">Auto-sync
+                active</span>
+            </div>
+          </div>
+          <button class="btn btn-sm" onclick="triggerBrowserSync()" id="btnBrowserSync"
+            style="background: var(--success); color: #000; padding: 0.5rem 1rem;">
+            <i class="fas fa-cloud-upload-alt"></i> Sync Now
+          </button>
+        </div>
       </div>
 
       <div class="section">
@@ -365,156 +377,40 @@
 
 
 
-        <!-- DEVICE CONFIG -->
+        <!-- DEVICE STATUS (Simplified) -->
         <div class="card" style="border-left: 4px solid #9C27B0">
-          <h3>Device Connection</h3>
+          <h3><i class="fas fa-satellite-dish"></i> Device Status</h3>
+          <p class="help-text">Your RS-Core auto-uploads sessions when it connects to your WiFi network.</p>
 
-          <!-- BLE Provisioning (New Priority) -->
-          <div class="input-group" id="bleSetupSection">
-            <label>Provision via Bluetooth</label>
-            <div
-              style="background: var(--bg-secondary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
-
-              <!-- Auto-Share Toggle -->
-              <div
-                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid rgba(255,255,255,0.05);">
-                <div style="display: flex; flex-direction: column;">
-                  <span style="font-size: 0.85rem; font-weight: 600;">Auto-Share WiFi</span>
-                  <span style="font-size: 0.7rem; color: var(--text-muted);">Automatically setup known networks</span>
-                </div>
-                <label class="toggle-switch">
-                  <input type="checkbox" id="autoShareWifiToggle" onchange="toggleAutoShareWifi()">
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-
-              <div id="bleSupportWarning"
-                style="display: none; color: var(--error); font-size: 0.8rem; margin-bottom: 0.5rem;">
-                <i class="fas fa-exclamation-triangle"></i> Web Bluetooth not supported in this browser (Use Chrome).
-              </div>
-
-              <div id="bleConnectState"
-                style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <div style="display: flex; align-items: center; gap: 0.75rem;">
-                  <div id="bleStatusDot" class="status-dot offline"></div>
-                  <span id="bleStatusText" style="font-weight: 600;">Bluetooth: Not Connected</span>
-                </div>
-                <button class="btn btn-primary btn-sm" id="btnBleConnect" onclick="handleBleConnect()">
-                  <i class="fab fa-bluetooth-b"></i> Connect
-                </button>
-              </div>
-
-              <!-- WiFi Setup (Hidden until BLE connected) -->
-              <div id="bleWifiSetup" style="display: none; border-top: 1px solid var(--border); padding-top: 1rem;">
-                <div class="input-group">
-                  <label style="font-size: 0.8rem;">Select WiFi Network</label>
-                  <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                    <select id="bleWifiSelect" class="form-input" style="flex: 1;">
-                      <option value="">Scanning for networks...</option>
-                    </select>
-                    <button class="btn btn-secondary btn-sm" onclick="handleBleWifiScan()">
-                      <i class="fas fa-sync"></i>
-                    </button>
-                  </div>
-                </div>
-
-                <div class="input-group">
-                  <label style="font-size: 0.8rem;">Network Password</label>
-                  <input type="password" id="bleWifiPass" class="form-input" placeholder="Password"
-                    style="width: 100%; margin-bottom: 1rem;" />
-                </div>
-
-                <div style="display: flex; gap: 0.5rem;">
-                  <button class="btn btn-success btn-sm" style="flex: 1;" onclick="handleBleWifiConfig()">
-                    <i class="fas fa-wifi"></i> Setup WiFi
-                  </button>
-                  <button class="btn btn-secondary btn-sm" onclick="handleBleStartAP()">
-                    <i class="fas fa-broadcast-tower"></i> Use AP Mode
-                  </button>
-                </div>
+          <div
+            style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+              <div id="deviceStatusDot" class="status-dot" style="background: var(--error);"></div>
+              <div style="display: flex; flex-direction: column;">
+                <span id="deviceStatusText" style="font-weight: 600;">Searching...</span>
+                <span id="deviceStatusIP"
+                  style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
               </div>
             </div>
+            <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
+              <i class="fas fa-search"></i> Scan
+            </button>
           </div>
 
-          <!-- Existing Device Connection UI -->
-          <div class="input-group">
-            <label>Status</label>
-            <div
-              style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border);">
-              <div style="display: flex; align-items: center; gap: 1rem;">
-                <div id="scanStatusBadge" class="status-dot error"></div>
-                <div style="display: flex; flex-direction: column; justify-content: center;">
-                  <span id="scanStatusText" style="font-weight: 600; color: var(--text-primary);">Disconnected</span>
-                  <span id="scanIpText"
-                    style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
-                </div>
-              </div>
-              <div style="display: flex; gap: 0.5rem;">
-                <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
-                  <i class="fas fa-search"></i> Scan
-                </button>
-              </div>
-            </div>
+          <!-- Hidden input for logic compatibility -->
+          <input type="text" id="devConfigIP" style="display: none;"
+            onchange="localStorage.setItem('lastDeviceIP', this.value)" />
 
-            <!-- Hidden Input for logic compatibility -->
-            <input type="text" id="devConfigIP" style="display: none;"
-              onchange="localStorage.setItem('lastDeviceIP', this.value)" />
-
-            <p class="help-text" style="font-size: 0.75rem; margin-top: 0.5rem;">
-              <i class="fas fa-info-circle"></i> Click Scan to auto-discover the Datalogger.
-            </p>
+          <div id="lastSyncInfo" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
+            <i class="fas fa-clock"></i> Last sync: <span id="lastSyncTime">Never</span>
           </div>
 
-          <!-- Stored Networks -->
-          <div class="input-group">
-            <label>Stored WiFi Networks <button class="btn btn-sm" onclick="loadStoredNetworks()"
-                style="padding: 0.25rem 0.5rem;"><i class="fas fa-sync"></i></button></label>
-            <div id="storedNetworksList"
-              style="background: var(--bg-secondary); border-radius: 8px; padding: 0.75rem; min-height: 40px;">
-              <span style="color: var(--text-muted); font-size: 0.85rem;">Click refresh to load...</span>
-            </div>
-          </div>
-
-          <!-- Add Network -->
-          <div class="input-group">
-            <label>Add WiFi Network</label>
-            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-              <input type="text" id="devConfigSSID" class="form-input" placeholder="SSID (network name)"
-                style="flex: 1; min-width: 150px;" />
-              <input type="password" id="devConfigPass" class="form-input" placeholder="Password"
-                style="flex: 1; min-width: 150px;" />
-              <button class="btn btn-primary btn-sm" onclick="addWifiNetwork()" style="white-space: nowrap;">
-                <i class="fas fa-plus"></i> Add
-              </button>
-            </div>
-          </div>
-
-          <!-- Hotspot One-Tap Setup -->
-          <div class="input-group"
-            style="margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border);">
-            <label>Mobile Hotspot One-Tap</label>
-            <div class="card"
-              style="background: rgba(255, 107, 53, 0.05); border: 1px dashed var(--primary); padding: 1rem;">
-              <p class="help-text" style="font-size: 0.75rem; margin-bottom: 1rem;">
-                Enable your phone hotspot with these credentials, then tap 'Provision' to link the ESP32.
-              </p>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem;">
-                <div class="input-group" style="margin: 0;">
-                  <label style="font-size: 0.7rem; opacity: 0.7;">Hotspot Name (SSID)</label>
-                  <input type="text" id="hotspotSSID" class="form-input" value="Racesense-Pit"
-                    style="font-size: 0.8rem; padding: 0.5rem;">
-                </div>
-                <div class="input-group" style="margin: 0;">
-                  <label style="font-size: 0.7rem; opacity: 0.7;">Password</label>
-                  <input type="text" id="hotspotPass" class="form-input" value="racesense123"
-                    style="font-size: 0.8rem; padding: 0.5rem;">
-                </div>
-              </div>
-              <button class="btn btn-primary" onclick="provisionHotspot()" style="width: 100%;">
-                <i class="fab fa-bluetooth-b"></i> Provision via BLE
-              </button>
-            </div>
-          </div>
+          <p class="help-text"
+            style="font-size: 0.75rem; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.05);">
+            <i class="fas fa-info-circle"></i> <strong>First-time setup:</strong> Connect your phone to your device's
+            WiFi (RS-Core-XXXX, password: racesense), then enter your WiFi credentials and device token in the captive
+            portal.
+          </p>
         </div>
 
         <!-- ESP32 FIRMWARE CONFIG -->
@@ -1246,79 +1142,8 @@
     </div>
   </div>
 
-  <script src="ble-connector.js"></script>
   <script src="app.js?v=5"></script>
-  <!-- Sync Wizard Modal -->
-  <div id="syncWizardModal" class="modal">
-    <div class="modal-content" style="max-width: 450px;">
-      <div class="modal-header">
-        <h3><i class="fas fa-sync-alt"></i> Paddock Sync Wizard</h3>
-        <button class="close-btn" onclick="closeSyncWizard()">&times;</button>
-      </div>
-      <div class="modal-body">
-        <div id="syncStep1">
-          <h4>Step 1: Handshake</h4>
-          <p class="help-text">Connecting to your Racesense-Core via Bluetooth to prepare the data transfer.</p>
-          <div id="platformGuide"
-            style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(255,255,255,0.03); border-radius: 8px; font-size: 0.85rem; display: none;">
-            <!-- Dynamic Platform Guide -->
-          </div>
-          <button class="btn btn-primary" style="width: 100%; padding: 1rem;" onclick="handleSyncStep1()">
-            <i class="fab fa-bluetooth-b"></i> Start BLE Handshake
-          </button>
-        </div>
 
-        <div id="syncStep2" style="display: none;">
-          <h4>Step 2: Enable Hotspot</h4>
-          <p class="help-text">Handshake successful! Now enable your phone's personal hotspot to burst the data to the
-            server.</p>
-
-          <div class="card"
-            style="background: rgba(255, 107, 53, 0.05); border: 1px dashed var(--primary); padding: 1rem; margin-bottom: 1rem;">
-            <div class="input-group" style="margin-bottom: 0.75rem;">
-              <label style="font-size: 0.7rem; opacity: 0.7;">Hotspot SSID</label>
-              <input type="text" id="wizardHotspotSSID" class="form-input" value="Racesense-Pit"
-                style="font-size: 0.8rem; padding: 0.5rem;">
-            </div>
-            <div class="input-group" style="margin-bottom: 0.75rem;">
-              <label style="font-size: 0.7rem; opacity: 0.7;">Password</label>
-              <input type="password" id="wizardHotspotPass" class="form-input" value="racesense123"
-                style="font-size: 0.8rem; padding: 0.5rem;">
-            </div>
-            <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem;">
-              <input type="checkbox" id="wizardRememberCreds" checked> Remember Credentials
-            </label>
-          </div>
-
-          <div id="syncProgressArea" style="display: none; margin-top: 1rem;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 0.5rem;">
-              <span id="syncStatusLabel">Waiting for Hotspot...</span>
-              <span id="syncProgressPct">0%</span>
-            </div>
-            <div class="storage-bar" style="height: 10px; background: rgba(255,255,255,0.05);">
-              <div id="syncProgressBar" class="storage-bar-fill" style="width: 0%; background: var(--primary);"></div>
-            </div>
-          </div>
-
-          <button id="btnStartUpload" class="btn btn-success" style="width: 100%; padding: 1rem; margin-top: 1rem;"
-            onclick="handleSyncStep2()">
-            <i class="fas fa-cloud-upload-alt"></i> I've Turned it On - START SYNC
-          </button>
-        </div>
-
-        <div id="syncStep3" style="display: none; text-align: center; padding: 1rem 0;">
-          <div style="font-size: 3rem; color: var(--success); margin-bottom: 1rem;">
-            <i class="fas fa-check-circle"></i>
-          </div>
-          <h4>Sync Complete!</h4>
-          <p class="help-text">12 Laps successfully uploaded and processed. You can now turn off your hotspot.</p>
-          <button class="btn btn-primary" style="width: 100%; margin-top: 1rem;" onclick="closeSyncWizard()">
-            View New Sessions
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
 </body>
 
 

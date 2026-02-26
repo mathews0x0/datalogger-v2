@@ -23,189 +23,6 @@ function setCustomApiUrl() {
     }
 }
 
-// BLE Instance
-const ble = new DataloggerBLE();
-
-/**
- * Platform Detection & Guide
- */
-function getPlatformGuide() {
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    const isChrome = !!window.chrome;
-
-    if (isIOS) {
-        return `<div style="color: var(--warning)"><i class="fas fa-mobile-alt"></i> <strong>iPhone Detected:</strong> Please ensure you are using the <strong>Bluefy Browser</strong> to enable Bluetooth syncing.</div>`;
-    }
-    if (isMac && !isChrome) {
-        return `<div style="color: var(--warning)"><i class="fas fa-laptop"></i> <strong>macOS Detected:</strong> Please use <strong>Google Chrome</strong> and ensure "Bluetooth" permissions are granted in System Settings.</div>`;
-    }
-    return '';
-}
-
-/**
- * Sync Wizard Handlers
- */
-function startSyncWizard() {
-    const modal = document.getElementById('syncWizardModal');
-    modal.classList.add('active');
-
-    // Reset steps
-    document.getElementById('syncStep1').style.display = 'block';
-    document.getElementById('syncStep2').style.display = 'none';
-    document.getElementById('syncStep3').style.display = 'none';
-
-    // Reset button in step 1
-    const btn = document.querySelector('#syncStep1 .btn-primary');
-    btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Start BLE Handshake';
-    btn.disabled = false;
-
-    // Load saved credentials
-    const savedSSID = localStorage.getItem('wizard_hotspot_ssid');
-    const savedPass = localStorage.getItem('wizard_hotspot_pass');
-    if (savedSSID) document.getElementById('wizardHotspotSSID').value = savedSSID;
-    if (savedPass) document.getElementById('wizardHotspotPass').value = savedPass;
-
-    // Show platform guide if needed
-    const guideEl = document.getElementById('platformGuide');
-    const guideHtml = getPlatformGuide();
-    if (guideHtml) {
-        guideEl.innerHTML = guideHtml;
-        guideEl.style.display = 'block';
-    } else {
-        guideEl.style.display = 'none';
-    }
-}
-
-function closeSyncWizard() {
-    const modal = document.getElementById('syncWizardModal');
-    modal.classList.remove('active');
-    if (ble.isConnected()) {
-        // Keep connected for a few seconds to finish notifications, then disconnect
-        setTimeout(() => ble.disconnect(), 5000);
-    }
-    // Refresh sessions if we finished step 3
-    if (document.getElementById('syncStep3').style.display === 'block') {
-        showView('sessions');
-    }
-}
-
-async function handleSyncStep1() {
-    const btn = document.querySelector('#syncStep1 .btn-primary');
-    try {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Pairing...';
-
-        showToast('Pairing with Racesense-Core...', 'info');
-        await ble.connect();
-        showToast('Handshake Successful!', 'success');
-
-        // Setup status listener
-        ble.onStatusChange = (status) => {
-            updateSyncProgress(status);
-        };
-
-        // Check if device is already connected (using saved credentials)
-        const status = await ble.getWifiStatus();
-        if (status.connected) {
-            showToast('Device already connected to ' + status.ssid, 'success');
-            btn.innerHTML = '<i class="fas fa-sync-alt"></i> DEVICE READY - START SYNC';
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-success');
-            btn.disabled = false;
-            // Update onclick to trigger SYNC directly
-            btn.onclick = async () => {
-                btn.disabled = true;
-                btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Syncing...';
-                // Trigger Step 2 UI but skip provisioning
-                document.getElementById('syncStep1').style.display = 'none';
-                document.getElementById('syncStep2').style.display = 'block';
-                document.getElementById('syncProgressArea').style.display = 'block';
-                document.getElementById('btnStartUpload').style.display = 'none'; // Hide provision button
-                await ble.triggerSync();
-            };
-        } else {
-            // Move to Step 2 for manual provisioning
-            document.getElementById('syncStep1').style.display = 'none';
-            document.getElementById('syncStep2').style.display = 'block';
-        }
-
-    } catch (err) {
-        console.error('Sync Handshake Error:', err);
-        showToast('Connection Failed: ' + err.message, 'error');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Retry Handshake';
-    }
-}
-
-let syncTimeoutTimer = null;
-
-async function handleSyncStep2() {
-    const ssid = document.getElementById('wizardHotspotSSID').value;
-    const pass = document.getElementById('wizardHotspotPass').value;
-    const remember = document.getElementById('wizardRememberCreds').checked;
-    const apiUrl = API_BASE + '/api/upload';
-
-    if (remember) {
-        localStorage.setItem('wizard_hotspot_ssid', ssid);
-        localStorage.setItem('wizard_hotspot_pass', pass);
-    }
-
-    try {
-        document.getElementById('btnStartUpload').disabled = true;
-        document.getElementById('btnStartUpload').innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Connecting to Hotspot...';
-        document.getElementById('syncProgressArea').style.display = 'block';
-
-        showToast('Provisioning ESP32...', 'info');
-
-        // Start a safety timeout (30 seconds)
-        syncTimeoutTimer = setTimeout(() => {
-            const label = document.getElementById('syncStatusLabel');
-            label.innerHTML = '<span style="color: var(--error)">Connection Stalled. Please check if your hotspot is active.</span>';
-            document.getElementById('btnStartUpload').disabled = false;
-            document.getElementById('btnStartUpload').textContent = 'RETRY CONNECTION';
-        }, 30000);
-
-        await ble.configureWifi(ssid, pass, apiUrl);
-
-    } catch (err) {
-        showToast('Sync Failed: ' + err.message, 'error');
-        document.getElementById('btnStartUpload').disabled = false;
-        document.getElementById('btnStartUpload').textContent = 'START SYNC';
-        if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
-    }
-}
-
-function updateSyncProgress(status) {
-    const label = document.getElementById('syncStatusLabel');
-    const bar = document.getElementById('syncProgressBar');
-    const pctText = document.getElementById('syncProgressPct');
-
-    if (status.mode === 'STA' && status.connected) {
-        if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
-        label.textContent = 'Uploading CSVs to Nitro...';
-    } else if (status.mode === 'STA' && !status.connected) {
-        label.textContent = 'ESP32 Joining Hotspot...';
-    }
-
-    if (status.sync_progress !== undefined) {
-        const pct = status.sync_progress;
-        bar.style.width = pct + '%';
-        pctText.textContent = pct + '%';
-
-        if (status.sync_file) {
-            label.textContent = `Syncing: ${status.sync_file} (${pct}%)`;
-        }
-
-        if (pct >= 100) {
-            if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
-            document.getElementById('syncStep2').style.display = 'none';
-            document.getElementById('syncStep3').style.display = 'block';
-            showToast('Sync Complete! Auto-processing started.', 'success');
-        }
-    }
-}
-
 // initialization
 let tracks = [];
 let sessions = [];
@@ -232,9 +49,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Check connection
     checkConnection();
-
-    // Check BLE support
-    initBleSupportCheck();
 
     // Check Auth
     checkAuth();
@@ -5984,200 +5798,98 @@ function drawFrame() {
     }
 }
 // ============================================================================
-// WIFI SYNC
+// BROWSER-BASED SYNC
 // ============================================================================
 
-async function syncFromDevice(forcePrompt = false) {
-    let ip = await autoDetectDeviceIP();
-
-    if (!ip || forcePrompt) {
-        const defaultIP = ip || '192.168.4.1';
-        ip = prompt("Enter ESP32 IP Address:\n(Or cancel to Scan Network)", defaultIP);
-        if (!ip) {
-            // User cancelled prompt, offer scan?
-            if (confirm("Scan local network for Datalogger instead?")) {
-                scanDevicesAndSync();
-            }
-            return;
-        }
+async function syncFromDevice() {
+    const ip = await autoDetectDeviceIP();
+    if (!ip) {
+        showToast('Device not found on network. Make sure RS-Core is powered on and connected to your WiFi.', 'warning');
+        return;
     }
-
-    localStorage.setItem('lastDeviceIP', ip);
-    await performSync(ip);
+    await triggerBrowserSync(ip);
 }
 
-async function performSync(ip) {
-    const btn = document.querySelector('button[onclick="syncFromDevice()"]');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-    btn.disabled = true;
-
-    showToast(`Connecting to ${ip}...`, 'info');
-
-    try {
-        const res = await apiCall('/api/sync/device', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip })
-        });
-
-        if (res.success) {
-            const count = res.synced.length;
-            if (count > 0) {
-                showToast(`Successfully synced ${count} files!`, 'success');
-                loadLearningFiles();
-            } else {
-                showToast('Connected! No new files.', 'success');
-            }
-            if (res.failed.length > 0) showToast(`Warning: ${res.failed.length} failed`, 'warning');
-
-            // Update connection status immediately
-            checkDeviceConnection();
-        } else if (res.error) {
-            // If connection failed, ask user
-            if (confirm(`Connection to ${ip} failed. Scan for device?`)) {
-                scanDevicesAndSync();
-            } else {
-                showToast(res.error, 'error');
-            }
-        }
-    } catch (error) {
-        if (confirm(`Connection to ${ip} failed. Scan for device?`)) {
-            scanDevicesAndSync();
-        } else {
-            showToast('Sync Failed', 'error');
-        }
-    } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
-
-async function scanDevicesAndSync() {
-    const btn = document.querySelector('button[onclick="scanDevicesAndSync()"]');
-    const originalIcon = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-        btn.disabled = true;
-    }
-
-    showToast('Scanning network...', 'info');
-
-    // Clear previous IP context
-    if (document.getElementById('devConfigIP')) document.getElementById('devConfigIP').value = '';
-    localStorage.removeItem('lastDeviceIP');
-
-    const startTime = Date.now();
-
-    try {
-        const res = await apiCall('/api/device/scan');
-
-        // Ensure at least 3 seconds for visual feedback
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 3000) {
-            await new Promise(resolve => setTimeout(resolve, 3000 - elapsed));
-        }
-
-        const devices = res.devices || [];
-
-        if (devices.length === 0) {
-            showToast("No Datalogger devices found on network.", 'warning');
-        } else if (devices.length === 1) {
-            const newIP = devices[0].ip;
-            showToast(`Device found at ${newIP}!`, 'success');
-
-            // Update stored IP and input field
-            localStorage.setItem('lastDeviceIP', newIP);
-            if (document.getElementById('devConfigIP')) {
-                document.getElementById('devConfigIP').value = newIP;
-            }
-
-            // Force immediate status update
-            await checkDeviceConnection();
-
-        } else {
-            // Multiple
-            const ips = devices.map(d => d.ip).join(', ');
-            showToast(`Found ${devices.length} devices: ${ips}`, 'info');
-            // Save first one
-            localStorage.setItem('lastDeviceIP', devices[0].ip);
-            await checkDeviceConnection();
-        }
-    } catch (e) {
-        showToast('Scan failed: ' + e.message, 'error');
-        console.error('[Scan] Error:', e);
-    } finally {
-        if (btn) {
-            btn.innerHTML = originalIcon;
-            btn.disabled = false;
-        }
-    }
-}
-
-// ============================================================================
-// DEVICE CONFIG
-// ============================================================================
-
-async function configureDeviceWifi() {
-    const ip = document.getElementById('devConfigIP').value.trim();
-    const ssid = document.getElementById('devConfigSSID').value.trim();
-    const password = document.getElementById('devConfigPass').value.trim();
-
-    if (!ip || !ssid || !password) {
-        showToast('Please fill all fields', 'warning');
+/**
+ * Browser-Based Sync: Fetch files from ESP32 miniserver → upload to cloud API
+ */
+async function triggerBrowserSync(deviceIP) {
+    const ip = deviceIP || localStorage.getItem('lastDeviceIP');
+    if (!ip) {
+        showToast('No device detected. Power on your RS-Core and connect to the same network.', 'warning');
         return;
     }
 
-    const btn = document.querySelector('button[onclick="configureDeviceWifi()"]');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-    btn.disabled = true;
-
-    // Save IP to localStorage immediately
-    localStorage.setItem('lastDeviceIP', ip);
-
-    try {
-        // Try direct call to ESP32 first (works when browser is on hotspot)
-        console.log(`[WiFi Config] Trying direct call to http://${ip}/wifi/add`);
-        const directResponse = await fetch(`http://${ip}/wifi/add`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ssid, password }),
-            mode: 'cors'
-        });
-
-        if (directResponse.ok) {
-            const data = await directResponse.json();
-            if (data.success) {
-                showToast('Success! Device is rebooting to connect to ' + ssid, 'success');
-                return;
-            }
-        }
-    } catch (directError) {
-        console.log('[WiFi Config] Direct call failed (expected if not on hotspot):', directError.message);
-        // Fall through to try backend proxy
+    const btn = document.getElementById('btnBrowserSync');
+    if (btn) {
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
+        btn.disabled = true;
     }
 
     try {
-        // Fallback: Try via backend (works when backend is on same network as ESP32)
-        console.log('[WiFi Config] Trying via backend proxy /api/device/configure');
-        const res = await apiCall('/api/device/configure', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, ssid, password })
-        });
+        // 1. Get file list from ESP32
+        const listRes = await fetch(`http://${ip}/list?_t=${Date.now()}`);
+        const files = await listRes.json();
 
-        if (res.success) {
-            showToast('Success! Device is rebooting...', 'success');
-        } else if (res.error) {
-            showToast('Failed: ' + res.error, 'error');
+        if (!files || files.length === 0) {
+            showToast('No new files on device', 'info');
+            return;
         }
-    } catch (error) {
-        showToast('Configuration Failed. Make sure you are connected to ESP32 or same network.', 'error');
-        console.error('[WiFi Config] Both methods failed:', error);
+
+        showToast(`Found ${files.length} file(s) on device. Syncing...`, 'info');
+        let uploaded = 0;
+        let failed = 0;
+
+        // 2. Download each file from ESP32 and upload to cloud
+        for (const fname of files) {
+            try {
+                const fileRes = await fetch(`http://${ip}/download/${fname}?_t=${Date.now()}`);
+                const content = await fileRes.text();
+
+                if (!content || content.length < 10) continue;
+
+                const uploadRes = await apiCall('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: fname, content: content })
+                });
+
+                if (uploadRes) {
+                    uploaded++;
+                    // Delete from device after successful upload
+                    try {
+                        await fetch(`http://${ip}/delete/${fname}`, { method: 'DELETE' });
+                    } catch (e) { /* ignore delete errors */ }
+                } else {
+                    failed++;
+                }
+            } catch (e) {
+                console.error(`[Sync] Failed: ${fname}`, e);
+                failed++;
+            }
+        }
+
+        // 3. Report results
+        if (uploaded > 0) {
+            showToast(`🏁 ${uploaded} session${uploaded > 1 ? 's' : ''} synced!`, 'success');
+            localStorage.setItem('lastSyncTime', new Date().toISOString());
+            updateLastSyncDisplay();
+            loadLearningFiles();
+        }
+        if (failed > 0) {
+            showToast(`${failed} file(s) failed to sync`, 'warning');
+        }
+        if (uploaded === 0 && failed === 0) {
+            showToast('No new sessions to sync', 'info');
+        }
+
+    } catch (e) {
+        showToast('Sync failed: ' + e.message, 'error');
     } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Sync Now';
+            btn.disabled = false;
+        }
     }
 }
 
@@ -6277,19 +5989,12 @@ async function checkDeviceConnection() {
     const badge = document.getElementById('connectionStatus');
     const text = document.getElementById('connText');
 
-    // New UI Elements
-    const scanBadge = document.getElementById('scanStatusBadge');
-    const scanText = document.getElementById('scanStatusText');
-    const scanIp = document.getElementById('scanIpText');
-
     if (!badge || !text) return; // Elements not ready yet
 
     if (!ip) {
         badge.className = 'status-badge offline';
         text.textContent = 'No Device IP';
-        if (scanBadge) scanBadge.className = 'status-dot error';
-        if (scanText) { scanText.textContent = 'Disconnected'; scanText.style.color = 'var(--text-primary)'; }
-        if (scanIp) scanIp.textContent = '---';
+        updateDeviceStatus(false, null);
         return;
     }
 
@@ -6299,9 +6004,7 @@ async function checkDeviceConnection() {
             badge.className = 'status-badge online';
             text.textContent = `Connected: ${ip}`;
 
-            if (scanBadge) scanBadge.className = 'status-dot success';
-            if (scanText) { scanText.textContent = 'Connected'; scanText.style.color = 'var(--success)'; }
-            if (scanIp) scanIp.textContent = ip;
+            updateDeviceStatus(true, ip);
 
             console.log('[Status] Device connected:', ip);
 
@@ -6328,9 +6031,7 @@ async function checkDeviceConnection() {
             badge.className = 'status-badge offline';
             text.textContent = 'Device Offline';
 
-            if (scanBadge) scanBadge.className = 'status-dot warning';
-            if (scanText) { scanText.textContent = 'Offline'; scanText.style.color = 'var(--warning)'; }
-            if (scanIp) scanIp.textContent = ip;
+            updateDeviceStatus(false, ip);
 
             console.log('[Status] Device offline:', ip);
             updateStorageIndicator({});  // Hide indicator
@@ -6339,8 +6040,7 @@ async function checkDeviceConnection() {
         badge.className = 'status-badge offline';
         text.textContent = 'Check Failed';
 
-        if (scanBadge) scanBadge.className = 'status-dot error';
-        if (scanText) { scanText.textContent = 'Error'; scanText.style.color = 'var(--error)'; }
+        updateDeviceStatus(false, null);
 
         console.error('[Status] Check failed:', err);
 
@@ -6545,10 +6245,7 @@ async function scanForDevice() {
     hideScanProgress();
     showToast('No Datalogger found. Is it powered on?', 'warning');
 
-    const scanBadge = document.getElementById('scanStatusBadge');
-    const scanText = document.getElementById('scanStatusText');
-    if (scanBadge) scanBadge.className = 'status-dot error';
-    if (scanText) { scanText.textContent = 'Not Found'; scanText.style.color = 'var(--error)'; }
+    updateDeviceStatus(false, null);
 
     finishScan(btn);
 }
@@ -6563,16 +6260,7 @@ function finishScanSuccess(ip, data, btn) {
     localStorage.setItem('lastDeviceIP', ip);
 
     // Update Scan Card UI
-    const scanBadge = document.getElementById('scanStatusBadge');
-    const scanText = document.getElementById('scanStatusText');
-    const scanIp = document.getElementById('scanIpText');
-
-    if (scanBadge && scanText && scanIp) {
-        scanBadge.className = 'status-dot success';
-        scanText.textContent = 'Connected';
-        scanText.style.color = 'var(--success)';
-        scanIp.textContent = ip;
-    }
+    updateDeviceStatus(true, ip);
 
     // Update Header Status
     const badge = document.getElementById('connectionStatus');
@@ -6593,114 +6281,7 @@ function finishScan(btn) {
     }
 }
 
-// Load stored networks from device
-async function loadStoredNetworks() {
-    const ip = getDeviceIP();
-    const container = document.getElementById('storedNetworksList');
 
-    if (!container) return;
-
-    container.innerHTML = '<span style="color: var(--text-muted);"><i class="fas fa-spinner fa-spin"></i> Loading...</span>';
-
-    try {
-        const response = await fetch(`http://${ip}/wifi/list`, {
-            method: 'GET',
-            mode: 'cors',
-            signal: AbortSignal.timeout(5000)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const networks = data.networks || [];
-
-        if (networks.length === 0) {
-            container.innerHTML = '<span style="color: var(--text-muted);">No networks stored. Add one below.</span>';
-        } else {
-            container.innerHTML = networks.map(ssid => `
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 0.25rem;">
-                    <span><i class="fas fa-wifi" style="margin-right: 0.5rem; color: var(--primary);"></i>${ssid}</span>
-                    <button class="btn btn-danger btn-sm" onclick="removeWifiNetwork('${ssid}')" style="padding: 0.25rem 0.5rem;">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            `).join('');
-        }
-    } catch (e) {
-        container.innerHTML = `<span style="color: var(--danger);">Failed to load: ${e.message}</span>`;
-        console.error('[WiFi List]', e);
-    }
-}
-
-// Add WiFi network to device
-async function addWifiNetwork() {
-    const ip = getDeviceIP();
-    const ssid = document.getElementById('devConfigSSID').value.trim();
-    const password = document.getElementById('devConfigPass').value;
-
-    if (!ssid) {
-        showToast('Please enter SSID', 'warning');
-        return;
-    }
-
-    showToast(`Adding ${ssid}...`, 'info');
-
-    try {
-        const response = await fetch(`http://${ip}/wifi/add`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            mode: 'cors',
-            body: JSON.stringify({ ssid, password }),
-            signal: AbortSignal.timeout(10000)
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            showToast(`✓ Added ${ssid}. Device rebooting...`, 'success');
-
-            // Clear form
-            document.getElementById('devConfigSSID').value = '';
-            document.getElementById('devConfigPass').value = '';
-
-            // Reload list after reboot delay
-            setTimeout(() => loadStoredNetworks(), 5000);
-        } else {
-            const err = await response.text();
-            showToast(`Failed: ${err}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-        console.error('[Add WiFi]', e);
-    }
-}
-
-// Remove WiFi network from device
-async function removeWifiNetwork(ssid) {
-    if (!confirm(`Remove "${ssid}" from stored networks?`)) return;
-
-    const ip = getDeviceIP();
-
-    try {
-        const response = await fetch(`http://${ip}/wifi/remove`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            mode: 'cors',
-            body: JSON.stringify({ ssid }),
-            signal: AbortSignal.timeout(5000)
-        });
-
-        if (response.ok) {
-            showToast(`Removed ${ssid}`, 'success');
-            loadStoredNetworks();
-        } else {
-            showToast('Failed to remove', 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
-}
 
 
 // ============================================================================
@@ -6785,322 +6366,58 @@ async function flashLatestEspWifi() {
     }
 }
 
-// ============================================================================
-// BLE PROVISIONING INTEGRATION
-// ============================================================================
 
-let bleConnector = null;
+// ============================================================================
+// DEVICE STATUS & AUTO-SYNC
+// ============================================================================
 
 /**
- * AUTO-SHARE WIFI LOGIC
+ * Update device status in settings and home sync banner
  */
-const WIFI_CRED_KEY = 'racesense_wifi_vault';
+function updateDeviceStatus(connected, ip) {
+    const dot = document.getElementById('deviceStatusDot');
+    const text = document.getElementById('deviceStatusText');
+    const ipEl = document.getElementById('deviceStatusIP');
+    const banner = document.getElementById('deviceSyncBanner');
 
-function getWifiVault() {
-    try {
-        const vault = localStorage.getItem(WIFI_CRED_KEY);
-        // Simple obfuscation (b64) to prevent plain text scraping, not for high security
-        return vault ? JSON.parse(atob(vault)) : {};
-    } catch (e) { return {}; }
-}
-
-function saveToWifiVault(ssid, pass) {
-    if (!document.getElementById('autoShareWifiToggle').checked) return;
-    const vault = getWifiVault();
-    vault[ssid] = pass;
-    localStorage.setItem(WIFI_CRED_KEY, btoa(JSON.stringify(vault)));
-}
-
-function toggleAutoShareWifi() {
-    const enabled = document.getElementById('autoShareWifiToggle').checked;
-    localStorage.setItem('autoShareWifiEnabled', enabled);
-    if (!enabled) {
-        if (confirm("Clear saved WiFi vault?")) {
-            localStorage.removeItem(WIFI_CRED_KEY);
+    if (connected && ip) {
+        if (dot) dot.style.background = 'var(--success)';
+        if (text) text.textContent = 'Online';
+        if (ipEl) ipEl.textContent = ip;
+        if (banner) {
+            banner.style.display = 'block';
+            const title = document.getElementById('syncBannerTitle');
+            const detail = document.getElementById('syncBannerDetail');
+            if (title) title.textContent = 'RS-Core Connected';
+            if (detail) detail.textContent = `Auto-sync active · ${ip}`;
         }
-    }
-}
-
-async function attemptAutoWifiShare(visibleNetworks) {
-    if (!document.getElementById('autoShareWifiToggle').checked) return false;
-
-    const vault = getWifiVault();
-    // Prioritize networks by vault presence
-    const match = visibleNetworks.find(ssid => vault[ssid]);
-
-    if (match) {
-        showToast(`Auto-configuring WiFi: ${match}...`, 'info');
-        try {
-            await bleConnector.configureWifi(match, vault[match]);
-            return true;
-        } catch (e) {
-            console.error('[AutoShare] Failed', e);
-        }
-    }
-    return false;
-}
-
-function initBleSupportCheck() {
-    console.log('Checking Web Bluetooth support...');
-    const warning = document.getElementById('bleSupportWarning');
-    const connectBtn = document.getElementById('btnBleConnect');
-
-    // Check if DataloggerBLE class is loaded
-    if (typeof DataloggerBLE === 'undefined') {
-        console.warn('DataloggerBLE class not found. Skipping BLE check.');
-        if (warning) {
-            warning.style.display = 'block';
-            warning.innerHTML = '<i class="fas fa-exclamation-circle"></i> BLE Module failed to load';
-        }
-        if (connectBtn) connectBtn.disabled = true;
-        return;
-    }
-
-    // Restore Auto-Share toggle state
-    const autoShareEnabled = localStorage.getItem('autoShareWifiEnabled') !== 'false';
-    const toggle = document.getElementById('autoShareWifiToggle');
-    if (toggle) toggle.checked = autoShareEnabled;
-
-    if (!DataloggerBLE.isSupported()) {
-        if (warning) warning.style.display = 'block';
-        if (connectBtn) connectBtn.disabled = true;
     } else {
-        bleConnector = new DataloggerBLE();
-        setupBleCallbacks();
+        if (dot) dot.style.background = 'var(--error)';
+        if (text) text.textContent = 'Not detected';
+        if (ipEl) ipEl.textContent = '---';
+        if (banner) banner.style.display = 'none';
     }
+
+    updateLastSyncDisplay();
 }
 
-function setupBleCallbacks() {
-    if (!bleConnector) return;
-
-    bleConnector.onConnect = () => {
-        updateBleUiState('connected');
-        showToast('Bluetooth Connected!', 'success');
-        // Automatically scan for networks on connect
-        handleBleWifiScan();
-        // Try to auto-detect IP if already on WiFi
-        autoDetectDeviceIP().then(ip => {
-            if (ip) checkDeviceConnection();
-        });
-    };
-
-    bleConnector.onDisconnect = () => {
-        updateBleUiState('disconnected');
-        showToast('Bluetooth Disconnected', 'warning');
-    };
-
-    bleConnector.onStatusChange = (status) => {
-        console.log('[BLE] Status Change:', status);
-        if (status.connected && status.ip !== '0.0.0.0') {
-            // Update app state with device IP
-            localStorage.setItem('lastDeviceIP', status.ip);
-            const ipInput = document.getElementById('devConfigIP');
-            if (ipInput) ipInput.value = status.ip;
-
-            showToast(`WiFi Connected! Device IP: ${status.ip}`, 'success');
-
-            // Re-check connection via HTTP now
-            checkDeviceConnection();
-        }
-    };
-
-    bleConnector.onDeviceInfoChange = (info) => {
-        console.log('[BLE] Device Info:', info);
-        // Could update UI elements here
-    };
-}
-
-async function handleBleConnect() {
-    if (!bleConnector) return;
-    try {
-        await bleConnector.connect();
-    } catch (e) {
-        if (e.name !== 'NotFoundError' && e.name !== 'AbortError') {
-            showToast(`BLE Connect Failed: ${e.message}`, 'error');
-        }
-    }
-}
-
-async function provisionHotspot() {
-    const ssid = document.getElementById('hotspotSSID').value;
-    const pass = document.getElementById('hotspotPass').value;
-
-    if (!ssid || !pass) {
-        showToast('Hotspot name and password required', 'warning');
-        return;
-    }
-
-    try {
-        // 1. Check if already connected via BLE
-        if (!bleConnector || !bleConnector.isConnected()) {
-            showToast('Connecting to ESP32 via Bluetooth...', 'info');
-            await handleBleConnect();
-        }
-
-        if (!bleConnector.isConnected()) return;
-
-        // 2. Send credentials
-        showToast(`Provisioning ESP32 for hotspot: ${ssid}...`, 'info');
-        await bleConnector.configureWifi(ssid, pass);
-
-        // 3. Save to local storage for future auto-shares
-        saveToWifiVault(ssid, pass);
-
-        showToast('Provisioned! ESP32 is now searching for your hotspot.', 'success');
-
-        // 4. Start checking for connection
-        setTimeout(() => checkDeviceConnection(), 5000);
-
-    } catch (e) {
-        showToast(`Provisioning failed: ${e.message}`, 'error');
-    }
-}
-
-async function handleBleWifiScan() {
-    if (!bleConnector || !bleConnector.isConnected()) return;
-
-    const select = document.getElementById('bleWifiSelect');
-    select.innerHTML = '<option value="">Scanning...</option>';
-
-    try {
-        const networks = await bleConnector.scanNetworks();
-        if (networks.length === 0) {
-            select.innerHTML = '<option value="">No networks found</option>';
-        } else {
-            select.innerHTML = networks.map(ssid => `<option value="${ssid}">${ssid}</option>`).join('');
-
-            // ATTEMPT AUTO-SHARE
-            const autoSuccess = await attemptAutoWifiShare(networks);
-            if (autoSuccess) {
-                showToast('Auto-share successful! Device is connecting...', 'success');
-            }
-        }
-    } catch (e) {
-        showToast('WiFi scan failed over BLE', 'error');
-        select.innerHTML = '<option value="">Scan failed</option>';
-    }
-}
-
-async function handleBleWifiConfig() {
-    if (!bleConnector || !bleConnector.isConnected()) return;
-
-    const ssid = document.getElementById('bleWifiSelect').value;
-    const password = document.getElementById('bleWifiPass').value;
-
-    if (!ssid) {
-        showToast('Please select a network', 'warning');
-        return;
-    }
-
-    // Save to vault if enabled
-    saveToWifiVault(ssid, password);
-
-    showToast(`Configuring ${ssid}...`, 'info');
-    try {
-        await bleConnector.configureWifi(ssid, password);
-
-        // Start polling for status
-        showToast('Waiting for device to connect to WiFi...', 'info');
-
-        let attempts = 0;
-        const maxAttempts = 20;
-
-        const pollInterval = setInterval(async () => {
-            if (!bleConnector || !bleConnector.isConnected()) {
-                clearInterval(pollInterval);
-                return;
-            }
-            attempts++;
-            try {
-                const status = await bleConnector.getWifiStatus();
-                if (status.connected && status.ip && status.ip !== '0.0.0.0') {
-                    clearInterval(pollInterval);
-                    localStorage.setItem('lastDeviceIP', status.ip);
-
-                    const ipInput = document.getElementById('devConfigIP');
-                    if (ipInput) ipInput.value = status.ip;
-
-                    showToast(`WiFi Connected! IP: ${status.ip}`, 'success');
-
-                    // Trigger device connection check
-                    checkDeviceConnection();
-
-                    // Optionally auto-disconnect BLE to save power after a small delay
-                    setTimeout(() => {
-                        if (bleConnector && bleConnector.isConnected()) {
-                            console.log('[BLE] Auto-disconnecting to save power');
-                            bleConnector.disconnect();
-                        }
-                    }, 3000);
-                }
-            } catch (e) {
-                console.error('Error polling BLE status:', e);
-            }
-
-            if (attempts >= maxAttempts) {
-                clearInterval(pollInterval);
-                showToast('WiFi connection timeout. Check credentials.', 'warning');
-            }
-        }, 1000);
-
-    } catch (e) {
-        showToast('Failed to send WiFi config', 'error');
-    }
-}
-
-async function handleBleStartAP() {
-    if (!bleConnector || !bleConnector.isConnected()) return;
-
-    if (!confirm('Start AP mode? You will need to connect to the "Datalogger-Setup" WiFi.')) return;
-
-    try {
-        await bleConnector.startAPMode();
-        showToast('AP Mode started on device', 'success');
-        // Give heads up about Mac network behavior
-        alert('Please connect your computer to the "Datalogger-Setup" WiFi. Note: You might lose internet while connected.');
-    } catch (e) {
-        showToast('Failed to start AP', 'error');
-    }
-}
-
-function updateBleUiState(state) {
-    const dot = document.getElementById('bleStatusDot');
-    const text = document.getElementById('bleStatusText');
-    const btn = document.getElementById('btnBleConnect');
-    const setupArea = document.getElementById('bleWifiSetup');
-
-    if (state === 'connected') {
-        dot.className = 'status-dot connected';
-        text.textContent = 'Bluetooth: Connected';
-        btn.textContent = 'Disconnect';
-        btn.onclick = () => bleConnector.disconnect();
-        setupArea.style.display = 'block';
+function updateLastSyncDisplay() {
+    const el = document.getElementById('lastSyncTime');
+    if (!el) return;
+    const lastSync = localStorage.getItem('lastSyncTime');
+    if (lastSync) {
+        const d = new Date(lastSync);
+        const now = new Date();
+        const diff = Math.floor((now - d) / 60000);
+        if (diff < 1) el.textContent = 'Just now';
+        else if (diff < 60) el.textContent = `${diff} min ago`;
+        else if (diff < 1440) el.textContent = `${Math.floor(diff / 60)}h ago`;
+        else el.textContent = d.toLocaleDateString();
     } else {
-        dot.className = 'status-dot offline';
-        text.textContent = 'Bluetooth: Not Connected';
-        btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Connect';
-        btn.onclick = handleBleConnect;
-        setupArea.style.display = 'none';
+        el.textContent = 'Never';
     }
 }
 
-/**
- * UI Cleanup: Collapsible section helper
- */
-function toggleDetailsSection(sectionId) {
-    const section = document.getElementById(sectionId);
-    if (section) {
-        section.classList.toggle('collapsed');
-    }
-}
-
-
-
-
-function closeSyncOverlay() {
-    const overlay = document.getElementById('syncOverlay');
-    overlay.classList.remove('active');
-}
 
 // ============================================================================
 // ADMIN USER MANAGEMENT
