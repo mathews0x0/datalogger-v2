@@ -49,7 +49,7 @@ function getPlatformGuide() {
 function startSyncWizard() {
     const modal = document.getElementById('syncWizardModal');
     modal.classList.add('active');
-    
+
     // Reset steps
     document.getElementById('syncStep1').style.display = 'block';
     document.getElementById('syncStep2').style.display = 'none';
@@ -65,7 +65,7 @@ function startSyncWizard() {
     const savedPass = localStorage.getItem('wizard_hotspot_pass');
     if (savedSSID) document.getElementById('wizardHotspotSSID').value = savedSSID;
     if (savedPass) document.getElementById('wizardHotspotPass').value = savedPass;
-    
+
     // Show platform guide if needed
     const guideEl = document.getElementById('platformGuide');
     const guideHtml = getPlatformGuide();
@@ -95,11 +95,11 @@ async function handleSyncStep1() {
     try {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Pairing...';
-        
+
         showToast('Pairing with Racesense-Core...', 'info');
         await ble.connect();
         showToast('Handshake Successful!', 'success');
-        
+
         // Setup status listener
         ble.onStatusChange = (status) => {
             updateSyncProgress(status);
@@ -129,7 +129,7 @@ async function handleSyncStep1() {
             document.getElementById('syncStep1').style.display = 'none';
             document.getElementById('syncStep2').style.display = 'block';
         }
-        
+
     } catch (err) {
         console.error('Sync Handshake Error:', err);
         showToast('Connection Failed: ' + err.message, 'error');
@@ -144,7 +144,7 @@ async function handleSyncStep2() {
     const ssid = document.getElementById('wizardHotspotSSID').value;
     const pass = document.getElementById('wizardHotspotPass').value;
     const remember = document.getElementById('wizardRememberCreds').checked;
-    const apiUrl = API_BASE + '/api/upload'; 
+    const apiUrl = API_BASE + '/api/upload';
 
     if (remember) {
         localStorage.setItem('wizard_hotspot_ssid', ssid);
@@ -155,9 +155,9 @@ async function handleSyncStep2() {
         document.getElementById('btnStartUpload').disabled = true;
         document.getElementById('btnStartUpload').innerHTML = '<i class="fas fa-circle-notch fa-spin"></i> Connecting to Hotspot...';
         document.getElementById('syncProgressArea').style.display = 'block';
-        
+
         showToast('Provisioning ESP32...', 'info');
-        
+
         // Start a safety timeout (30 seconds)
         syncTimeoutTimer = setTimeout(() => {
             const label = document.getElementById('syncStatusLabel');
@@ -167,7 +167,7 @@ async function handleSyncStep2() {
         }, 30000);
 
         await ble.configureWifi(ssid, pass, apiUrl);
-        
+
     } catch (err) {
         showToast('Sync Failed: ' + err.message, 'error');
         document.getElementById('btnStartUpload').disabled = false;
@@ -180,23 +180,23 @@ function updateSyncProgress(status) {
     const label = document.getElementById('syncStatusLabel');
     const bar = document.getElementById('syncProgressBar');
     const pctText = document.getElementById('syncProgressPct');
-    
+
     if (status.mode === 'STA' && status.connected) {
         if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
         label.textContent = 'Uploading CSVs to Nitro...';
     } else if (status.mode === 'STA' && !status.connected) {
         label.textContent = 'ESP32 Joining Hotspot...';
     }
-    
+
     if (status.sync_progress !== undefined) {
         const pct = status.sync_progress;
         bar.style.width = pct + '%';
         pctText.textContent = pct + '%';
-        
+
         if (status.sync_file) {
             label.textContent = `Syncing: ${status.sync_file} (${pct}%)`;
         }
-        
+
         if (pct >= 100) {
             if (syncTimeoutTimer) clearTimeout(syncTimeoutTimer);
             document.getElementById('syncStep2').style.display = 'none';
@@ -206,10 +206,7 @@ function updateSyncProgress(status) {
     }
 }
 
-// Map the old button function to the new wizard
-function startHybridSync() {
-    startSyncWizard();
-}
+// initialization
 let tracks = [];
 let sessions = [];
 let activeTrackId = null;  // Track identified by ESP32 status
@@ -337,10 +334,10 @@ async function apiCall(endpoint, options = {}) {
         // Prevent caching
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${API_BASE}${endpoint}${separator}_t=${Date.now()}`;
-        
+
         // Ensure credentials are included for Capacitor mobile app cross-origin calls
         options.credentials = 'include';
-        
+
         const response = await fetch(url, options);
 
         if (response.status === 401 && !endpoint.includes('/api/auth/')) {
@@ -6865,15 +6862,15 @@ async function provisionHotspot() {
         // 2. Send credentials
         showToast(`Provisioning ESP32 for hotspot: ${ssid}...`, 'info');
         await bleConnector.configureWifi(ssid, pass);
-        
+
         // 3. Save to local storage for future auto-shares
         saveToWifiVault(ssid, pass);
-        
+
         showToast('Provisioned! ESP32 is now searching for your hotspot.', 'success');
-        
+
         // 4. Start checking for connection
         setTimeout(() => checkDeviceConnection(), 5000);
-        
+
     } catch (e) {
         showToast(`Provisioning failed: ${e.message}`, 'error');
     }
@@ -7018,86 +7015,7 @@ function toggleDetailsSection(sectionId) {
 }
 
 
-// ============================================================================
-// HYBRID BURST SYNC LOGIC
-// ============================================================================
 
-async function startHybridSync() {
-    const overlay = document.getElementById('syncOverlay');
-    const title = document.getElementById('syncStatusTitle');
-    const details = document.getElementById('syncStatusDetails');
-    const icon = document.getElementById('syncIcon');
-    const progressFill = document.getElementById('syncProgressFill');
-    const progressBar = document.getElementById('syncProgressBar');
-    const closeBtn = document.getElementById('syncCloseBtn');
-
-    // Show overlay
-    overlay.classList.add('active');
-    closeBtn.style.display = 'none';
-    progressBar.style.display = 'none';
-    icon.innerHTML = '<i class="fas fa-sync fa-spin"></i>';
-    icon.style.color = 'var(--primary)';
-    title.textContent = 'Syncing Data';
-    details.textContent = 'Initializing connection...';
-
-    try {
-        window.hybridBurstService.setProgressCallback(({ step, details: stepDetails }) => {
-            details.textContent = stepDetails;
-
-            switch (step) {
-                case 'BLE_CONNECTING':
-                    title.textContent = 'Connecting...';
-                    break;
-                case 'STARTING_AP':
-                    title.textContent = 'Activating WiFi';
-                    break;
-                case 'JOINING_WIFI':
-                    title.textContent = 'Joining Network';
-                    break;
-                case 'DOWNLOADING':
-                    title.textContent = 'Downloading CSVs';
-                    progressBar.style.display = 'block';
-                    // Update progress bar if stepDetails contains "X/Y"
-                    const match = stepDetails.match(/(\d+)\/(\d+)/);
-                    if (match) {
-                        const current = parseInt(match[1]);
-                        const total = parseInt(match[2]);
-                        progressFill.style.width = `${(current / total) * 100}%`;
-                    }
-                    break;
-                case 'AP_STOPPING':
-                    title.textContent = 'Wrapping Up';
-                    progressFill.style.width = '100%';
-                    break;
-                case 'SYNC_COMPLETE':
-                    title.textContent = 'Sync Success!';
-                    icon.innerHTML = '<i class="fas fa-check-circle"></i>';
-                    icon.style.color = 'var(--success)';
-                    closeBtn.style.display = 'block';
-                    showToast('Sync completed successfully!', 'success');
-                    // Refresh data
-                    loadHomeData();
-                    break;
-                case 'ERROR':
-                    title.textContent = 'Sync Failed';
-                    icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-                    icon.style.color = 'var(--error)';
-                    closeBtn.style.display = 'block';
-                    showToast('Sync failed: ' + stepDetails, 'error');
-                    break;
-            }
-        });
-
-        await window.hybridBurstService.startSync();
-    } catch (error) {
-        console.error('Hybrid sync failed:', error);
-        title.textContent = 'Sync Failed';
-        details.textContent = error.message;
-        icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-        icon.style.color = 'var(--error)';
-        closeBtn.style.display = 'block';
-    }
-}
 
 function closeSyncOverlay() {
     const overlay = document.getElementById('syncOverlay');

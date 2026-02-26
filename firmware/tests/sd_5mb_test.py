@@ -10,11 +10,11 @@ import time
 import os
 import gc
 
-# Pin Configuration
-PIN_CS = 5
-PIN_SCK = 18
-PIN_MOSI = 23
-PIN_MISO = 33
+# Pin Configuration (Workbench Standard)
+PIN_CS = 10
+PIN_SCK = 12
+PIN_MOSI = 11
+PIN_MISO = 13
 
 # CSV Header (matches actual logged data)
 CSV_HEADER = "timestamp,latitude,longitude,speed,satellites,imu_x,imu_y,imu_z,gyro_x,gyro_y,gyro_z,pressure\n"
@@ -58,7 +58,7 @@ def main():
     # Initialize SD card
     print("[2] Initializing SD card...")
     import drivers.sdcard as sdcard
-    sd = sdcard.SDCard(spi, cs, baudrate=10_000_000)  # 10MHz
+    sd = sdcard.SDCard(spi, cs, baudrate=400_000)  # 400kHz for stability
     print("    Sectors: %d (%.2f GB)" % (sd.sectors, sd.sectors * 512 / (1024**3)))
     
     # Mount

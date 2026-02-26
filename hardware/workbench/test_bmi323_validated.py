@@ -81,7 +81,6 @@ class BMI323:
         }
 
 if __name__ == "__main__":
-    import machine
     print("--- Testing bmi323_validated.py ---")
     i2c = machine.I2C(0, sda=machine.Pin(21), scl=machine.Pin(39), freq=400000)
     print("I2C Devices:", [hex(a) for a in i2c.scan()])
@@ -95,4 +94,3 @@ if __name__ == "__main__":
             time.sleep(0.5)
     except Exception as e:
         print("Error during test:", e)
-

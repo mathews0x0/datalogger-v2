@@ -16,14 +16,26 @@ import shutil
 # Point to UI folder in same server directory
 static_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../ui'))
 app = Flask(__name__, static_folder=static_path, static_url_path='')
-# Allow standard Capacitor/Cordova origins for mobile app
-CORS(app, supports_credentials=True, origins=[
+
+# Environment detection
+FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
+IS_PRODUCTION = FLASK_ENV == 'production'
+
+# CORS configuration — configurable via env var
+DEFAULT_ORIGINS = [
     "http://localhost",
     "https://localhost",
     "capacitor://localhost",
     "http://127.0.0.1",
-    "http://192.168.1.35:6969" # Local dev
-])
+    "http://localhost:6969",
+    "http://192.168.1.35:6969"
+]
+cors_origins_env = os.environ.get('CORS_ORIGINS')
+if cors_origins_env:
+    cors_origins = [o.strip() for o in cors_origins_env.split(',')]
+else:
+    cors_origins = DEFAULT_ORIGINS
+CORS(app, supports_credentials=True, origins=cors_origins)
 
 @app.after_request
 def add_header(response):
@@ -41,9 +53,13 @@ OUTPUT_DIR = config.DATA_DIR
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(config.DATA_DIR / 'racesense.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'racesense-v2-development-secret-key')
+# JWT Secret — MUST be set via env var in production
+_jwt_secret = os.environ.get('JWT_SECRET_KEY')
+if IS_PRODUCTION and not _jwt_secret:
+    raise RuntimeError('JWT_SECRET_KEY environment variable must be set in production!')
+app.config['JWT_SECRET_KEY'] = _jwt_secret or 'racesense-v2-development-secret-key'
 app.config['JWT_TOKEN_LOCATION'] = ['cookies']
-app.config['JWT_COOKIE_CSRF_PROTECT'] = False 
+app.config['JWT_COOKIE_CSRF_PROTECT'] = IS_PRODUCTION  # Enable CSRF protection in production
 app.config['JWT_ACCESS_COOKIE_PATH'] = '/api/'
 app.config['JWT_REFRESH_COOKIE_PATH'] = '/api/auth/refresh'
 app.config['JWT_COOKIE_HTTPONLY'] = True

@@ -27,7 +27,9 @@
 # ============================================================================
 
 # Configuration
-PORT="${PORT:-/dev/ttyUSB1}"
+AUTODETECT_PORT=$(ls /dev/ttyUSB* /dev/tty.usbserial* /dev/tty.usbmodem* 2>/dev/null | head -n 1)
+PORT="${PORT:-$AUTODETECT_PORT}"
+PORT="${PORT:-/dev/ttyUSB1}" # Fallback
 BAUD="460800"
 FIRMWARE_BIN="micropython.bin"
 SOURCE_DIR="$(pwd)"
@@ -71,9 +73,11 @@ fi
 check_port() {
     if [ ! -e "$PORT" ]; then
         echo -e "${RED}ERROR: Port $PORT not found.${NC}"
-        ls /dev/ttyUSB*
+        echo "Available USB serial ports:"
+        ls /dev/ttyUSB* /dev/tty.usbserial* /dev/tty.usbmodem* 2>/dev/null || echo "None found."
         exit 1
     fi
+    echo -e "${GREEN}Using Port: $PORT${NC}"
 }
 
 kill_serial_users() {
@@ -166,8 +170,8 @@ show_help() {
     echo "  --wipe      Erase flash only"
     echo "  --flash     Flash micropython.bin only"
     echo "  --libs      Install libraries via WiFi/mip"
-    echo "  --sync      Sync local source files only (Default)"
-    echo "  --full      Everything: Wipe -> Flash -> Libs -> Sync"
+    echo "  --sync      Sync local source files only"
+    echo "  --full      Everything: Wipe -> Flash -> Libs -> Sync (Default)"
     echo "  --help      Show this help"
 }
 
@@ -185,10 +189,10 @@ case "$1" in
     --libs)
         echo "No libraries to install (v2 cleanup)"
         ;;
-    --sync|"")
+    --sync)
         sync_source
         ;;
-    --full)
+    --full|"")
         wipe_flash
         flash_firmware
         echo "Waiting for reboot..."

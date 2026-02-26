@@ -1,4 +1,26 @@
+# Python
 *.pyc
-# macOS system files
+__pycache__/
+venv/
+*.egg-info/
+
+# Environment
+.env
+
+# Data (user-generated, not code)
+server/data/
+*.db
+
+# Logs
+*.log
+
+# macOS
 .DS_Store
 **/.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Node (if any)
+node_modules/

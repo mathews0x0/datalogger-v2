@@ -15,4 +15,7 @@ fi
 echo "Starting Datalogger V2 on Port 6969..."
 cd server
 export PYTHONUNBUFFERED=1
+if [ -d "venv" ]; then
+  source venv/bin/activate
+fi
 python3 run.py

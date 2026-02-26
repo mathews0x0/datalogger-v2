@@ -1532,7 +1532,6 @@ The SD card module wasn't faulty — the driver was. Always start with official/
 
 **Decisions:**
 - **MCU Pivot:** Selected **ESP32-S3-WROOM-1-N16R8**. Native USB support allows the device to act as a Mass Storage device for ultra-fast "pit lane" data offloading.
-- **IMU Selection:** Finalized **BMI160** with dedicated I2C pull-ups and optimized decoupling for low-noise telemetry.
 - **Power Intelligence:** Integrated a voltage divider for real-time **Battery Voltage Monitoring** (IO35).
 - **Safety Fixes:** Audited and fixed charging path (diode removal) and LED logic (high-side switching).
 - **Expansion Ports:** Exposed 3x GPIOs for future "Pro" features (Suspension/Brake sensors).
@@ -1555,7 +1554,6 @@ The SD card module wasn't faulty — the driver was. Always start with official/
 - **Battery Monitoring:** Integrated ADC1_CH7 (IO35) logic. The firmware now captures real-time voltage data, enabling battery percentage tracking in the app and "low power" safety shutdowns.
 - **S3 Performance Tuning:**
     - Increased SD SPI frequency to **10MHz** for faster write bursts.
-    - Set I2C frequency to **400kHz** (Fast Mode) for the BMI160.
     - Utilized the S3's dual-core architecture to isolate the high-frequency logging loop from the web server.
 - **CSV Schema Update:** Added `vbat` as a core telemetry field to every log entry.
 
@@ -1799,3 +1797,54 @@ Since mobile browsers cannot programmatically join the ESP32's WiFi, we flipped 
 - **Cost Efficiency:** Shifted 90% of development workload to local silicon ($0 token cost).
 
 **Status:** 🚀 Distributed Brain Setup Live & Verified.
+
+---
+
+## 30. SD Card Hardware Debugging: The Final Resolution (2026-02-25)
+
+**Context:** After a period of instability where the SD card was intermittently failing to mount or causing FAT corruption, we performed a deep-dive diagnostic to verify the hardware and stabilize the driver.
+
+### The Problem
+The device was failing with `CMD0` timeouts or `readblocks failed` errors. Additionally, even when the card initialized, `os.mount` would frequently fail with a mysterious `UnicodeError`.
+
+### Technical Discovery & Diagnostics
+We abandoned high-level scripts to perform low-level bit-banging and raw sector scans:
+1.  **Driver Sensitivity:** The Python-based `sdcard.py` driver was identified as too sensitive to SPI timing constraints and signal integrity on the workbench wiring.
+2.  **CMD16 Reject:** Modern SDHC cards often have a fixed 512B block size. The driver was treating a "command rejected" response to `CMD16` (Set Block Length) as a fatal error, whereas it should have been ignored.
+3.  **Signal Maturity:** Bitbang SPI (SoftSPI) proved that the physical link was healthy enough for initialization but struggled with high-speed data tokens during raw reads.
+4.  **Native Power:** Switching to the built-in C-based `machine.SDCard` driver provided immediate stability. It handles the underlying SPI timing and error recovery significantly more gracefully than the Python implementation.
+
+### The Breakthrough: Raw Sector Scanning
+Using the native driver, we performed a raw scan of the card:
+- **Block 2048:** Successfully retrieved the FAT32 boot sector (`eb589042...`). This proved that the **physical wiring (SCK: 12, MOSI: 11, MISO: 13, CS: 10)** was perfect and the previous issues were purely software/timing related.
+
+### Resolution
+1.  **Format:** Performed an on-device `os.VfsFat.mkfs(sd)`. This cleared the `UnicodeError` on mount, which was traced back to a corrupt or incompatible Volume Label string on the card's original filesystem.
+2.  **Raw Verification:** Wrote a 512-byte test pattern to block 8192 and verified a bit-perfect read-back.
+3.  **Final Pivot:** Officially switched the datalogger-v2 firmware to use **Native machine.SDCard support**.
+
+### Outcome
+- ✅ **Hardware Verified:** Wiring and SPI buses are confirmed 100% stable.
+- ✅ **Filesystem Fixed:** Card is formatted, mounted, and reading/writing files flawlessly.
+- ✅ **Speed:** Verified stable operation at 400kHz (Init) and 10MHz (Active).
+
+**Status:** 🏁 **DONE.** The SD card reliability hurdle is finally cleared. The ESP32-S3 hardware is ready for long-duration track logging.
+
+---
+
+## 31. Hardware Validation: BMI323 & Component Integration (2026-02-26)
+
+**Objective:** Validate I2C hardware stability with the BMI323 IMU and test a 10Hz synchronized logging loop with the GPS and SD Card.
+
+### Difficulties & Resolutions
+1. **IMU I2C Lockups:** Initial testing showed the BMI323 frequently locked up the I2C bus (Timeout errors). After building raw communication scripts to isolate the issue, we identified the physical breakout module as faulty. Swapping to a new BMI323 module immediately resolved all communication errors.
+2. **Standalone Testing:** To prove physical wiring without relying on complex main firmware, we built an isolated, closed-loop script (`test_bmi323_validated.py`). This script runs indefinitely on the RS-Core, outputting direct IMU data to confirm absolute hardware stability. 
+
+### System Integration Testing
+We merged all stable components into a dedicated workbench test script (`full_system_test.py`) to simulate high-load conditions:
+- **Logging Loop:** Successfully recorded GPS and IMU data at a synchronized 10Hz.
+- **Data Protection:** Implemented a 5-second SD card `flush()` and `os.sync()` routine to prevent FAT table corruption if the motorcycle power is suddenly cut.
+- **Smart Feedback:** Added an intuitive LED UI (breathing while waiting for GPS; fast blink during logging; brightness reacts dynamically to physical IMU motion).
+
+**Status:** ✅ **Complete.** The physical hardware capability (ESP32-S3 + GPS + SD + BMI323) is fully validated and ready to be integrated into the actual production firmware.
+

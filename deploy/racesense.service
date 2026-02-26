@@ -1,0 +1,22 @@
+[Unit]
+Description=RaceSense Datalogger Web Server
+After=network.target
+
+[Service]
+Type=notify
+User=racesense
+Group=racesense
+WorkingDirectory=/opt/racesense/server
+EnvironmentFile=/opt/racesense/.env
+ExecStart=/opt/racesense/venv/bin/gunicorn --config gunicorn.conf.py 'api.main:app'
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

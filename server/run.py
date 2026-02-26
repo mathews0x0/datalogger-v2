@@ -23,5 +23,7 @@ if str(API_PATH) not in sys.path:
 from api.main import app
 
 if __name__ == "__main__":
-    print("[Datalogger V2] Starting server...")
-    app.run(host='0.0.0.0', port=6969, debug=True)
+    import os
+    is_dev = os.environ.get('FLASK_ENV', 'development') == 'development'
+    print(f"[Datalogger V2] Starting server... (env={'development' if is_dev else 'production'})")
+    app.run(host='0.0.0.0', port=6969, debug=is_dev)
