@@ -87,7 +87,22 @@ except Exception as e:
     print(f"    GPS Error: {e}")
 
 # 5. Setup CSV File
-log_file = "/sd/full_log.csv"
+def get_next_log_file():
+    base_name = "log_"
+    ext = ".csv"
+    idx = 1
+    try:
+        existing_files = os.listdir('/sd')
+    except:
+        existing_files = []
+        
+    while True:
+        filename = f"{base_name}{idx:03d}{ext}"
+        if filename not in existing_files:
+            return f"/sd/{filename}"
+        idx += 1
+
+log_file = get_next_log_file()
 header = "timestamp,lat,lon,sats,speed_kmh,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z\n"
 
 print(f"[4] Preparing Log: {log_file}")
