@@ -121,99 +121,13 @@ class BLEProvisioning:
         elif event == _IRQ_GATTS_READ_REQUEST:
             conn_handle, attr_handle = data
             if attr_handle == self._h_networks:
-                # Refresh networks on read request
-                self._scan_networks()
-
-    def _scan_networks(self):
-        print("[BLE] Scanning for WiFi networks...")
-        self._wlan.active(True)
-        try:
-            # Synchronous scan for simplicity in provisioning
-            nets = self._wlan.scan()
-            # Sort by RSSI
-            nets = sorted(nets, key=lambda x: x[3], reverse=True)
-            # Take top 10 unique SSIDs
-            ssids = []
-            for n in nets:
-                ssid = n[0].decode().strip()
-                if ssid and ssid not in ssids:
-                    ssids.append(ssid)
-                if len(ssids) >= 10:
-                    break
-            self._networks_json = json.dumps(ssids).encode()
-            self.ble.gatts_write(self._h_networks, self._networks_json)
-            print(f"[BLE] Found {len(ssids)} networks")
-        except Exception as e:
-            print(f"[BLE] Scan error: {e}")
+                # No longer scanning networks in Proxy mode
+                self.ble.gatts_write(self._h_networks, b"[]")
 
     def _handle_write(self, value):
         print(f"[BLE] Received command: {value}")
-        try:
-            if value == "SCAN":
-                self._scan_networks()
-            elif value == "START_AP":
-                self.notify_wifi_status(False, "Setup", "192.168.4.1", "AP")
-                self._wlan.active(False)
-                import network
-                ap = network.WLAN(network.AP_IF)
-                ap.active(True)
-                ap.config(essid="Racesense-Pit", password="password123", authmode=3)
-            elif value == "SYNC":
-                # Manual trigger if WiFi is already connected
-                if self._wlan.isconnected():
-                    import _thread
-                    import lib.uploader as uploader
-                    _thread.start_new_thread(uploader.upload_all, (self.sm,))
-            else:
-                # Try parsing as JSON: {ssid, password, api_url}
-                try:
-                    data = json.loads(value)
-                    ssid = data.get("ssid")
-                    password = data.get("password")
-                    api_url = data.get("api_url")
-                    if ssid:
-                        print(f"[BLE] Provisioning WiFi: {ssid}")
-                        import _thread
-                        _thread.start_new_thread(self._connect_to_wifi, (ssid, password, api_url))
-                except:
-                    print(f"[BLE] Unknown command or invalid JSON: {value}")
-        except Exception as e:
-            print(f"[BLE] Command error: {e}")
-
-    def _connect_to_wifi(self, ssid, password, api_url=None):
-        print(f"[BLE] Attempting WiFi connection to {ssid}...")
-        self._wlan.active(True)
-        self._wlan.connect(ssid, password)
-        
-        # Poll for 20s
-        for i in range(20):
-            if self._wlan.isconnected():
-                ip = self._wlan.ifconfig()[0]
-                print(f"[BLE] WiFi connected to {ssid}, IP: {ip}")
-                
-                # Store credentials for next boot
-                if self.wifi_mgr:
-                    try:
-                        self.wifi_mgr.add_credential(ssid, password)
-                        print(f"[BLE] Saved credentials for {ssid}")
-                    except Exception as e:
-                        print(f"[BLE] Failed to save credentials: {e}")
-                
-                self.notify_wifi_status(True, ssid, ip, "STA")
-                
-                # If we have an api_url, trigger an automatic upload
-                if api_url:
-                    import lib.uploader as uploader
-                    uploader.upload_all(self.sm, api_url=api_url, ble=self)
-                return
-            time.sleep(1)
-            
-        print(f"[BLE] WiFi connection timeout to {ssid}")
-        self.notify_wifi_status(False, ssid, "0.0.0.0", "STA")
-        
-        # If connection fails, we don't automatically fall back to AP here 
-        # to avoid disconnecting the user's BLE session abruptly if they want to retry.
-        # The user can manually trigger "START_AP" from the UI if needed.
+        # WiFi and Proxy commands are obsolete since the ESP32 is a persistent AP.
+        # We can safely ignore "SCAN", "START_AP", and credentials here.
 
     def update_device_info(self, gps_valid: bool, storage_pct: float):
         try:

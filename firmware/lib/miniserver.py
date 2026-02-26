@@ -114,8 +114,6 @@ class MiniServer:
     def handle_get(self, cl, path):
         if path == '/status':
             self.handle_status(cl)
-        elif path == '/wifi/list':
-            self.handle_wifi_list(cl)
         elif path == '/list':
             self.handle_session_list(cl)
         elif path.startswith('/download/'):
@@ -132,11 +130,7 @@ class MiniServer:
             self.send_response(cl, 404, '{"error": "Not Found"}')
 
     def handle_post(self, cl, path, body):
-        if path == '/wifi/add':
-            self.handle_wifi_add(cl, body)
-        elif path == '/wifi/remove':
-            self.handle_wifi_remove(cl, body)
-        elif path == '/track/set':
+        if path == '/track/set':
             self.handle_track_set(cl, body)
         elif path == '/update':
             self.handle_update(cl, body)
@@ -170,9 +164,6 @@ class MiniServer:
         cl.send(content.encode())
 
     def handle_status(self, cl):
-        from lib import wifi_manager
-        creds = wifi_manager.load_credentials()
-        
         # Get storage info
         try:
             stat = os.statvfs('/')
@@ -194,8 +185,8 @@ class MiniServer:
             "version": self.VERSION,
             "storage": "FLASH",
             "status": "running",
-            "wifi_mode": "AP" if not creds else "STA",
-            "networks_stored": len(creds),
+            "wifi_mode": "AP",
+            "networks_stored": 0,
             "storage_total_kb": total_kb,
             "storage_used_kb": used_kb,
             "storage_free_kb": free_kb,
@@ -218,62 +209,7 @@ class MiniServer:
 
         self.send_response(cl, 200, json.dumps(status))
 
-    def handle_wifi_list(self, cl):
-        from lib import wifi_manager
-        creds = wifi_manager.load_credentials()
-        ssids = [c.get('ssid', '') for c in creds]
-        self.send_response(cl, 200, json.dumps({"networks": ssids}))
 
-    def handle_wifi_add(self, cl, body):
-        try:
-            if not body:
-                self.send_response(cl, 400, '{"error": "No body"}')
-                return
-            
-            data = json.loads(body)
-            ssid = data.get('ssid', '')
-            password = data.get('password', '')
-            
-            if not ssid:
-                self.send_response(cl, 400, '{"error": "SSID required"}')
-                return
-            
-            from lib import wifi_manager
-            if wifi_manager.add_credential(ssid, password):
-                resp = {"success": True, "message": "Added " + ssid}
-                self.send_response(cl, 200, json.dumps(resp))
-                
-                import machine
-                import time
-                time.sleep(1)
-                machine.reset()
-            else:
-                self.send_response(cl, 500, '{"error": "Failed to save"}')
-                
-        except Exception as e:
-            self.send_response(cl, 500, '{"error": "' + str(e) + '"}')
-
-    def handle_wifi_remove(self, cl, body):
-        try:
-            if not body:
-                self.send_response(cl, 400, '{"error": "No body"}')
-                return
-            
-            data = json.loads(body)
-            ssid = data.get('ssid', '')
-            
-            if not ssid:
-                self.send_response(cl, 400, '{"error": "SSID required"}')
-                return
-            
-            from lib import wifi_manager
-            if wifi_manager.remove_credential(ssid):
-                self.send_response(cl, 200, '{"success": true}')
-            else:
-                self.send_response(cl, 500, '{"error": "Failed"}')
-                
-        except Exception as e:
-            self.send_response(cl, 500, '{"error": "' + str(e) + '"}')
 
     def handle_session_list(self, cl):
         try:

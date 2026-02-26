@@ -1655,9 +1655,11 @@ def get_public_sessions():
 
 
 @app.route('/api/upload', methods=['POST'])
+@jwt_required()
 def upload_file():
-    """Receiver for ESP32 raw CSV uploads"""
+    """Receiver for Phone Proxy raw CSV uploads"""
     try:
+        user_id = get_jwt_identity()
         data = request.get_json()
         filename = data.get('filename')
         content = data.get('content')
@@ -1672,18 +1674,19 @@ def upload_file():
              
         save_path = config.LEARNING_DIR / safe_name
         
-        # Determine write mode (append if chunked? No, typical upload is one shot for now)
-        # ESP32 sends whole file string.
-        
         with open(save_path, 'w') as f:
             f.write(content)
             
-        # AUTO-TRIGGER Analysis for seamless experience
+        # AUTO-TRIGGER Analysis synchronously for seamless experience
         try:
             script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-            # Run in background to not block the ESP32 handshake
-            subprocess.Popen(['python3', script_path, str(save_path)])
-            print(f"[Upload] Auto-triggered analysis for {safe_name}")
+            # Run synchronously so we can safely register the resulting session to this user ID
+            result = subprocess.run(['python3', script_path, str(save_path)], capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                register_new_sessions(user_id)
+                print(f"[Upload] Auto-triggered analysis and registered session for user {user_id}")
+            else:
+                print(f"[Upload] Analysis failed: {result.stderr}")
         except Exception as ae:
             print(f"[Upload] Failed to auto-trigger analysis: {ae}")
             
@@ -1806,62 +1809,7 @@ def process_session():
             "message": str(e)
         }), 500
 
-@app.route('/api/sync/device', methods=['POST'])
-def sync_device():
-    """Pull CSV files from ESP32 Device"""
-    import requests
-    data = request.get_json() or {}
-    device_ip = data.get('ip', '192.168.4.1') # Default to AP IP
-    
-    # 1. Get List
-    try:
-        print(f"Syncing from {device_ip}...")
-        resp = requests.get(f"http://{device_ip}/list", timeout=10)
-        if resp.status_code != 200:
-            return jsonify({"error": f"Device Error: {resp.status_code}"}), 400
-            
-        files = resp.json().get('files', [])
-    except Exception as e:
-        return jsonify({"error": f"Failed to connect to device: {e}"}), 500
 
-    synced = []
-    failed = []
-    
-    # 2. Download Each
-    for fname in files:
-        try:
-            print(f"Downloading {fname}...")
-            r = requests.get(f"http://{device_ip}/download/{fname}", stream=True, timeout=10)
-            if r.status_code == 200:
-                save_path = config.LEARNING_DIR / fname
-                with open(save_path, 'wb') as f:
-                    for chunk in r.iter_content(chunk_size=1024):
-                        if chunk: f.write(chunk)
-                        
-                synced.append(fname)
-                
-                # 3. Delete from Device (Move from ESP to Pi)
-                try:
-                    time.sleep(0.2) # Small breather for ESP32
-                    del_resp = requests.get(f"http://{device_ip}/delete/{fname}", timeout=5)
-                    if del_resp.status_code == 200:
-                        print(f"[Sync] Successfully deleted {fname} from ESP32")
-                    else:
-                        print(f"[Sync] Failed to delete {fname} from ESP32: {del_resp.status_code}")
-                except Exception as de:
-                    print(f"[Sync] Error deleting {fname} from ESP32: {de}")
-            else:
-                failed.append(fname)
-        except Exception as e:
-            print(f"Error downloading {fname}: {e}")
-            failed.append(fname)
-            
-    return jsonify({
-        "success": True,
-        "synced": synced,
-        "failed": failed,
-        "device_ip": device_ip
-    })
 def rename_track(track_id):
     """Rename a track"""
     data = request.get_json()
