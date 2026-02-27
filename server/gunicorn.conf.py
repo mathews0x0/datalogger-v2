@@ -26,9 +26,9 @@ reload = False  # Don't auto-reload; use HUP signal via systemd
 
 # Python path — ensure all modules are importable
 pythonpath = ','.join([
-    '/opt/racesense/server/api',
-    '/opt/racesense/server/core',
-    '/opt/racesense',
+    '/var/www/racesense/server/api',
+    '/var/www/racesense/src',
+    '/var/www/racesense/server',
 ])
 
 # Preload app for faster worker spawns

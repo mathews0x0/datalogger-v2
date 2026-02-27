@@ -1,0 +1,15 @@
+[Unit]
+Description=Gunicorn instance to serve Racesense API
+After=network.target
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/var/www/racesense/server
+Environment="PATH=/var/www/racesense/server/venv/bin"
+Environment="FLASK_ENV=production"
+ExecStart=/var/www/racesense/server/venv/bin/gunicorn --config /var/www/racesense/server/gunicorn.conf.py run:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

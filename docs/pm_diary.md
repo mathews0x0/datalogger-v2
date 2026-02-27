@@ -1848,3 +1848,34 @@ We merged all stable components into a dedicated workbench test script (`full_sy
 
 **Status:** ✅ **Complete.** The physical hardware capability (ESP32-S3 + GPS + SD + BMI323) is fully validated and ready to be integrated into the actual production firmware.
 
+---
+
+## 32. Phase 32 — Cloud Production Deployment & Integration (2026-02-27)
+
+**Objective:** Transition the hardware logger into a fully integrated, cloud-deployed production system.
+
+### Key PM Entries
+1. **Stabilized Logging Setup**
+   - Successfully established and verified stable connectivity between the ESP32 and the application.
+   - Thoroughly tested the AP (Access Point) captive portal for reliable device onboarding.
+   - Validated end-to-end data synchronization protocols between the hardware logger and the server.
+
+2. **Critical Bug Fixes**
+   - **GPS Integration:** Resolved parsing and connectivity issues, ensuring accurate latitude/longitude and speed capture.
+   - **IMU (BMI323) Calibration:** Diagnosed and fixed the "frozen gyroscope" issue by manually adjusting the `adv_power_save` bit in the `REG_PWR_CTRL` register, allowing dynamic 6-axis motion tracking to resume.
+   - **ESP32 Stability:** Addressed timeout/bootloop issues caused by race conditions during the initial boot sequence by introducing a 5-second "Safe Boot Window" to allow for controlled firmware updates.
+
+3. **Domain Name Acquisition [MAJOR]**
+   - Successfully purchased and configured the primary production domain: **racesense.in**.
+   - Configured Cloudflare/GoDaddy DNS routing to properly point A-records and CNAMEs to the new production environment.
+
+4. **Cloud Server Infrastructure [MAJOR]**
+   - Provisioned a dedicated Utho Cloud VPS (Ubuntu 24.04 LTS, 1 vCPU, 2GB RAM) using the cost-effective "capped-hourly" billing model.
+   - Secured the remote server environment with strict UFW firewall rules, SSH-key authentication, and Let's Encrypt (Certbot) SSL certificates.
+
+5. **Full System Integration**
+   - The Racesense Web Server is now officially **LIVE**.
+   - Deployed the Python backend (Gunicorn/Flask) as an automated `systemd` background service for 24/7 uptime.
+   - Configured Nginx as a highly-optimized reverse proxy to natively serve the Vue/JS frontend while securely routing API traffic.
+
+**Status:** ✅ **Complete & Live.** The system is now fully integrated with a production cloud backend accessible at https://racesense.in.
