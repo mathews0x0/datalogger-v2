@@ -199,16 +199,13 @@ async function checkAuth() {
             currentUser = user;
             updateAuthUI();
         } else {
-            // No user - show login modal on mobile app
+            // No user - show landing page
             currentUser = null;
             updateAuthUI();
-            showAuthModal();
         }
     } catch (e) {
         currentUser = null;
         updateAuthUI();
-        // Show login modal for unauthenticated users
-        showAuthModal();
     }
 }
 
@@ -220,8 +217,16 @@ function updateAuthUI() {
     const tierBadge = document.getElementById('tierBadge');
     const adminToolsCard = document.getElementById('adminToolsCard');
     const adminNavBtn = document.getElementById('adminNavBtn');
+    const landingPage = document.getElementById('landingPage');
+    const appContent = document.getElementById('appContent');
+    const headerStatusBadges = document.getElementById('headerStatusBadges');
 
     if (currentUser) {
+        // Show app, hide landing page
+        if (landingPage) landingPage.style.display = 'none';
+        if (appContent) appContent.style.display = 'block';
+        if (headerStatusBadges) headerStatusBadges.style.display = 'flex';
+
         if (loginBtn) loginBtn.style.display = 'none';
         if (userProfileHeader) userProfileHeader.style.display = 'flex';
         if (headerUserName) headerUserName.textContent = currentUser.name || currentUser.email;
@@ -246,6 +251,11 @@ function updateAuthUI() {
             if (trackInput) trackInput.value = currentUser.home_track || '';
         }
     } else {
+        // Show landing page, hide app
+        if (landingPage) landingPage.style.display = 'block';
+        if (appContent) appContent.style.display = 'none';
+        if (headerStatusBadges) headerStatusBadges.style.display = 'none';
+
         if (loginBtn) loginBtn.style.display = 'block';
         if (userProfileHeader) userProfileHeader.style.display = 'none';
         if (userProfileCard) userProfileCard.style.display = 'none';
@@ -417,11 +427,11 @@ async function revokeDeviceToken(tokenId) {
     }
 }
 
-function showAuthModal() {
+function showAuthModal(mode) {
     const modal = document.getElementById('authModal');
     if (modal) {
         modal.style.display = 'flex';
-        toggleAuthMode('login');
+        toggleAuthMode(mode || 'login');
     }
 }
 
@@ -433,12 +443,21 @@ function closeAuthModal() {
 function toggleAuthMode(mode) {
     const loginForm = document.getElementById('loginForm');
     const registerForm = document.getElementById('registerForm');
+    const regSuccessPanel = document.getElementById('regSuccessPanel');
     if (mode === 'login') {
         if (loginForm) loginForm.style.display = 'block';
         if (registerForm) registerForm.style.display = 'none';
-    } else {
+        if (regSuccessPanel) regSuccessPanel.style.display = 'none';
+        // Clear any previous login errors
+        const loginError = document.getElementById('loginError');
+        if (loginError) { loginError.style.display = 'none'; loginError.textContent = ''; }
+    } else if (mode === 'register') {
         if (loginForm) loginForm.style.display = 'none';
         if (registerForm) registerForm.style.display = 'block';
+        if (regSuccessPanel) regSuccessPanel.style.display = 'none';
+        // Clear any previous register errors
+        const regError = document.getElementById('regError');
+        if (regError) { regError.style.display = 'none'; regError.textContent = ''; }
     }
 }
 
@@ -482,8 +501,13 @@ async function submitRegister() {
             body: JSON.stringify({ name, email, password })
         });
         if (result && result.success) {
-            showToast('Registered! Please login.', 'success');
-            toggleAuthMode('login');
+            // Show the registration success / pending approval panel
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            const regSuccessPanel = document.getElementById('regSuccessPanel');
+            if (loginForm) loginForm.style.display = 'none';
+            if (registerForm) registerForm.style.display = 'none';
+            if (regSuccessPanel) regSuccessPanel.style.display = 'block';
         }
     } catch (e) {
         if (errorEl) {
@@ -500,8 +524,6 @@ async function logout() {
     currentUser = null;
     updateAuthUI();
     showToast('Logged out', 'info');
-    // Refresh to home
-    showView('home');
 }
 
 async function checkConnection() {
@@ -5832,7 +5854,7 @@ async function triggerBrowserSync(deviceIP) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ip: ip })
         });
-        
+
         if (syncRes && syncRes.success) {
             const uploaded = syncRes.synced ? syncRes.synced.length : 0;
             if (uploaded > 0) {
@@ -6390,17 +6412,20 @@ let adminUsersData = [];
 let adminCurrentPage = 1;
 let adminPerPage = 50;
 
-async function loadAdminUsers(page = 1, query = '', tier = '') {
+async function loadAdminUsers(page = 1, query = '', tier = '', approval = '') {
     const searchInput = document.getElementById('adminSearchInput');
     const tierFilter = document.getElementById('adminTierFilter');
+    const approvalFilter = document.getElementById('adminApprovalFilter');
 
     query = query || (searchInput ? searchInput.value : '');
     tier = tier || (tierFilter ? tierFilter.value : '');
+    approval = approval || (approvalFilter ? approvalFilter.value : '');
 
     try {
         let url = `/api/admin/users?page=${page}&per_page=${adminPerPage}`;
         if (query) url += `&q=${encodeURIComponent(query)}`;
         if (tier) url += `&tier=${tier}`;
+        if (approval) url += `&approval=${approval}`;
 
         const result = await apiCall(url);
         if (result) {
@@ -6419,8 +6444,13 @@ function renderAdminStats(data) {
     const statsEl = document.getElementById('adminStats');
     if (!statsEl) return;
 
+    const pendingHtml = data.pending_count > 0
+        ? `<span style="color: var(--warning); cursor: pointer;" onclick="document.getElementById('adminApprovalFilter').value='pending'; filterAdminUsers();">⏳ Pending: <strong>${data.pending_count}</strong></span>`
+        : '';
+
     statsEl.innerHTML = `
         <span>Total Users: <strong>${data.total}</strong></span>
+        ${pendingHtml}
         <span>Page <strong>${data.page}</strong> of <strong>${data.pages}</strong></span>
     `;
 }
@@ -6432,7 +6462,7 @@ function renderAdminUsersTable(data) {
     if (data.users.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-dim);">
+                <td colspan="7" style="text-align: center; padding: 3rem; color: var(--text-dim);">
                     <i class="fas fa-user-slash" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.3; display: block;"></i>
                     No users found matching your filters
                 </td>
@@ -6449,6 +6479,18 @@ function renderAdminUsersTable(data) {
         const isCurrentUser = currentUser && currentUser.id === user.id;
         const adminBadge = user.is_admin ? '<i class="fas fa-crown admin-badge" title="Admin"></i>' : '';
 
+        const approvalBadge = user.is_approved
+            ? '<span class="badge success" style="font-size: 0.65rem; padding: 0.2rem 0.6rem;">APPROVED</span>'
+            : '<span class="badge warning" style="font-size: 0.65rem; padding: 0.2rem 0.6rem;">PENDING</span>';
+
+        const approvalActions = !user.is_approved
+            ? `<button class="btn btn-sm" onclick="adminApproveUser(${user.id}, true)" style="background: var(--success); color: #000; padding: 0.25rem 0.6rem; font-size: 0.75rem;" title="Approve User">
+                    <i class="fas fa-check"></i> Approve
+               </button>`
+            : `<button class="btn btn-sm" onclick="adminApproveUser(${user.id}, false)" style="background: var(--error); color: #fff; padding: 0.25rem 0.6rem; font-size: 0.75rem;" title="Revoke Approval">
+                    <i class="fas fa-ban"></i>
+               </button>`;
+
         return `
             <tr>
                 <td style="color: var(--text-dim); font-family: monospace;">#${user.id}</td>
@@ -6458,6 +6500,7 @@ function renderAdminUsersTable(data) {
                         <span class="admin-user-email">${user.email}</span>
                     </div>
                 </td>
+                <td style="text-align: center;">${approvalBadge}</td>
                 <td>
                     <span class="tier-badge ${user.subscription_tier}">
                         ${user.subscription_tier}
@@ -6467,14 +6510,15 @@ function renderAdminUsersTable(data) {
                 <td>${joinDate}</td>
                 <td>
                     <div class="admin-actions">
-                        <select onchange="adminSetUserTier(${user.id}, this.value)" class="filter-select" style="min-width: 120px; padding: 0.35rem; font-size: 0.8rem;">
+                        ${approvalActions}
+                        <select onchange="adminSetUserTier(${user.id}, this.value)" class="filter-select" style="min-width: 100px; padding: 0.35rem; font-size: 0.8rem;">
                             <option value="free" ${user.subscription_tier === 'free' ? 'selected' : ''}>Free</option>
                             <option value="pro" ${user.subscription_tier === 'pro' ? 'selected' : ''}>Pro</option>
                             <option value="team" ${user.subscription_tier === 'team' ? 'selected' : ''}>Team</option>
                         </select>
                         ${(currentUser.id === 1 && user.id !== 1) ? `
                             <button class="btn-icon" onclick="adminToggleAdmin(${user.id}, ${!user.is_admin})" title="${user.is_admin ? 'Revoke Admin' : 'Grant Admin'}">
-                                <i class="fas ${user.is_admin ? 'fa-user-minus' : 'fa-user-shield'}\"></i>
+                                <i class="fas ${user.is_admin ? 'fa-user-minus' : 'fa-user-shield'}"></i>
                             </button>
                         ` : ''}
                     </div>
@@ -6565,6 +6609,26 @@ async function adminToggleAdmin(userId, isAdmin) {
     }
 }
 
+async function adminApproveUser(userId, approved) {
+    const action = approved ? 'APPROVE' : 'REJECT';
+    if (!confirm(`${action} user #${userId}?`)) return;
+
+    try {
+        const result = await apiCall(`/api/admin/users/${userId}/approve`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approved: approved })
+        });
+
+        if (result && result.success) {
+            showToast(`User #${userId} ${approved ? 'approved' : 'rejected'}`, 'success');
+            loadAdminUsers(adminCurrentPage);
+        }
+    } catch (e) {
+        showToast('Failed to update approval: ' + e.message, 'error');
+    }
+}
+
 function searchAdminUsers() {
     const query = document.getElementById('adminSearchInput').value;
     loadAdminUsers(1, query);
@@ -6572,6 +6636,7 @@ function searchAdminUsers() {
 
 function filterAdminUsers() {
     const tier = document.getElementById('adminTierFilter').value;
+    const approval = document.getElementById('adminApprovalFilter') ? document.getElementById('adminApprovalFilter').value : '';
     const query = document.getElementById('adminSearchInput').value;
-    loadAdminUsers(1, query, tier);
+    loadAdminUsers(1, query, tier, approval);
 }

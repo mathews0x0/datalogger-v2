@@ -199,12 +199,12 @@ def register():
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already registered"}), 400
 
-    user = User(email=email, name=name)
+    user = User(email=email, name=name, is_approved=False)
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
 
-    return jsonify({"success": True, "message": "User registered successfully"}), 201
+    return jsonify({"success": True, "message": "Registration successful! Your account is pending admin approval. You will be able to login once an admin approves your account. For help, contact support@racesense.in"}), 201
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
@@ -212,15 +212,16 @@ def login():
     email = data.get('email')
     password = data.get('password')
 
-    # DEV MODE: bypass login if empty
-    if not email and not password:
-        user = User.query.first() # Get the default admin user
-        if not user:
-             return jsonify({"error": "No users found"}), 401
-    else:
-        user = User.query.filter_by(email=email).first()
-        if not user or not user.check_password(password):
-            return jsonify({"error": "Invalid email or password"}), 401
+    if not email or not password:
+        return jsonify({"error": "Email and password are required"}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user or not user.check_password(password):
+        return jsonify({"error": "Invalid email or password"}), 401
+
+    # Check if user is approved
+    if not user.is_approved:
+        return jsonify({"error": "Your account is pending admin approval. Please wait for an admin to approve your account, or contact support@racesense.in for help."}), 403
 
     access_token = create_access_token(identity=str(user.id))
     response = jsonify({"success": True, "user": user.to_dict()})
@@ -283,11 +284,13 @@ def admin_list_users():
     Query params: 
       - q: search query (email/name)
       - tier: filter by tier (free/pro/team)
+      - approval: filter by approval status (pending/approved)
       - page: pagination (default 1)
       - per_page: items per page (default 50)
     """
     q = request.args.get('q', '').strip()
     tier_filter = request.args.get('tier', '').strip()
+    approval_filter = request.args.get('approval', '').strip()
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 50, type=int)
     
@@ -307,12 +310,22 @@ def admin_list_users():
     if tier_filter and tier_filter in ['free', 'pro', 'team']:
         query = query.filter(User.subscription_tier == tier_filter)
     
+    # Approval filter
+    if approval_filter == 'pending':
+        query = query.filter(User.is_approved == False)
+    elif approval_filter == 'approved':
+        query = query.filter(User.is_approved == True)
+    
     # Order by created_at desc
     query = query.order_by(User.created_at.desc())
     
     # Pagination
     total = query.count()
     users = query.offset((page - 1) * per_page).limit(per_page).all()
+    
+    # Counts for stats
+    pending_count = User.query.filter(User.is_approved == False).count()
+    approved_count = User.query.filter(User.is_approved == True).count()
     
     # Enrich with session counts
     result = []
@@ -327,7 +340,30 @@ def admin_list_users():
         "total": total,
         "page": page,
         "per_page": per_page,
-        "pages": (total + per_page - 1) // per_page
+        "pages": (total + per_page - 1) // per_page,
+        "pending_count": pending_count,
+        "approved_count": approved_count
+    })
+
+@app.route('/api/admin/users/<int:user_id>/approve', methods=['PUT'])
+@admin_required
+def admin_approve_user(user_id):
+    """Approve or reject a user's account"""
+    target_user = User.query.get(user_id)
+    if not target_user:
+        return jsonify({"error": "User not found"}), 404
+    
+    data = request.get_json()
+    approved = data.get('approved', True)
+    
+    target_user.is_approved = bool(approved)
+    db.session.commit()
+    
+    return jsonify({
+        "success": True,
+        "user_id": user_id,
+        "is_approved": target_user.is_approved,
+        "user": target_user.to_dict()
     })
 
 @app.route('/api/admin/users/<int:user_id>/tier', methods=['PUT'])

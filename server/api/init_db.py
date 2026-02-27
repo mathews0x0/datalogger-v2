@@ -14,6 +14,20 @@ def init_db():
         db.create_all()
         print("Database tables created.")
 
+        # Migration: Add is_approved column if it doesn't exist
+        try:
+            from sqlalchemy import inspect, text
+            inspector = inspect(db.engine)
+            columns = [col['name'] for col in inspector.get_columns('users')]
+            if 'is_approved' not in columns:
+                db.session.execute(text('ALTER TABLE users ADD COLUMN is_approved BOOLEAN DEFAULT 0'))
+                # Auto-approve all existing users
+                db.session.execute(text('UPDATE users SET is_approved = 1'))
+                db.session.commit()
+                print("Migration: Added is_approved column and approved all existing users.")
+        except Exception as e:
+            print(f"Migration check: {e}")
+
         # Create default admin user if it doesn't exist
         admin = User.query.filter_by(email='admin').first()
         if not admin:
@@ -21,13 +35,20 @@ def init_db():
                 email='admin',
                 name='Admin',
                 bike_info='System Default',
-                home_track='N/A'
+                home_track='N/A',
+                is_approved=True,
+                is_admin=True
             )
             admin.set_password('admin123') # Default password
             db.session.add(admin)
             db.session.commit()
             print(f"Default admin user created with ID: {admin.id}")
         else:
+            # Ensure admin is always approved
+            if not admin.is_approved:
+                admin.is_approved = True
+                db.session.commit()
+                print(f"Admin user auto-approved.")
             print(f"Admin user already exists with ID: {admin.id}")
 
         # Migrate existing tracks from registry.json

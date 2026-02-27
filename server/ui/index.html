@@ -4,19 +4,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="description" content="Motorcycle Datalogger Companion App" />
-  <meta name="theme-color" content="#1a1a1a" />
-  <title>Datalogger Companion</title>
-  <link rel="stylesheet" href="styles.css?v=5" />
+  <meta name="description"
+    content="RaceSense — The motorcycle telemetry platform that helps riders become faster. Real-time lap analytics, braking, acceleration, lean angles, and actionable feedback." />
+  <meta name="theme-color" content="#050505" />
+  <meta name="keywords" content="motorcycle telemetry, trackday analytics, lap timer, data logger, racing, racesense" />
+  <title>RaceSense — Ride Faster. Ride Smarter.</title>
+  <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 
 <body>
   <!-- Header -->
-  <header class="header">
+  <header class="header" id="appHeader">
     <div style="display: flex; align-items: center; gap: 1.5rem;">
       <h1><i class="fas fa-bolt"></i> RaceSense</h1>
 
-      <div style="display: flex; align-items: center; gap: 0.75rem;">
+      <div id="headerStatusBadges" style="display: none; align-items: center; gap: 0.75rem;">
         <!-- Connection Status -->
         <div id="connectionStatus" class="status-badge offline">
           <span class="status-dot"></span> <span id="connText">Offline</span>
@@ -60,522 +62,695 @@
     </div>
   </header>
 
-  <!-- Navigation -->
-  <nav class="nav">
-    <button class="nav-btn active" data-view="home"><i class="fas fa-home"></i> Home</button>
-    <button class="nav-btn" data-view="tracks"><i class="fas fa-map-marked-alt"></i> Tracks</button>
-    <button class="nav-btn" data-view="sessions"><i class="fas fa-history"></i> Sessions</button>
-    <button class="nav-btn" data-view="community"><i class="fas fa-users"></i> Community</button>
-    <button class="nav-btn" data-view="teams"><i class="fas fa-users-cog"></i> Teams</button>
-    <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
-    <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
-    <button class="nav-btn" data-view="admin" id="adminNavBtn" style="display: none;"><i class="fas fa-user-shield"></i>
-      Admin</button>
-  </nav>
-
-  <!-- Main Content -->
-  <main class="main" id="mainContent">
-    <!-- Home View -->
-    <div class="view active" id="homeView">
-      <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
-      <div class="quick-stats" id="quickStats">
-        <div class="stat-card">
-          <div class="stat-icon"><i class="fas fa-road"></i></div>
-          <div class="stat-info">
-            <div class="stat-label">Total Tracks</div>
-            <div class="stat-value" id="totalTracks">-</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon"><i class="fas fa-flag-checkered"></i></div>
-          <div class="stat-info">
-            <div class="stat-label">Total Sessions</div>
-            <div class="stat-value" id="totalSessions">-</div>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon"><i class="fas fa-clock"></i></div>
-          <div class="stat-info">
-            <div class="stat-label">Last Session</div>
-            <div class="stat-value" id="recentSession" style="font-size: 1.25rem;">-</div>
-          </div>
-        </div>
+  <!-- ==================== LANDING PAGE ==================== -->
+  <div id="landingPage">
+    <!-- Hero Section -->
+    <section class="landing-hero">
+      <div class="hero-bg-effects">
+        <div class="hero-orb hero-orb-1"></div>
+        <div class="hero-orb hero-orb-2"></div>
+        <div class="hero-orb hero-orb-3"></div>
+        <div class="hero-grid-overlay"></div>
       </div>
-
-      <!-- Device Sync Status Banner -->
-      <div id="deviceSyncBanner"
-        style="display: none; margin: 1.5rem 0; background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.3); border-radius: 12px; padding: 1rem 1.5rem;">
-        <div style="display: flex; align-items: center; justify-content: space-between;">
-          <div style="display: flex; align-items: center; gap: 0.75rem;">
-            <i class="fas fa-satellite-dish" style="font-size: 1.2rem; color: var(--success);"></i>
-            <div>
-              <span id="syncBannerTitle" style="font-weight: 600;">RS-Core Connected</span>
-              <span id="syncBannerDetail" style="display: block; font-size: 0.8rem; color: var(--text-muted);">Auto-sync
-                active</span>
-            </div>
-          </div>
-          <button class="btn btn-sm" onclick="triggerBrowserSync()" id="btnBrowserSync"
-            style="background: var(--success); color: #000; padding: 0.5rem 1rem;">
-            <i class="fas fa-cloud-upload-alt"></i> Sync Now
+      <div class="hero-content">
+        <div class="hero-badge">
+          <i class="fas fa-microchip"></i> HARDWARE + SOFTWARE TELEMETRY PLATFORM
+        </div>
+        <h1 class="hero-title">
+          Ride <span class="hero-gradient-text">Faster.</span><br />
+          Ride <span class="hero-gradient-text">Smarter.</span>
+        </h1>
+        <p class="hero-subtitle">
+          RaceSense is a motorcycle telemetry platform that analyzes your riding with precision sensor data. Get lap
+          times, lean angles, braking zones, racing lines, and AI-powered feedback to shave seconds off your laps.
+        </p>
+        <div class="hero-cta-row">
+          <button class="btn btn-primary btn-lg hero-cta-btn" onclick="showAuthModal('register')">
+            <i class="fas fa-rocket"></i> Get Started
+          </button>
+          <button class="btn secondary btn-lg hero-cta-btn-alt" onclick="showAuthModal('login')">
+            <i class="fas fa-sign-in-alt"></i> Login
           </button>
         </div>
-      </div>
-
-      <div class="section">
-        <h3>Recent Sessions</h3>
-        <div id="recentSessionsList" class="sessions-list">
-          <div class="loading">Loading...</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tracks View -->
-    <div class="view" id="tracksView">
-      <h2>Tracks</h2>
-      <div id="tracksList" class="tracks-grid">
-        <div class="loading">Loading tracks...</div>
-      </div>
-    </div>
-
-    <!-- Sessions View -->
-    <div class="view" id="sessionsView">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2 style="margin: 0;">Sessions & Trackdays</h2>
-        <button class="btn btn-primary btn-sm" onclick="showCreateTrackdayModal()">+ New Trackday</button>
-      </div>
-
-      <!-- Tab Bar -->
-      <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
-        <button class="session-tab active" data-tab="sessions" onclick="switchSessionTab('sessions')">
-          <i class="fas fa-list"></i> Sessions
-        </button>
-        <button class="session-tab" data-tab="trackdays" onclick="switchSessionTab('trackdays')">
-          <i class="fas fa-flag-checkered"></i> Trackdays
-        </button>
-      </div>
-
-      <!-- Sessions Panel -->
-      <div id="sessionsPanel">
-        <div class="filter-bar">
-          <select id="trackFilter" class="filter-select">
-            <option value="">All Tracks</option>
-          </select>
-        </div>
-        <div id="sessionsList" class="sessions-list">
-          <div class="loading">Loading sessions...</div>
-        </div>
-      </div>
-
-      <!-- Trackdays Panel -->
-      <div id="trackdaysPanel" style="display: none;">
-        <div id="trackdaysList" class="sessions-list">
-          <div class="loading">Loading trackdays...</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Community View -->
-    <div class="view" id="communityView">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2 style="margin: 0;"><i class="fas fa-users"></i> Community</h2>
-      </div>
-
-      <!-- Community Sub-Tabs -->
-      <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
-        <button class="session-tab active" data-comm-tab="explore" onclick="switchCommunityTab('explore')">
-          <i class="fas fa-search"></i> Explore
-        </button>
-        <button class="session-tab" data-comm-tab="following" onclick="switchCommunityTab('following')">
-          <i class="fas fa-user-friends"></i> Following
-        </button>
-        <button class="session-tab" data-comm-tab="leaderboards" onclick="switchCommunityTab('leaderboards')">
-          <i class="fas fa-trophy"></i> Leaderboards
-        </button>
-      </div>
-
-      <!-- Explore Panel -->
-      <div id="explorePanel">
-        <div class="filter-bar">
-          <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
-            <option value="">All Tracks</option>
-          </select>
-        </div>
-        <div id="communitySessionsList" class="sessions-list">
-          <div class="loading">Loading community sessions...</div>
-        </div>
-      </div>
-
-      <!-- Following Feed Panel -->
-      <div id="followingPanel" style="display: none;">
-        <div id="followingFeedList" class="sessions-list">
-          <div class="loading">Loading your feed...</div>
-        </div>
-      </div>
-
-      <!-- Leaderboards Panel -->
-      <div id="leaderboardsPanel" style="display: none;">
-        <div class="filter-bar" style="display: flex; gap: 0.5rem;">
-          <select id="lbTrackSelect" class="filter-select" style="flex: 2;" onchange="loadLeaderboard()">
-            <option value="">Select Track...</option>
-          </select>
-          <select id="lbPeriodSelect" class="filter-select" style="flex: 1;" onchange="loadLeaderboard()">
-            <option value="all">All Time</option>
-            <option value="month">This Month</option>
-            <option value="week">This Week</option>
-          </select>
-        </div>
-        <div id="leaderboardContent">
-          <div class="empty-state">
-            <i class="fas fa-trophy" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
-            <p>Select a track to view the leaderboard</p>
+        <div class="hero-stats-bar">
+          <div class="hero-stat">
+            <span class="hero-stat-value"><i class="fas fa-stopwatch"></i></span>
+            <span class="hero-stat-label">Lap Times</span>
+          </div>
+          <div class="hero-stat-divider"></div>
+          <div class="hero-stat">
+            <span class="hero-stat-value"><i class="fas fa-motorcycle"></i></span>
+            <span class="hero-stat-label">Lean Analysis</span>
+          </div>
+          <div class="hero-stat-divider"></div>
+          <div class="hero-stat">
+            <span class="hero-stat-value"><i class="fas fa-chart-line"></i></span>
+            <span class="hero-stat-label">Live Sectors</span>
+          </div>
+          <div class="hero-stat-divider"></div>
+          <div class="hero-stat">
+            <span class="hero-stat-value"><i class="fas fa-trophy"></i></span>
+            <span class="hero-stat-label">Ghost Lap™</span>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Teams View -->
-    <div class="view" id="teamsView">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2 style="margin: 0;"><i class="fas fa-users-cog"></i> Teams</h2>
-        <button class="btn btn-primary btn-sm" id="createTeamBtn" onclick="showCreateTeamModal()">+ Create Team</button>
-      </div>
+    <!-- Features Section -->
+    <section class="landing-section" id="features">
+      <div class="landing-container">
+        <div class="section-label"><i class="fas fa-bolt"></i> CORE CAPABILITIES</div>
+        <h2 class="landing-section-title">Everything You Need to Go Faster</h2>
+        <p class="landing-section-desc">The RS-Core module sits on your bike and captures full telemetry — no phone
+          mount needed. Just ride and review.</p>
 
-      <div id="teamsList" class="tracks-grid">
-        <div class="loading">Loading teams...</div>
-      </div>
-    </div>
-
-    <!-- Team Detail View (Dynamic) -->
-    <div class="view" id="teamDetailView">
-      <button class="back-btn" onclick="showView('teams')">
-        ← Back to Teams
-      </button>
-      <div id="teamDetailContent"></div>
-    </div>
-
-    <!-- Process View -->
-    <div class="view" id="processView">
-      <h2>Process New Session</h2>
-      <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
-        <p class="help-text" style="margin: 0;">Select a CSV file from learning data to process</p>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <label class="archive-toggle-label">
-            <span>Show Archives</span>
-            <div class="toggle-switch">
-              <input type="checkbox" id="showArchivesToggle" onchange="toggleArchivesView()">
-              <span class="toggle-slider"></span>
-            </div>
-          </label>
-          <button class="btn btn-primary btn-sm" onclick="syncFromDevice()">
-            <i class="fas fa-wifi"></i> Sync from Device
-          </button>
+        <div class="features-grid">
+          <div class="feature-card feature-card-highlight">
+            <div class="feature-icon"><i class="fas fa-stopwatch"></i></div>
+            <h3>Precision Lap Times</h3>
+            <p>GPS-based start/finish detection with sector splits. Compare every lap against your personal best in
+              real-time.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><i class="fas fa-motorcycle"></i></div>
+            <h3>Lean Angle Tracking</h3>
+            <p>High-frequency IMU captures your lean angles through every corner. See exactly how far you're pushing.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><i class="fas fa-chart-area"></i></div>
+            <h3>Braking & Acceleration</h3>
+            <p>Longitudinal and lateral G-force analysis. Identify where you're losing time in braking zones and corner
+              exits.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><i class="fas fa-route"></i></div>
+            <h3>Racing Line Overlay</h3>
+            <p>Visualize your actual line on the track map. Compare lines between laps to find the fastest trajectory.
+            </p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><i class="fas fa-play-circle"></i></div>
+            <h3>Full Lap Replay</h3>
+            <p>Replay any lap with synchronized telemetry — speed, lean, G-force, and position all animated in
+              real-time.</p>
+          </div>
+          <div class="feature-card feature-card-highlight">
+            <div class="feature-icon"><i class="fas fa-star"></i></div>
+            <h3>Ghost Lap™</h3>
+            <p>Your theoretical best lap combined from your best sector times. See how fast you <em>could</em> have
+              gone. Live sector delta feedback helps you beat it.</p>
+          </div>
         </div>
       </div>
-      <div id="learningFilesList" class="files-list">
-        <div class="loading">Loading files...</div>
+    </section>
+
+    <!-- How It Works Section -->
+    <section class="landing-section landing-section-alt" id="how-it-works">
+      <div class="landing-container">
+        <div class="section-label"><i class="fas fa-cogs"></i> HOW IT WORKS</div>
+        <h2 class="landing-section-title">Plug In. Ride. Analyze.</h2>
+        <div class="how-it-works-grid">
+          <div class="how-step">
+            <div class="how-step-number">01</div>
+            <h3>Mount the RS-Core Module</h3>
+            <p>The compact RS-Core unit mounts on your motorcycle. No wiring — it's powered by its own battery and
+              connects to your WiFi when you're back in the pits.</p>
+          </div>
+          <div class="how-step">
+            <div class="how-step-number">02</div>
+            <h3>Hit the Track</h3>
+            <p>Ride as you normally would. The RS-Core records GPS position, acceleration, lean angles, and more at high
+              frequency, completely autonomously.</p>
+          </div>
+          <div class="how-step">
+            <div class="how-step-number">03</div>
+            <h3>Auto-Sync & Analyze</h3>
+            <p>When you return to WiFi range, sessions automatically upload. Open the dashboard to explore detailed
+              telemetry, replays, and improvement suggestions.</p>
+          </div>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- LOGS VIEW -->
+    <!-- Mission Section -->
+    <section class="landing-section" id="mission">
+      <div class="landing-container" style="text-align: center; max-width: 800px;">
+        <div class="section-label"><i class="fas fa-bullseye"></i> OUR MISSION</div>
+        <h2 class="landing-section-title">Making Every Rider Faster</h2>
+        <p class="landing-section-desc" style="font-size: 1.15rem; line-height: 1.8;">
+          We believe performance data shouldn't be locked behind expensive racing teams. RaceSense brings
+          professional-grade telemetry to every trackday rider — from weekend warriors to aspiring racers. Our vision is
+          a world where every rider has the tools to understand, improve, and push their limits safely.
+        </p>
+      </div>
+    </section>
+
+    <!-- Footer / CTA -->
+    <section class="landing-footer">
+      <div class="landing-container" style="text-align: center;">
+        <h2 class="landing-footer-title">Ready to find those missing seconds?</h2>
+        <button class="btn btn-primary btn-lg hero-cta-btn" onclick="showAuthModal('register')"
+          style="margin-bottom: 2rem;">
+          <i class="fas fa-rocket"></i> Create Your Account
+        </button>
+        <div class="landing-footer-links">
+          <a href="mailto:support@racesense.in"><i class="fas fa-envelope"></i> support@racesense.in</a>
+        </div>
+        <p class="landing-copyright">© 2026 RaceSense. Built for riders, by riders.</p>
+      </div>
+    </section>
+  </div>
+
+  <!-- ==================== APP CONTENT (Hidden when not logged in) ==================== -->
+  <div id="appContent" style="display: none;">
+    <!-- Navigation -->
+    <nav class="nav">
+      <button class="nav-btn active" data-view="home"><i class="fas fa-home"></i> Home</button>
+      <button class="nav-btn" data-view="tracks"><i class="fas fa-map-marked-alt"></i> Tracks</button>
+      <button class="nav-btn" data-view="sessions"><i class="fas fa-history"></i> Sessions</button>
+      <button class="nav-btn" data-view="community"><i class="fas fa-users"></i> Community</button>
+      <button class="nav-btn" data-view="teams"><i class="fas fa-users-cog"></i> Teams</button>
+      <button class="nav-btn" data-view="process"><i class="fas fa-microchip"></i> Process</button>
+      <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
+      <button class="nav-btn" data-view="admin" id="adminNavBtn" style="display: none;"><i
+          class="fas fa-user-shield"></i>
+        Admin</button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main" id="mainContent">
+      <!-- Home View -->
+      <div class="view active" id="homeView">
+        <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
+        <div class="quick-stats" id="quickStats">
+          <div class="stat-card">
+            <div class="stat-icon"><i class="fas fa-road"></i></div>
+            <div class="stat-info">
+              <div class="stat-label">Total Tracks</div>
+              <div class="stat-value" id="totalTracks">-</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon"><i class="fas fa-flag-checkered"></i></div>
+            <div class="stat-info">
+              <div class="stat-label">Total Sessions</div>
+              <div class="stat-value" id="totalSessions">-</div>
+            </div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-icon"><i class="fas fa-clock"></i></div>
+            <div class="stat-info">
+              <div class="stat-label">Last Session</div>
+              <div class="stat-value" id="recentSession" style="font-size: 1.25rem;">-</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Device Sync Status Banner -->
+        <div id="deviceSyncBanner"
+          style="display: none; margin: 1.5rem 0; background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.3); border-radius: 12px; padding: 1rem 1.5rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 0.75rem;">
+              <i class="fas fa-satellite-dish" style="font-size: 1.2rem; color: var(--success);"></i>
+              <div>
+                <span id="syncBannerTitle" style="font-weight: 600;">RS-Core Connected</span>
+                <span id="syncBannerDetail"
+                  style="display: block; font-size: 0.8rem; color: var(--text-muted);">Auto-sync
+                  active</span>
+              </div>
+            </div>
+            <button class="btn btn-sm" onclick="triggerBrowserSync()" id="btnBrowserSync"
+              style="background: var(--success); color: #000; padding: 0.5rem 1rem;">
+              <i class="fas fa-cloud-upload-alt"></i> Sync Now
+            </button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3>Recent Sessions</h3>
+          <div id="recentSessionsList" class="sessions-list">
+            <div class="loading">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tracks View -->
+      <div class="view" id="tracksView">
+        <h2>Tracks</h2>
+        <div id="tracksList" class="tracks-grid">
+          <div class="loading">Loading tracks...</div>
+        </div>
+      </div>
+
+      <!-- Sessions View -->
+      <div class="view" id="sessionsView">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 style="margin: 0;">Sessions & Trackdays</h2>
+          <button class="btn btn-primary btn-sm" onclick="showCreateTrackdayModal()">+ New Trackday</button>
+        </div>
+
+        <!-- Tab Bar -->
+        <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
+          <button class="session-tab active" data-tab="sessions" onclick="switchSessionTab('sessions')">
+            <i class="fas fa-list"></i> Sessions
+          </button>
+          <button class="session-tab" data-tab="trackdays" onclick="switchSessionTab('trackdays')">
+            <i class="fas fa-flag-checkered"></i> Trackdays
+          </button>
+        </div>
+
+        <!-- Sessions Panel -->
+        <div id="sessionsPanel">
+          <div class="filter-bar">
+            <select id="trackFilter" class="filter-select">
+              <option value="">All Tracks</option>
+            </select>
+          </div>
+          <div id="sessionsList" class="sessions-list">
+            <div class="loading">Loading sessions...</div>
+          </div>
+        </div>
+
+        <!-- Trackdays Panel -->
+        <div id="trackdaysPanel" style="display: none;">
+          <div id="trackdaysList" class="sessions-list">
+            <div class="loading">Loading trackdays...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Community View -->
+      <div class="view" id="communityView">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 style="margin: 0;"><i class="fas fa-users"></i> Community</h2>
+        </div>
+
+        <!-- Community Sub-Tabs -->
+        <div style="display: flex; gap: 0; margin-bottom: 1.5rem; border-bottom: 2px solid var(--border);">
+          <button class="session-tab active" data-comm-tab="explore" onclick="switchCommunityTab('explore')">
+            <i class="fas fa-search"></i> Explore
+          </button>
+          <button class="session-tab" data-comm-tab="following" onclick="switchCommunityTab('following')">
+            <i class="fas fa-user-friends"></i> Following
+          </button>
+          <button class="session-tab" data-comm-tab="leaderboards" onclick="switchCommunityTab('leaderboards')">
+            <i class="fas fa-trophy"></i> Leaderboards
+          </button>
+        </div>
+
+        <!-- Explore Panel -->
+        <div id="explorePanel">
+          <div class="filter-bar">
+            <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
+              <option value="">All Tracks</option>
+            </select>
+          </div>
+          <div id="communitySessionsList" class="sessions-list">
+            <div class="loading">Loading community sessions...</div>
+          </div>
+        </div>
+
+        <!-- Following Feed Panel -->
+        <div id="followingPanel" style="display: none;">
+          <div id="followingFeedList" class="sessions-list">
+            <div class="loading">Loading your feed...</div>
+          </div>
+        </div>
+
+        <!-- Leaderboards Panel -->
+        <div id="leaderboardsPanel" style="display: none;">
+          <div class="filter-bar" style="display: flex; gap: 0.5rem;">
+            <select id="lbTrackSelect" class="filter-select" style="flex: 2;" onchange="loadLeaderboard()">
+              <option value="">Select Track...</option>
+            </select>
+            <select id="lbPeriodSelect" class="filter-select" style="flex: 1;" onchange="loadLeaderboard()">
+              <option value="all">All Time</option>
+              <option value="month">This Month</option>
+              <option value="week">This Week</option>
+            </select>
+          </div>
+          <div id="leaderboardContent">
+            <div class="empty-state">
+              <i class="fas fa-trophy" style="font-size: 3rem; color: var(--border); margin-bottom: 1rem;"></i>
+              <p>Select a track to view the leaderboard</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Teams View -->
+      <div class="view" id="teamsView">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 style="margin: 0;"><i class="fas fa-users-cog"></i> Teams</h2>
+          <button class="btn btn-primary btn-sm" id="createTeamBtn" onclick="showCreateTeamModal()">+ Create
+            Team</button>
+        </div>
+
+        <div id="teamsList" class="tracks-grid">
+          <div class="loading">Loading teams...</div>
+        </div>
+      </div>
+
+      <!-- Team Detail View (Dynamic) -->
+      <div class="view" id="teamDetailView">
+        <button class="back-btn" onclick="showView('teams')">
+          ← Back to Teams
+        </button>
+        <div id="teamDetailContent"></div>
+      </div>
+
+      <!-- Process View -->
+      <div class="view" id="processView">
+        <h2>Process New Session</h2>
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;">
+          <p class="help-text" style="margin: 0;">Select a CSV file from learning data to process</p>
+          <div style="display: flex; gap: 0.5rem; align-items: center;">
+            <label class="archive-toggle-label">
+              <span>Show Archives</span>
+              <div class="toggle-switch">
+                <input type="checkbox" id="showArchivesToggle" onchange="toggleArchivesView()">
+                <span class="toggle-slider"></span>
+              </div>
+            </label>
+            <button class="btn btn-primary btn-sm" onclick="syncFromDevice()">
+              <i class="fas fa-wifi"></i> Sync from Device
+            </button>
+          </div>
+        </div>
+        <div id="learningFilesList" class="files-list">
+          <div class="loading">Loading files...</div>
+        </div>
+      </div>
+
+      <!-- LOGS VIEW -->
 
 
 
-    <!-- DIAGNOSTICS VIEW -->
+      <!-- DIAGNOSTICS VIEW -->
 
 
 
-    <!-- Settings View -->
-    <div class="view" id="settingsView">
-      <div style="
+      <!-- Settings View -->
+      <div class="view" id="settingsView">
+        <div style="
             display: flex;
             justify-content: space-between;
             align-items: center;
           ">
-        <h2>System Settings</h2>
-        <button class="btn" style="background: var(--success); color: #000" onclick="saveSettings()">
-          Save Changes
-        </button>
-      </div>
-
-      <div class="settings-grid">
-        <!-- USER PROFILE CONFIG -->
-        <div class="card" id="userProfileCard" style="border-left: 4px solid var(--primary); display: none;">
-          <h3>User Profile</h3>
-          <div class="input-group">
-            <label>Display Name</label>
-            <input type="text" id="profileName" class="form-input" placeholder="Your Name">
-          </div>
-          <div class="input-group">
-            <label>Bike Info</label>
-            <input type="text" id="profileBike" class="form-input" placeholder="e.g., 2023 Yamaha R1">
-          </div>
-          <div class="input-group">
-            <label>Home Track</label>
-            <input type="text" id="profileHomeTrack" class="form-input" placeholder="e.g., Mugello">
-          </div>
-          <button class="btn btn-primary btn-sm" onclick="saveProfile()" style="width: 100%; margin-top: 1rem;">
-            Update Profile
+          <h2>System Settings</h2>
+          <button class="btn" style="background: var(--success); color: #000" onclick="saveSettings()">
+            Save Changes
           </button>
         </div>
 
-        <!-- MY DEVICES (Device Token Management) -->
-        <div class="card" id="myDevicesCard" style="border-left: 4px solid var(--success); display: none;">
-          <h3><i class="fas fa-microchip"></i> My Devices</h3>
-          <p class="help-text">Generate upload tokens for your RS-Core devices. Paste the token into your device's
-            captive portal during first-time setup.</p>
-
-          <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-            <input type="text" id="newDeviceName" class="form-input" placeholder="Device name (e.g. RS-Core #1)"
-              style="flex: 1;">
-            <button class="btn btn-primary btn-sm" onclick="generateDeviceToken()">
-              <i class="fas fa-plus"></i> Generate Token
+        <div class="settings-grid">
+          <!-- USER PROFILE CONFIG -->
+          <div class="card" id="userProfileCard" style="border-left: 4px solid var(--primary); display: none;">
+            <h3>User Profile</h3>
+            <div class="input-group">
+              <label>Display Name</label>
+              <input type="text" id="profileName" class="form-input" placeholder="Your Name">
+            </div>
+            <div class="input-group">
+              <label>Bike Info</label>
+              <input type="text" id="profileBike" class="form-input" placeholder="e.g., 2023 Yamaha R1">
+            </div>
+            <div class="input-group">
+              <label>Home Track</label>
+              <input type="text" id="profileHomeTrack" class="form-input" placeholder="e.g., Mugello">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveProfile()" style="width: 100%; margin-top: 1rem;">
+              Update Profile
             </button>
           </div>
 
-          <!-- New Token Display (shown once after generation) -->
-          <div id="newTokenDisplay"
-            style="display: none; background: rgba(76, 175, 80, 0.1); border: 1px solid var(--success); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-            <p style="font-size: 0.8rem; color: var(--success); font-weight: 600; margin-bottom: 0.5rem;">
-              <i class="fas fa-check-circle"></i> Token Generated — Copy it now, it won't be shown again!
-            </p>
-            <div style="display: flex; gap: 0.5rem;">
-              <input type="text" id="newTokenValue" class="form-input" readonly
-                style="flex: 1; font-family: monospace; background: var(--bg-secondary); font-size: 0.85rem;">
-              <button class="btn btn-sm" onclick="copyDeviceToken()" style="white-space: nowrap;">
-                <i class="fas fa-copy"></i> Copy
+          <!-- MY DEVICES (Device Token Management) -->
+          <div class="card" id="myDevicesCard" style="border-left: 4px solid var(--success); display: none;">
+            <h3><i class="fas fa-microchip"></i> My Devices</h3>
+            <p class="help-text">Generate upload tokens for your RS-Core devices. Paste the token into your device's
+              captive portal during first-time setup.</p>
+
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+              <input type="text" id="newDeviceName" class="form-input" placeholder="Device name (e.g. RS-Core #1)"
+                style="flex: 1;">
+              <button class="btn btn-primary btn-sm" onclick="generateDeviceToken()">
+                <i class="fas fa-plus"></i> Generate Token
               </button>
             </div>
-          </div>
 
-          <!-- Device List -->
-          <div id="deviceTokensList" style="min-height: 40px;">
-            <span style="color: var(--text-muted); font-size: 0.85rem;">Loading devices...</span>
-          </div>
-        </div>
-
-        <!-- SYSTEM CONFIG -->
-
-
-
-        <!-- NETWORK CONFIG -->
-        <div class="card" style="border-left: 4px solid var(--primary)">
-          <h3>Network Config</h3>
-          <div class="input-group">
-            <label>API Base URL (Cloud/Tunnel Override)</label>
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-              <input type="text" id="customApiUrl" class="form-input"
-                placeholder="https://your-tunnel.trycloudflare.com" style="flex: 1;">
-              <button class="btn btn-primary btn-sm" onclick="setCustomApiUrl()">Apply</button>
+            <!-- New Token Display (shown once after generation) -->
+            <div id="newTokenDisplay"
+              style="display: none; background: rgba(76, 175, 80, 0.1); border: 1px solid var(--success); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+              <p style="font-size: 0.8rem; color: var(--success); font-weight: 600; margin-bottom: 0.5rem;">
+                <i class="fas fa-check-circle"></i> Token Generated — Copy it now, it won't be shown again!
+              </p>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="newTokenValue" class="form-input" readonly
+                  style="flex: 1; font-family: monospace; background: var(--bg-secondary); font-size: 0.85rem;">
+                <button class="btn btn-sm" onclick="copyDeviceToken()" style="white-space: nowrap;">
+                  <i class="fas fa-copy"></i> Copy
+                </button>
+              </div>
             </div>
-            <p class="help-text" style="font-size: 0.7rem;">Default: <span id="defaultApiUrl"
-                style="font-family: monospace;"></span></p>
-            <p class="help-text" style="font-size: 0.7rem; color: var(--warning); margin-top: 0.5rem;">
-              <i class="fas fa-exclamation-triangle"></i> Use this to connect to your Nitro 5 Cloudflare tunnel.
+
+            <!-- Device List -->
+            <div id="deviceTokensList" style="min-height: 40px;">
+              <span style="color: var(--text-muted); font-size: 0.85rem;">Loading devices...</span>
+            </div>
+          </div>
+
+          <!-- SYSTEM CONFIG -->
+
+
+
+          <!-- NETWORK CONFIG -->
+          <div class="card" style="border-left: 4px solid var(--primary)">
+            <h3>Network Config</h3>
+            <div class="input-group">
+              <label>API Base URL (Cloud/Tunnel Override)</label>
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <input type="text" id="customApiUrl" class="form-input"
+                  placeholder="https://your-tunnel.trycloudflare.com" style="flex: 1;">
+                <button class="btn btn-primary btn-sm" onclick="setCustomApiUrl()">Apply</button>
+              </div>
+              <p class="help-text" style="font-size: 0.7rem;">Default: <span id="defaultApiUrl"
+                  style="font-family: monospace;"></span></p>
+              <p class="help-text" style="font-size: 0.7rem; color: var(--warning); margin-top: 0.5rem;">
+                <i class="fas fa-exclamation-triangle"></i> Use this to connect to your Nitro 5 Cloudflare tunnel.
+              </p>
+            </div>
+          </div>
+
+
+
+          <!-- DEVICE STATUS (Simplified) -->
+          <div class="card" style="border-left: 4px solid #9C27B0">
+            <h3><i class="fas fa-satellite-dish"></i> Device Status</h3>
+            <p class="help-text">Your RS-Core auto-uploads sessions when it connects to your WiFi network.</p>
+
+            <div
+              style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
+              <div style="display: flex; align-items: center; gap: 1rem;">
+                <div id="deviceStatusDot" class="status-dot" style="background: var(--error);"></div>
+                <div style="display: flex; flex-direction: column;">
+                  <span id="deviceStatusText" style="font-weight: 600;">Searching...</span>
+                  <span id="deviceStatusIP"
+                    style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
+                <i class="fas fa-search"></i> Scan
+              </button>
+            </div>
+
+            <!-- Hidden input for logic compatibility -->
+            <input type="text" id="devConfigIP" style="display: none;"
+              onchange="localStorage.setItem('lastDeviceIP', this.value)" />
+
+            <div id="lastSyncInfo" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
+              <i class="fas fa-clock"></i> Last sync: <span id="lastSyncTime">Never</span>
+            </div>
+
+            <p class="help-text"
+              style="font-size: 0.75rem; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.05);">
+              <i class="fas fa-info-circle"></i> <strong>First-time setup:</strong> Connect your phone to your device's
+              WiFi (RS-Core-XXXX, password: racesense), then enter your WiFi credentials and device token in the captive
+              portal.
             </p>
           </div>
-        </div>
 
+          <!-- ESP32 FIRMWARE CONFIG -->
+          <div class="card" style="border-left: 4px solid var(--success)">
+            <h3>ESP32 Firmware</h3>
+            <p class="help-text">Manage remote datalogger protocol version and OTA updates</p>
 
+            <div id="espFirmwareStatus" class="input-group"
+              style="padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <span style="font-size: 0.9rem; color: var(--text-muted);">Current Version</span>
+                <strong id="espCurrentVersion" style="font-family: monospace;">Checking...</strong>
+              </div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <span style="font-size: 0.9rem; color: var(--text-muted);">Server Version</span>
+                <strong id="espServerVersion" style="font-family: monospace;">---</strong>
+              </div>
 
-        <!-- DEVICE STATUS (Simplified) -->
-        <div class="card" style="border-left: 4px solid #9C27B0">
-          <h3><i class="fas fa-satellite-dish"></i> Device Status</h3>
-          <p class="help-text">Your RS-Core auto-uploads sessions when it connects to your WiFi network.</p>
+              <button class="btn btn-secondary btn-sm" onclick="checkEspVersionManual()" style="width: 100%;">
+                <i class="fas fa-sync"></i> Refresh Version Status
+              </button>
+            </div>
 
-          <div
-            style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-              <div id="deviceStatusDot" class="status-dot" style="background: var(--error);"></div>
-              <div style="display: flex; flex-direction: column;">
-                <span id="deviceStatusText" style="font-weight: 600;">Searching...</span>
-                <span id="deviceStatusIP"
-                  style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
+            <div id="espUpdateArea"
+              style="display: none; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
+              <div id="espUpdateWarning" style="color: var(--warning); font-size: 0.85rem; margin-bottom: 1rem;">
+                <i class="fas fa-exclamation-triangle"></i> Hardware version mismatch detected.
+              </div>
+
+              <button class="btn btn-primary" id="btnEspUpdate" onclick="flashLatestEspWifi()" style="width: 100%;">
+                <i class="fas fa-bolt"></i> Flash Latest (WiFi OTA)
+              </button>
+
+              <div id="espOtaProgress" style="display: none; margin-top: 1rem;">
+                <div style="height: 6px; background: #333; width: 100%; border-radius: 3px; overflow: hidden;">
+                  <div id="espOtaBar"
+                    style="height: 100%; background: var(--primary); width: 0%; transition: width 0.3s;"></div>
+                </div>
+                <div id="espOtaStatus"
+                  style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">Starting
+                  upload...</div>
               </div>
             </div>
-            <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
-              <i class="fas fa-search"></i> Scan
-            </button>
           </div>
 
-          <!-- Hidden input for logic compatibility -->
-          <input type="text" id="devConfigIP" style="display: none;"
-            onchange="localStorage.setItem('lastDeviceIP', this.value)" />
+          <!-- ADMIN TOOLS -->
+          <div class="card" id="adminToolsCard" style="border-left: 4px solid var(--error); display: none;">
+            <h3>Admin Tools</h3>
+            <p class="help-text">Manage user subscriptions and system settings</p>
 
-          <div id="lastSyncInfo" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
-            <i class="fas fa-clock"></i> Last sync: <span id="lastSyncTime">Never</span>
-          </div>
-
-          <p class="help-text"
-            style="font-size: 0.75rem; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.05);">
-            <i class="fas fa-info-circle"></i> <strong>First-time setup:</strong> Connect your phone to your device's
-            WiFi (RS-Core-XXXX, password: racesense), then enter your WiFi credentials and device token in the captive
-            portal.
-          </p>
-        </div>
-
-        <!-- ESP32 FIRMWARE CONFIG -->
-        <div class="card" style="border-left: 4px solid var(--success)">
-          <h3>ESP32 Firmware</h3>
-          <p class="help-text">Manage remote datalogger protocol version and OTA updates</p>
-
-          <div id="espFirmwareStatus" class="input-group"
-            style="padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-              <span style="font-size: 0.9rem; color: var(--text-muted);">Current Version</span>
-              <strong id="espCurrentVersion" style="font-family: monospace;">Checking...</strong>
-            </div>
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-              <span style="font-size: 0.9rem; color: var(--text-muted);">Server Version</span>
-              <strong id="espServerVersion" style="font-family: monospace;">---</strong>
-            </div>
-
-            <button class="btn btn-secondary btn-sm" onclick="checkEspVersionManual()" style="width: 100%;">
-              <i class="fas fa-sync"></i> Refresh Version Status
-            </button>
-          </div>
-
-          <div id="espUpdateArea"
-            style="display: none; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
-            <div id="espUpdateWarning" style="color: var(--warning); font-size: 0.85rem; margin-bottom: 1rem;">
-              <i class="fas fa-exclamation-triangle"></i> Hardware version mismatch detected.
-            </div>
-
-            <button class="btn btn-primary" id="btnEspUpdate" onclick="flashLatestEspWifi()" style="width: 100%;">
-              <i class="fas fa-bolt"></i> Flash Latest (WiFi OTA)
-            </button>
-
-            <div id="espOtaProgress" style="display: none; margin-top: 1rem;">
-              <div style="height: 6px; background: #333; width: 100%; border-radius: 3px; overflow: hidden;">
-                <div id="espOtaBar"
-                  style="height: 100%; background: var(--primary); width: 0%; transition: width 0.3s;"></div>
+            <div class="input-group">
+              <label>Set User Tier</label>
+              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
+                <input type="number" id="adminUserId" class="form-input" placeholder="User ID" style="width: 80px;">
+                <select id="adminTierSelect" class="form-input" style="flex: 1;">
+                  <option value="free">Free</option>
+                  <option value="pro">Pro</option>
+                  <option value="team">Team</option>
+                </select>
+                <button class="btn btn-danger btn-sm" onclick="adminSetTier()">Set Tier</button>
               </div>
-              <div id="espOtaStatus"
-                style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">Starting
-                upload...</div>
             </div>
           </div>
+
+          <!-- LED CONFIG -->
+
+
+
+          <!-- Service Maintenance -->
+
+
         </div>
-
-        <!-- ADMIN TOOLS -->
-        <div class="card" id="adminToolsCard" style="border-left: 4px solid var(--error); display: none;">
-          <h3>Admin Tools</h3>
-          <p class="help-text">Manage user subscriptions and system settings</p>
-
-          <div class="input-group">
-            <label>Set User Tier</label>
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-              <input type="number" id="adminUserId" class="form-input" placeholder="User ID" style="width: 80px;">
-              <select id="adminTierSelect" class="form-input" style="flex: 1;">
-                <option value="free">Free</option>
-                <option value="pro">Pro</option>
-                <option value="team">Team</option>
-              </select>
-              <button class="btn btn-danger btn-sm" onclick="adminSetTier()">Set Tier</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- LED CONFIG -->
-
-
-
-        <!-- Service Maintenance -->
-
-
       </div>
-    </div>
 
-    <!-- Admin View -->
-    <div class="view" id="adminView">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h2 style="margin: 0;"><i class="fas fa-user-shield"></i> User Management</h2>
-        <div class="admin-stats" id="adminStats"
-          style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-dim);">
+      <!-- Admin View -->
+      <div class="view" id="adminView">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 style="margin: 0;"><i class="fas fa-user-shield"></i> User Management</h2>
+          <div class="admin-stats" id="adminStats"
+            style="display: flex; gap: 1rem; font-size: 0.85rem; color: var(--text-dim);">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Admin Toolbar -->
+        <div class="filter-bar" style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
+          <div style="flex: 2; min-width: 200px; position: relative;">
+            <input type="text" id="adminSearchInput" class="filter-select" style="width: 100%; padding-left: 2.5rem;"
+              placeholder="Search by email or name..." />
+            <i class="fas fa-search"
+              style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted);"></i>
+          </div>
+          <select id="adminTierFilter" class="filter-select" style="flex: 1;" onchange="filterAdminUsers()">
+            <option value="">All Tiers</option>
+            <option value="free">Free</option>
+            <option value="pro">Pro</option>
+            <option value="team">Team</option>
+          </select>
+          <select id="adminApprovalFilter" class="filter-select" style="flex: 1;" onchange="filterAdminUsers()">
+            <option value="">All Status</option>
+            <option value="pending">⏳ Pending</option>
+            <option value="approved">✅ Approved</option>
+          </select>
+          <button onclick="searchAdminUsers()" class="btn btn-primary btn-sm">Search</button>
+        </div>
+
+        <!-- Users Table -->
+        <div class="card" style="padding: 0; overflow: hidden; border: 1px solid var(--border);">
+          <div style="overflow-x: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+              <thead style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border);">
+                <tr>
+                  <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">ID</th>
+                  <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Name / Email
+                  </th>
+                  <th style="padding: 1rem; text-align: center; font-weight: 600; color: var(--text-muted);">Status</th>
+                  <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Tier</th>
+                  <th style="padding: 1rem; text-align: center; font-weight: 600; color: var(--text-muted);">Sessions
+                  </th>
+                  <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Joined</th>
+                  <th style="padding: 1rem; text-align: right; font-weight: 600; color: var(--text-muted);">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="adminUsersBody">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pagination -->
+        <div id="adminPagination" style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
           <!-- Populated by JS -->
         </div>
       </div>
 
-      <!-- Admin Toolbar -->
-      <div class="filter-bar" style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
-        <div style="flex: 2; min-width: 200px; position: relative;">
-          <input type="text" id="adminSearchInput" class="filter-select" style="width: 100%; padding-left: 2.5rem;"
-            placeholder="Search by email or name..." />
-          <i class="fas fa-search"
-            style="position: absolute; left: 1rem; top: 50%; transform: translateY(-50%); color: var(--text-muted);"></i>
-        </div>
-        <select id="adminTierFilter" class="filter-select" style="flex: 1;" onchange="filterAdminUsers()">
-          <option value="">All Tiers</option>
-          <option value="free">Free</option>
-          <option value="pro">Pro</option>
-          <option value="team">Team</option>
-        </select>
-        <button onclick="searchAdminUsers()" class="btn btn-primary btn-sm">Search</button>
+      <!-- LED Config Modal -->
+
+
+
+      <!-- Session Detail View (Dynamic) -->
+      <div class="view" id="sessionDetailView">
+        <button class="back-btn" onclick="showView('sessions')">
+          ← Back to Sessions
+        </button>
+        <div id="sessionDetailContent"></div>
       </div>
 
-      <!-- Users Table -->
-      <div class="card" style="padding: 0; overflow: hidden; border: 1px solid var(--border);">
-        <div style="overflow-x: auto;">
-          <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
-            <thead style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border);">
-              <tr>
-                <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">ID</th>
-                <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Name / Email
-                </th>
-                <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Tier</th>
-                <th style="padding: 1rem; text-align: center; font-weight: 600; color: var(--text-muted);">Sessions</th>
-                <th style="padding: 1rem; text-align: left; font-weight: 600; color: var(--text-muted);">Joined</th>
-                <th style="padding: 1rem; text-align: right; font-weight: 600; color: var(--text-muted);">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="adminUsersBody">
-              <!-- Populated by JS -->
-            </tbody>
-          </table>
-        </div>
+      <!-- Track Detail View (Dynamic) -->
+      <div class="view" id="trackDetailView">
+        <button class="back-btn" onclick="showView('tracks')">
+          ← Back to Tracks
+        </button>
+        <div id="trackDetailContent"></div>
       </div>
 
-      <!-- Pagination -->
-      <div id="adminPagination" style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">
-        <!-- Populated by JS -->
+      <!-- User Profile View (Dynamic) -->
+      <div class="view" id="userProfileView">
+        <button class="back-btn" onclick="history.back() || showView('community')">
+          ← Back
+        </button>
+        <div id="userProfileContent"></div>
       </div>
-    </div>
 
-    <!-- LED Config Modal -->
-
-
-
-    <!-- Session Detail View (Dynamic) -->
-    <div class="view" id="sessionDetailView">
-      <button class="back-btn" onclick="showView('sessions')">
-        ← Back to Sessions
-      </button>
-      <div id="sessionDetailContent"></div>
-    </div>
-
-    <!-- Track Detail View (Dynamic) -->
-    <div class="view" id="trackDetailView">
-      <button class="back-btn" onclick="showView('tracks')">
-        ← Back to Tracks
-      </button>
-      <div id="trackDetailContent"></div>
-    </div>
-
-    <!-- User Profile View (Dynamic) -->
-    <div class="view" id="userProfileView">
-      <button class="back-btn" onclick="history.back() || showView('community')">
-        ← Back
-      </button>
-      <div id="userProfileContent"></div>
-    </div>
-
-    <!-- Comparison View (Dynamic) -->
-    <div class="view" id="comparisonView">
-      <button class="back-btn" onclick="showView('sessions')">
-        ← Back
-      </button>
-      <div id="comparisonContent"></div>
-    </div>
-  </main>
+      <!-- Comparison View (Dynamic) -->
+      <div class="view" id="comparisonView">
+        <button class="back-btn" onclick="showView('sessions')">
+          ← Back
+        </button>
+        <div id="comparisonContent"></div>
+      </div>
+    </main>
+  </div><!-- end #appContent -->
 
   <!-- Modal -->
   <div class="modal" id="modal">
@@ -816,7 +991,8 @@
           <div class="map-controls">
             <label><input type="radio" name="pbMapMode" value="speed" checked onchange="updateHeatmapMode()" />
               Speed</label>
-            <label><input type="radio" name="pbMapMode" value="accel" onchange="updateHeatmapMode()" /> G-Force</label>
+            <label><input type="radio" name="pbMapMode" value="accel" onchange="updateHeatmapMode()" />
+              G-Force</label>
             <label><input type="radio" name="pbMapMode" value="clean" onchange="updateHeatmapMode()" /> Line</label>
           </div>
         </div>
@@ -996,7 +1172,8 @@
           <label>Password</label>
           <input type="password" id="loginPassword" class="form-input" placeholder="••••••••">
         </div>
-        <div id="loginError" style="color: var(--error); font-size: 0.8rem; margin-bottom: 1rem; display: none;"></div>
+        <div id="loginError" style="color: var(--error); font-size: 0.8rem; margin-bottom: 1rem; display: none;">
+        </div>
         <div class="modal-actions">
           <button class="btn btn-primary" style="width: 100%;" onclick="submitLogin()">Login</button>
         </div>
@@ -1024,10 +1201,37 @@
         <div class="modal-actions">
           <button class="btn btn-primary" style="width: 100%;" onclick="submitRegister()">Register</button>
         </div>
-        <p style="text-align: center; margin-top: 1rem; font-size: 0.85rem; color: var(--text-muted);">
+        <p
+          style="text-align: center; margin-top: 0.75rem; font-size: 0.8rem; color: var(--text-muted); line-height: 1.5;">
+          <i class="fas fa-info-circle"></i> After registration, your account must be approved by an admin before you
+          can log in.
+        </p>
+        <p style="text-align: center; margin-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted);">
           Already have an account? <a href="#" onclick="toggleAuthMode('login')"
             style="color: var(--primary);">Login</a>
         </p>
+      </div>
+
+      <!-- Registration Success / Pending Approval Panel -->
+      <div id="regSuccessPanel" style="display: none; text-align: center;">
+        <div style="font-size: 3.5rem; margin-bottom: 1rem;">✅</div>
+        <h3 style="margin-bottom: 0.75rem; color: var(--success);">Registration Successful!</h3>
+        <p style="color: var(--text-dim); line-height: 1.6; margin-bottom: 1.5rem;">
+          Your account has been created and is <strong style="color: var(--warning);">pending admin approval</strong>.
+          You will be able to login once an administrator approves your account.
+        </p>
+        <div
+          style="background: rgba(255,162,0,0.08); border: 1px solid rgba(255,162,0,0.2); border-radius: 10px; padding: 1rem; margin-bottom: 1.5rem;">
+          <p style="font-size: 0.85rem; color: var(--text-dim); margin-bottom: 0.5rem;">Need help or want to speed
+            things up?</p>
+          <a href="mailto:support@racesense.in"
+            style="color: var(--primary); font-weight: 600; font-size: 0.95rem; text-decoration: none;">
+            <i class="fas fa-envelope"></i> support@racesense.in
+          </a>
+        </div>
+        <button class="btn secondary" style="width: 100%;" onclick="toggleAuthMode('login')">
+          <i class="fas fa-arrow-left"></i> Back to Login
+        </button>
       </div>
     </div>
   </div>
@@ -1056,7 +1260,8 @@
     <div class="modal-content" style="max-width: 400px;">
       <span class="modal-close" onclick="closeCreateTeamModal()">&times;</span>
       <h3 style="margin-bottom: 1.5rem;">👥 Create New Team</h3>
-      <p class="help-text" style="margin-bottom: 1.5rem;">Create a team to manage riders and view their telemetry data.
+      <p class="help-text" style="margin-bottom: 1.5rem;">Create a team to manage riders and view their telemetry
+        data.
       </p>
 
       <div class="form-group">
@@ -1082,7 +1287,8 @@
       <span class="modal-close" onclick="closeTeamInviteModal()">&times;</span>
       <h3 style="margin-bottom: 1.5rem;">🔗 Team Invite</h3>
 
-      <p class="help-text" style="margin-bottom: 1rem;">Share this link with riders you want to invite to your team.</p>
+      <p class="help-text" style="margin-bottom: 1rem;">Share this link with riders you want to invite to your team.
+      </p>
 
       <div class="input-group">
         <label>Invite Link</label>
@@ -1142,7 +1348,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 
 </body>
 
