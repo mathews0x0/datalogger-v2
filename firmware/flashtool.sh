@@ -82,8 +82,12 @@ do_flash_os() {
     fi
     $ESPTOOL_CMD --chip esp32s3 --port "$PORT" --baud $BAUD --before default-reset --after hard-reset write-flash -z 0 "$FIRMWARE_BIN"
     if [ $? -ne 0 ]; then echo -e "${RED}Flash failed!${NC}"; exit 1; fi
-    echo -e "${GREEN}Wait 8s for USB re-enumeration...${NC}"
-    sleep 8
+    
+    echo -e "${YELLOW}Because this board uses Native USB, auto-reset via RTS fails.${NC}"
+    echo -e "${YELLOW}Please manually press the RESET/EN button on the ESP32 now!${NC}"
+    read -p "Press Enter to continue once you have reset the board..."
+    echo -e "${GREEN}Wait 5s for USB re-enumeration...${NC}"
+    sleep 5
     # Re-detect port after boot
     PORT=$(ls /dev/cu.usbmodem* /dev/tty.usbmodem* 2>/dev/null | head -n 1)
 }

@@ -5827,62 +5827,25 @@ async function triggerBrowserSync(deviceIP) {
     }
 
     try {
-        // 1. Get file list from ESP32
-        const listRes = await fetch(`http://${ip}/list?_t=${Date.now()}`);
-        const files = await listRes.json();
-
-        if (!files || files.length === 0) {
-            showToast('No new files on device', 'info');
-            return;
-        }
-
-        showToast(`Found ${files.length} file(s) on device. Syncing...`, 'info');
-        let uploaded = 0;
-        let failed = 0;
-
-        // 2. Download each file from ESP32 and upload to cloud
-        for (const fname of files) {
-            try {
-                const fileRes = await fetch(`http://${ip}/download/${fname}?_t=${Date.now()}`);
-                const content = await fileRes.text();
-
-                if (!content || content.length < 10) continue;
-
-                const uploadRes = await apiCall('/api/upload', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: fname, content: content })
-                });
-
-                if (uploadRes) {
-                    uploaded++;
-                    // Delete from device after successful upload
-                    try {
-                        await fetch(`http://${ip}/delete/${fname}`, { method: 'DELETE' });
-                    } catch (e) { /* ignore delete errors */ }
-                } else {
-                    failed++;
-                }
-            } catch (e) {
-                console.error(`[Sync] Failed: ${fname}`, e);
-                failed++;
+        const syncRes = await apiCall('/api/sync/device', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ip: ip })
+        });
+        
+        if (syncRes && syncRes.success) {
+            const uploaded = syncRes.synced ? syncRes.synced.length : 0;
+            if (uploaded > 0) {
+                showToast(`🏁 ${uploaded} session${uploaded > 1 ? 's' : ''} synced!`, 'success');
+                localStorage.setItem('lastSyncTime', new Date().toISOString());
+                updateLastSyncDisplay();
+                loadLearningFiles();
+            } else {
+                showToast('No new files on device', 'info');
             }
+        } else {
+            showToast('Sync failed on backend', 'error');
         }
-
-        // 3. Report results
-        if (uploaded > 0) {
-            showToast(`🏁 ${uploaded} session${uploaded > 1 ? 's' : ''} synced!`, 'success');
-            localStorage.setItem('lastSyncTime', new Date().toISOString());
-            updateLastSyncDisplay();
-            loadLearningFiles();
-        }
-        if (failed > 0) {
-            showToast(`${failed} file(s) failed to sync`, 'warning');
-        }
-        if (uploaded === 0 && failed === 0) {
-            showToast('No new sessions to sync', 'info');
-        }
-
     } catch (e) {
         showToast('Sync failed: ' + e.message, 'error');
     } finally {

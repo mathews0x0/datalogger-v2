@@ -5,6 +5,14 @@ import os
 import gc
 import _thread
 
+# --- SAFE BOOT WINDOW ---
+print("=== SAFE BOOT WINDOW ===")
+print("You have 5 seconds to press Ctrl-C via mpremote to halt the logger.")
+for i in range(5, 0, -1):
+    print(f"Booting in {i}...")
+    time.sleep(1)
+print("=== BOOTING ===")
+
 # Drivers
 from drivers.gps import GPS
 from drivers.bmi323 import BMI323
@@ -25,15 +33,16 @@ PIN_SD_MOSI = 11
 PIN_SD_MISO = 13
 PIN_SD_CS = 10
 PIN_SD_CD = 3        # Card Detect
-PIN_BATTERY_ADC = 35 # VBAT-SENSE
+PIN_BATTERY_ADC = 8  # VBAT-SENSE (Updated for S3 ADC1)
 PIN_DEBUG_LED = 2    # Blue Debug LED
 
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
     
-    # 1. LED Manager
+    # 1. LED Manager and Onboard Debug LED
     led = LEDManager(PIN_LED_STATUS, count=16) # 16 LED Matrix
     led.animation_boot(500) 
+    onboard_led = machine.Pin(PIN_DEBUG_LED, machine.Pin.OUT)
     
     # 2. Power Stability Delay
     print("Stabilizing power...")
@@ -74,9 +83,9 @@ def setup():
 
     # 7. GPS
     # S3 UART2 is flexible
-    gps_uart = machine.UART(1, baudrate=9600, tx=machine.Pin(PIN_GPS_TX), rx=machine.Pin(PIN_GPS_RX), timeout=0)
+    gps_uart = machine.UART(1, baudrate=115200, tx=machine.Pin(PIN_GPS_TX), rx=machine.Pin(PIN_GPS_RX), timeout=0)
     gps = GPS(gps_uart)
-    print("GPS: Neo-M8N Initialized")
+    print("GPS: Neo-M8N Initialized at 115200 baud")
 
     # 8. Track Engine
     track_eng = TrackEngine()
@@ -97,23 +106,24 @@ def setup():
     # 10. Auto-Upload in background (STA mode only)
     try:
         from lib.uploader import upload_all
-        _thread.start_new_thread(upload_all, (sm, led))
+        _thread.start_new_thread(upload_all, (sm, onboard_led))
         print("[Upload] Background upload started")
     except Exception as e:
         print(f"[Upload] Skip: {e}")
 
     # 11. Start MiniServer (Second Core)
-    server = MiniServer(sm, led=led, gps_state=gps, track_engine=track_eng)
+    server = MiniServer(sm, led=onboard_led, gps_state=gps, track_engine=track_eng)
     _thread.start_new_thread(server.start, ())
     print("Server: Listening in background (Core 1)")
 
-    return led, gps, imu, sm, track_eng, mode, vbat_adc
+    return led, onboard_led, gps, imu, sm, track_eng, mode, vbat_adc
 
 def main_loop():
-    led, gps, imu, sm, track_eng, wifi_mode, vbat_adc = setup()
+    led, onboard_led, gps, imu, sm, track_eng, wifi_mode, vbat_adc = setup()
     
     # Debug LED for AP Mode / Status
-    onboard_led = machine.Pin(PIN_DEBUG_LED, machine.Pin.OUT)
+    led_timer = 0
+
     
     print("\n[System] Logging Active (Core 0)")
     log_file = sm.get_log_file()
@@ -237,11 +247,27 @@ def main_loop():
 
             led.update_with_events(base_state)
             
-            # 9. Status LED Blink
+            # 9. Status LED Blink Patterns (GPIO 2)
+            led_timer += 1
             if wifi_mode == "AP":
-                onboard_led.value(not onboard_led.value()) 
+                # AP Mode: Fast blink (5Hz)
+                onboard_led.value(1 if led_timer % 2 == 0 else 0)
+            elif base_state == "SEARCHING":
+                # Searching for GPS: Slow blink (1Hz)
+                onboard_led.value(1 if led_timer % 10 < 5 else 0)
+            elif base_state == "LOGGING":
+                # Logging: Solid On
+                onboard_led.value(1)
+            elif base_state == "PAUSED":
+                # Paused in Pits: Very slow breath-like blink (0.5Hz)
+                onboard_led.value(1 if led_timer % 20 < 10 else 0)
             else:
                 onboard_led.value(0)
+                
+            if led_timer % 10 == 0:
+                print(f"[Loop Heartbeat] Wifi: {wifi_mode} | State: {base_state} | Timer: {led_timer} | Valid: {fix.get('valid')}")
+
+
 
             # 10Hz target
             time.sleep(0.1)
@@ -250,6 +276,12 @@ if __name__ == "__main__":
     try:
         main_loop()
     except Exception as e:
+        import sys
         print(f"CRITICAL SYSTEM ERROR: {e}")
+        try:
+            with open('/crash.log', 'w') as f:
+                sys.print_exception(e, f)
+        except:
+            pass
         time.sleep(5)
         machine.reset()

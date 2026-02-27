@@ -120,13 +120,18 @@ def protect_api():
             '/api/status',
             '/api/auth/login',
             '/api/auth/register',
-            '/api/public/sessions'
+            '/api/public/sessions',
+            '/api/sync/device'
         ]
         if request.path in public_paths:
             return
             
         # Also allow shared and public session data
         if request.path.startswith('/api/shared/') or request.path.startswith('/api/public/'):
+            return
+        
+        # Allow device endpoints (scan, connection checks)
+        if request.path.startswith('/api/device/'):
             return
             
         # Also allow logout (it handles its own JWT if needed, or just clears cookies)
@@ -1759,6 +1764,117 @@ def upload_file():
 
     except Exception as e:
         print(f"Upload Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sync/device', methods=['POST'])
+def sync_from_device():
+    """Pull session files from the ESP32 MiniServer and save them locally.
+    
+    The web UI sends: { "ip": "192.168.1.X" }
+    This endpoint:
+      1. Hits http://<ip>/list to get available session files
+      2. Downloads each file via http://<ip>/download/<filename>
+      3. Saves to LEARNING_DIR
+      4. Deletes from ESP32 via http://<ip>/delete/<filename>
+      5. Triggers auto-analysis on each file
+    """
+    data = request.get_json()
+    ip = data.get('ip') if data else None
+
+    if not ip:
+        return jsonify({"error": "Missing device IP"}), 400
+
+    base_url = f"http://{ip}"
+    synced = []
+    failed = []
+
+    try:
+        # 1. Get file list from ESP32
+        list_resp = requests.get(f"{base_url}/list", timeout=5)
+        if list_resp.status_code != 200:
+            return jsonify({"error": f"Device returned status {list_resp.status_code}"}), 502
+        
+        files = list_resp.json().get('files', [])
+        if not files:
+            return jsonify({"success": True, "synced": [], "failed": [], "message": "No files on device"})
+
+        # Resolve user from session/JWT (optional - allow anonymous in dev)
+        user_id = None
+        try:
+            verify_jwt_in_request(optional=True)
+            user_id = get_jwt_identity()
+            if user_id:
+                user_id = int(user_id)
+        except:
+            pass
+
+        # 2. Download each file
+        for fname in files:
+            try:
+                dl_resp = requests.get(f"{base_url}/download/{fname}", timeout=10)
+                if dl_resp.status_code != 200:
+                    failed.append(fname)
+                    continue
+                
+                content = dl_resp.text
+                if not content or len(content.strip()) < 10:
+                    # Skip empty/header-only files
+                    # Still delete from device to clean up
+                    try:
+                        requests.get(f"{base_url}/delete/{fname}", timeout=5)
+                    except:
+                        pass
+                    continue
+
+                # Save to learning directory
+                safe_name = os.path.basename(fname)
+                if not safe_name.lower().endswith('.csv'):
+                    safe_name += '.csv'
+                
+                save_path = config.LEARNING_DIR / safe_name
+                with open(save_path, 'w') as f:
+                    f.write(content)
+                
+                print(f"[Sync] Downloaded: {fname} ({len(content)} bytes)")
+
+                # Auto-trigger analysis
+                try:
+                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
+                    result = subprocess.run(['python3', script_path, str(save_path)], capture_output=True, text=True, timeout=60)
+                    if result.returncode == 0 and user_id:
+                        register_new_sessions(user_id)
+                        print(f"[Sync] Analyzed and registered: {fname}")
+                    elif result.returncode != 0:
+                        print(f"[Sync] Analysis failed for {fname}: {result.stderr[:200]}")
+                except Exception as ae:
+                    print(f"[Sync] Analysis error for {fname}: {ae}")
+
+                # Delete from device after successful save
+                try:
+                    requests.get(f"{base_url}/delete/{fname}", timeout=5)
+                except:
+                    pass
+
+                synced.append(fname)
+
+            except Exception as e:
+                print(f"[Sync] Failed to download {fname}: {e}")
+                failed.append(fname)
+
+        return jsonify({
+            "success": True,
+            "synced": synced,
+            "failed": failed,
+            "total": len(files)
+        })
+
+    except requests.exceptions.ConnectionError:
+        return jsonify({"error": f"Cannot connect to device at {ip}"}), 502
+    except requests.exceptions.Timeout:
+        return jsonify({"error": f"Device at {ip} timed out"}), 504
+    except Exception as e:
+        print(f"[Sync] Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
