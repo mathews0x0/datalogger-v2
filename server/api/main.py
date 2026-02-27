@@ -209,7 +209,7 @@ def get_local_firmware_version():
 
 @app.route('/api/auth/register', methods=['POST'])
 def register():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     email = data.get('email')
     password = data.get('password')
     name = data.get('name', '')
@@ -240,16 +240,19 @@ def register():
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
+    if not data:
+        return jsonify({"error": "Invalid login request. Please ensure you have provided your credentials."}), 400
+        
     email = data.get('email')
     password = data.get('password')
 
     if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
+        return jsonify({"error": "Please provide both an email address and a password."}), 400
 
     user = User.query.filter_by(email=email).first()
     if not user or not user.check_password(password):
-        return jsonify({"error": "Invalid email or password"}), 401
+        return jsonify({"error": "The email or password you entered is incorrect. Please try again."}), 400
 
     # Check if user is approved
     if not user.is_approved:
@@ -1882,7 +1885,7 @@ def sync_from_device():
         # 1. Get file list from ESP32
         list_resp = requests.get(f"{base_url}/list", timeout=5)
         if list_resp.status_code != 200:
-            return jsonify({"error": f"Device returned status {list_resp.status_code}"}), 502
+            return jsonify({"error": "The device returned an unexpected error. Please try restarting it."}), 400
         
         files = list_resp.json().get('files', [])
         if not files:
@@ -1959,14 +1962,12 @@ def sync_from_device():
         })
 
     except requests.exceptions.ConnectionError:
-        return jsonify({"error": f"Cannot connect to device at {ip}"}), 502
+        return jsonify({"error": "Unable to establish a connection with the device. Please verify it is powered on and in range."}), 400
     except requests.exceptions.Timeout:
-        return jsonify({"error": f"Device at {ip} timed out"}), 504
+        return jsonify({"error": "The device connection timed out. Please bring it closer to the router and try again."}), 400
     except Exception as e:
         print(f"[Sync] Error: {e}")
-        if IS_PRODUCTION:
-            return jsonify({"error": "Sync failed"}), 500
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "An unexpected error occurred while communicating with the device."}), 400
 
 
 def register_new_sessions(user_id):
@@ -2235,7 +2236,7 @@ def configure_device():
              return jsonify({"error": f"Device rejected config: {resp.status_code}"}), 400
              
     except Exception as e:
-        return jsonify({"error": f"Failed to connect to device: {e}"}), 500
+        return jsonify({"error": "We couldn't reach the device. Please check its power and network connection."}), 400
 
 @app.route('/api/device/scan', methods=['GET'])
 @local_only

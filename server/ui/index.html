@@ -9,6 +9,7 @@
   <meta name="theme-color" content="#050505" />
   <meta name="keywords" content="motorcycle telemetry, trackday analytics, lap timer, data logger, racing, racesense" />
   <title>RaceSense — Ride Faster. Ride Smarter.</title>
+  <link rel="icon" type="image/png" href="assets/logoSmall.png" />
   <link rel="stylesheet" href="styles.css?v=8" />
 </head>
 
@@ -16,7 +17,11 @@
   <!-- Header -->
   <header class="header" id="appHeader">
     <div style="display: flex; align-items: center; gap: 1.5rem;">
-      <h1><i class="fas fa-bolt"></i> RaceSense</h1>
+      <h1 style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;" onclick="window.location.reload()">
+        <img src="assets/logoSmall.png" alt="RS"
+          style="height: 32px; width: auto; display: block; mix-blend-mode: screen;">
+        RaceSense
+      </h1>
 
       <div id="headerStatusBadges" style="display: none; align-items: center; gap: 0.75rem;">
         <!-- Connection Status -->
@@ -76,7 +81,11 @@
         <div class="hero-badge">
           <i class="fas fa-microchip"></i> HARDWARE + SOFTWARE TELEMETRY PLATFORM
         </div>
-        <h1 class="hero-title">
+        <div style="margin-bottom: 2rem; display: flex; justify-content: center;">
+          <img src="assets/RS%20full%20logo.png" alt="RaceSense Logo"
+            style="width: 100%; max-width: 600px; height: auto; mix-blend-mode: screen; filter: drop-shadow(0 10px 40px rgba(255,102,0,0.3)); mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent); -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);" />
+        </div>
+        <h1 class="hero-title" style="margin-top: 0rem; font-size: 3rem;">
           Ride <span class="hero-gradient-text">Faster.</span><br />
           Ride <span class="hero-gradient-text">Smarter.</span>
         </h1>
