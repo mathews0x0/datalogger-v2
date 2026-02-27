@@ -170,6 +170,7 @@ class DeviceToken(db.Model):
     device_name = db.Column(db.String(100), default='RS-Core')
     revoked = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=True)  # Optional expiration
     last_sync = db.Column(db.DateTime, nullable=True)
 
     def to_dict(self):
@@ -179,5 +180,6 @@ class DeviceToken(db.Model):
             "device_name": self.device_name,
             "revoked": self.revoked,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "last_sync": self.last_sync.isoformat() if self.last_sync else None
+            "last_sync": self.last_sync.isoformat() if self.last_sync else None,
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
         }

@@ -25,5 +25,12 @@ from api.main import app
 if __name__ == "__main__":
     import os
     is_dev = os.environ.get('FLASK_ENV', 'development') == 'development'
-    print(f"[Datalogger V2] Starting server... (env={'development' if is_dev else 'production'})")
-    app.run(host='0.0.0.0', port=6969, debug=is_dev)
+    port = int(os.environ.get('PORT', 6969))
+    print(f"[RaceSense] Starting server... (env={'development' if is_dev else 'production'}, port={port})")
+    if is_dev:
+        app.run(host='0.0.0.0', port=port, debug=True)
+    else:
+        # In production, use gunicorn instead of Flask dev server
+        # This block is a fallback; use: gunicorn -w 4 -b 0.0.0.0:6969 api.main:app
+        print("[RaceSense] WARNING: Running Flask dev server in production. Use gunicorn instead.")
+        app.run(host='0.0.0.0', port=port, debug=False)

@@ -21,15 +21,24 @@ app = Flask(__name__, static_folder=static_path, static_url_path='')
 FLASK_ENV = os.environ.get('FLASK_ENV', 'development')
 IS_PRODUCTION = FLASK_ENV == 'production'
 
+# Cloud mode disables local-network device endpoints (SSRF risk)
+IS_CLOUD = os.environ.get('RACESENSE_CLOUD', 'false').lower() == 'true'
+
 # CORS configuration — configurable via env var
-DEFAULT_ORIGINS = [
-    "http://localhost",
-    "https://localhost",
-    "capacitor://localhost",
-    "http://127.0.0.1",
-    "http://localhost:6969",
-    "http://192.168.1.35:6969"
-]
+if IS_PRODUCTION:
+    DEFAULT_ORIGINS = [
+        # Set your production domain here
+        os.environ.get('RACESENSE_DOMAIN', 'https://app.racesense.in'),
+    ]
+else:
+    DEFAULT_ORIGINS = [
+        "http://localhost",
+        "https://localhost",
+        "capacitor://localhost",
+        "http://127.0.0.1",
+        "http://localhost:6969",
+        "http://192.168.1.35:6969"
+    ]
 cors_origins_env = os.environ.get('CORS_ORIGINS')
 if cors_origins_env:
     cors_origins = [o.strip() for o in cors_origins_env.split(',')]
@@ -42,6 +51,16 @@ def add_header(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+    
+    # Security headers
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    if IS_PRODUCTION:
+        response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        response.headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://*.tile.openstreetmap.org; connect-src 'self'"
+    
     return response
 
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, set_access_cookies, unset_jwt_cookies, verify_jwt_in_request
@@ -53,6 +72,7 @@ OUTPUT_DIR = config.DATA_DIR
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(config.DATA_DIR / 'racesense.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max request size
 # JWT Secret — MUST be set via env var in production
 _jwt_secret = os.environ.get('JWT_SECRET_KEY')
 if IS_PRODUCTION and not _jwt_secret:
@@ -63,6 +83,8 @@ app.config['JWT_COOKIE_CSRF_PROTECT'] = IS_PRODUCTION  # Enable CSRF protection 
 app.config['JWT_ACCESS_COOKIE_PATH'] = '/api/'
 app.config['JWT_REFRESH_COOKIE_PATH'] = '/api/auth/refresh'
 app.config['JWT_COOKIE_HTTPONLY'] = True
+app.config['JWT_COOKIE_SECURE'] = IS_PRODUCTION  # Only send cookies over HTTPS in production
+app.config['JWT_COOKIE_SAMESITE'] = 'Lax'  # Prevent CSRF via cross-site requests
 
 db.init_app(app)
 bcrypt.init_app(app)
@@ -110,6 +132,15 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def local_only(f):
+    """Block endpoint when running in cloud mode (SSRF protection)"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if IS_CLOUD:
+            return jsonify({"error": "This feature is only available in local network mode"}), 403
+        return f(*args, **kwargs)
+    return decorated_function
+
 @app.before_request
 def protect_api():
     # Only protect /api routes
@@ -120,18 +151,13 @@ def protect_api():
             '/api/status',
             '/api/auth/login',
             '/api/auth/register',
-            '/api/public/sessions',
-            '/api/sync/device'
+            '/api/public/sessions'
         ]
         if request.path in public_paths:
             return
             
         # Also allow shared and public session data
         if request.path.startswith('/api/shared/') or request.path.startswith('/api/public/'):
-            return
-        
-        # Allow device endpoints (scan, connection checks)
-        if request.path.startswith('/api/device/'):
             return
             
         # Also allow logout (it handles its own JWT if needed, or just clears cookies)
@@ -144,11 +170,6 @@ def protect_api():
                 '/api/sessions/' # We'll check prefixes
             ]
             
-            # If it's a session detail or telemetry request, we'll handle auth inside the function
-            if request.path.startswith('/api/sessions/') and (request.path.count('/') >= 4 or request.path.endswith('/telemetry')):
-                 # e.g. /api/sessions/<id> or /api/sessions/<id>/telemetry
-                 return
-
             verify_jwt_in_request()
         except Exception:
             return jsonify({"error": "Authentication required"}), 401
@@ -195,6 +216,17 @@ def register():
 
     if not email or not password:
         return jsonify({"error": "Email and password required"}), 400
+
+    # Password strength validation
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters long"}), 400
+    if password.lower() == password:
+        if not any(c.isdigit() for c in password):
+            return jsonify({"error": "Password must contain at least one number or uppercase letter"}), 400
+
+    import re
+    if not re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        return jsonify({"error": "Please provide a valid email address"}), 400
 
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email already registered"}), 400
@@ -539,6 +571,7 @@ def unfollow_user(target_user_id):
     return jsonify({"success": True, "message": "Unfollowed successfully"})
 
 @app.route('/api/users/<int:user_id>/followers', methods=['GET'])
+@jwt_required()
 def get_followers(user_id):
     """List followers of a user"""
     follows = Follow.query.filter_by(following_id=user_id).all()
@@ -548,6 +581,7 @@ def get_followers(user_id):
     return jsonify([u.to_dict() for u in users])
 
 @app.route('/api/users/<int:user_id>/following', methods=['GET'])
+@jwt_required()
 def get_following(user_id):
     """List users followed by a user"""
     follows = Follow.query.filter_by(follower_id=user_id).all()
@@ -597,6 +631,7 @@ def get_following_feed():
     return jsonify(feed)
 
 @app.route('/api/users/<int:user_id>/social-counts', methods=['GET'])
+@jwt_required()
 def get_social_counts(user_id):
     """Get follower/following counts for a user"""
     followers_count = Follow.query.filter_by(following_id=user_id).count()
@@ -619,6 +654,7 @@ def get_social_counts(user_id):
     })
 
 @app.route('/api/users/<int:user_id>/stats', methods=['GET'])
+@jwt_required()
 def get_user_stats(user_id):
     """Get aggregate stats for a user"""
     sessions = SessionMeta.query.filter_by(user_id=user_id).all()
@@ -1747,6 +1783,10 @@ def _resolve_upload_user():
         dt = DeviceToken.query.filter_by(token=token_str, revoked=False).first()
         if not dt:
             return None, 'Invalid or revoked device token', None
+            
+        if dt.expires_at and dt.expires_at < datetime.utcnow():
+            return None, 'Device token has expired', None
+            
         return dt.user_id, None, dt
     else:
         try:
@@ -1800,10 +1840,14 @@ def upload_file():
 
     except Exception as e:
         print(f"Upload Error: {e}")
+        if IS_PRODUCTION:
+            return jsonify({"error": "Upload failed"}), 500
         return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/sync/device', methods=['POST'])
+@local_only
+@jwt_required()
 def sync_from_device():
     """Pull session files from the ESP32 MiniServer and save them locally.
     
@@ -1820,6 +1864,15 @@ def sync_from_device():
 
     if not ip:
         return jsonify({"error": "Missing device IP"}), 400
+
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+        # Block cloud metadata, loopback, and link-local
+        if addr.is_loopback or addr.is_link_local or str(addr).startswith('169.254'):
+            return jsonify({"error": "Invalid device IP"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid IP address format"}), 400
 
     base_url = f"http://{ip}"
     synced = []
@@ -1911,6 +1964,8 @@ def sync_from_device():
         return jsonify({"error": f"Device at {ip} timed out"}), 504
     except Exception as e:
         print(f"[Sync] Error: {e}")
+        if IS_PRODUCTION:
+            return jsonify({"error": "Sync failed"}), 500
         return jsonify({"error": str(e)}), 500
 
 
@@ -2029,6 +2084,14 @@ def process_session():
 
 def rename_track(track_id):
     """Rename a track"""
+    current_user_id = int(get_jwt_identity())
+    track = TrackMeta.query.filter_by(track_id=track_id).first()
+    if not track:
+        return jsonify({"error": "Track not found"}), 404
+    current_user = User.query.get(current_user_id)
+    if int(track.user_id) != current_user_id and not current_user.is_admin:
+        return jsonify({"error": "Access denied"}), 403
+
     data = request.get_json()
     new_name = data.get('new_name')
     
@@ -2068,12 +2131,14 @@ from file_manager import FileManager
 file_mgr = FileManager(base_dir=config.LEARNING_DIR)
 
 @app.route('/api/learning/list')
+@jwt_required()
 def list_learning_files():
     """List learning CSV files with metadata"""
     archived = request.args.get('archived', 'false').lower() == 'true'
     return jsonify(file_mgr.get_files(archived=archived))
 
 @app.route('/api/learning/<filename>/lock', methods=['POST'])
+@jwt_required()
 def lock_learning_file(filename):
     data = request.json
     locked = data.get('locked', True)
@@ -2082,6 +2147,7 @@ def lock_learning_file(filename):
     return jsonify({"error": "Failed to update lock"}), 500
 
 @app.route('/api/learning/delete', methods=['POST'])
+@jwt_required()
 def delete_learning_files():
     """Permanent Bulk Delete"""
     data = request.json
@@ -2094,6 +2160,7 @@ def delete_learning_files():
     return jsonify(result)
 
 @app.route('/api/learning/archive', methods=['POST'])
+@jwt_required()
 def archive_learning_files():
     """Soft delete - Move to archive"""
     data = request.json
@@ -2105,6 +2172,7 @@ def archive_learning_files():
     return jsonify(result)
 
 @app.route('/api/learning/restore', methods=['POST'])
+@jwt_required()
 def restore_learning_files():
     """Restore from archive"""
     data = request.json
@@ -2116,22 +2184,36 @@ def restore_learning_files():
     return jsonify(result)
 
 @app.route('/api/learning/<filename>/raw')
+@jwt_required()
 def get_learning_file_raw(filename):
     """Get raw head of file"""
     lines = request.args.get('lines', 100, type=int)
     return jsonify(file_mgr.read_file_head(filename, lines))
 
 @app.route('/api/learning/<filename>/geo')
+@jwt_required()
 def get_learning_file_geo(filename):
     """Get Geo Path for Visualization"""
     return jsonify(file_mgr.extract_geo_path(filename))
 
 @app.route('/api/device/configure', methods=['POST'])
+@local_only
+@jwt_required()
 def configure_device():
     """Configure ESP32 WiFi (Proxy)"""
     import requests
     data = request.get_json()
     device_ip = data.get('ip', '192.168.4.1')
+
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(device_ip)
+        # Block cloud metadata, loopback, and link-local
+        if addr.is_loopback or addr.is_link_local or str(addr).startswith('169.254'):
+            return jsonify({"error": "Invalid device IP"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid IP address format"}), 400
+
     ssid = data.get('ssid')
     password = data.get('password')
     
@@ -2156,6 +2238,8 @@ def configure_device():
         return jsonify({"error": f"Failed to connect to device: {e}"}), 500
 
 @app.route('/api/device/scan', methods=['GET'])
+@local_only
+@jwt_required()
 def scan_devices():
     """Scan local network for ESP32 Datalogger"""
     import threading
@@ -2276,12 +2360,23 @@ def scan_devices():
     return jsonify({"devices": found_devices, "subnets_scanned": subnets_to_scan})
 
 @app.route('/api/device/check', methods=['GET'])
+@local_only
+@jwt_required()
 def check_device():
     """Check if specific device IP is reachable"""
     ip = request.args.get('ip')
     if not ip:
         print("[Check] No IP provided")
         return jsonify({"reachable": False})
+
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+        # Block cloud metadata, loopback, and link-local
+        if addr.is_loopback or addr.is_link_local or str(addr).startswith('169.254'):
+            return jsonify({"error": "Invalid device IP"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid IP address format"}), 400
     
     try:
         print(f"[Check] Testing {ip}...")
@@ -2319,6 +2414,8 @@ def check_device():
         return jsonify({"reachable": False})
 
 @app.route('/api/device/version-check', methods=['GET'])
+@local_only
+@jwt_required()
 def device_version_check():
     """Detailed version comparison for a specific device"""
     ip = request.args.get('ip')
@@ -2342,6 +2439,8 @@ def device_version_check():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/device/update-ota', methods=['POST'])
+@local_only
+@jwt_required()
 def device_update_ota():
     """Trigger WiFi OTA update for a device"""
     data = request.get_json()
@@ -2356,6 +2455,7 @@ def device_update_ota():
     return jsonify(result)
 
 @app.route('/api/learning/processed')
+@jwt_required()
 def get_processed_files():
     """Returns set of source filenames that have already been processed into sessions."""
     processed = set()
@@ -2448,7 +2548,9 @@ def not_found(e):
 
 @app.errorhandler(500)
 def internal_error(e):
-    return jsonify({"error": "Internal server error"}), 500
+    if IS_PRODUCTION:
+        return jsonify({"error": "Internal server error"}), 500
+    return jsonify({"error": str(e)}), 500
 
 @app.route('/api/tracks/<int:track_id>/geometry')
 @jwt_required()
@@ -2468,12 +2570,17 @@ def get_track_geometry(track_id):
 @jwt_required()
 def delete_session_endpoint(session_id):
     """Delete a processed session"""
-    user_id = get_jwt_identity()
+    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+
+    # Ownership check
+    current_user_id = int(get_jwt_identity())
+    current_user = User.query.get(current_user_id)
+    if int(s_meta.user_id) != current_user_id and not current_user.is_admin:
+        return jsonify({"error": "Access denied — you can only delete your own sessions"}), 403
+
     try:
-        # Check ownership
-        s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
-        if not s_meta:
-            return jsonify({"error": "Session not found or access denied"}), 404
             
         s_path = config.SESSIONS_DIR / f"{session_id}.json"
         t_path = config.SESSIONS_DIR / f"{session_id}_telemetry.json"
@@ -2492,16 +2599,17 @@ def delete_session_endpoint(session_id):
 @jwt_required()
 def delete_track_endpoint(track_id):
     """Delete a track, its folder, and all associated sessions."""
-    user_id = get_jwt_identity()
+    track_meta = TrackMeta.query.filter_by(track_id=track_id).first()
+    if not track_meta:
+        return jsonify({"error": "Track not found"}), 404
+
+    # Ownership check
+    current_user_id = int(get_jwt_identity())
+    current_user = User.query.get(current_user_id)
+    if int(track_meta.user_id) != current_user_id and not current_user.is_admin:
+        return jsonify({"error": "Access denied — you can only delete your own tracks"}), 403
+
     try:
-        from src.core.registry_manager import RegistryManager
-        import time
-        import stat
-        
-        # Check ownership
-        track_meta = TrackMeta.query.filter_by(track_id=track_id, user_id=user_id).first()
-        if not track_meta:
-            return jsonify({"error": "Track not found or access denied"}), 404
             
         registry = RegistryManager()
         
@@ -2561,6 +2669,7 @@ def delete_track_endpoint(track_id):
         return jsonify({"error": f"Failed to delete: {str(e)}"}), 500
 
 @app.route('/api/learning/rename', methods=['POST'])
+@jwt_required()
 def rename_learning_file():
     """Rename raw CSV file (safely)"""
     try:
@@ -2594,8 +2703,18 @@ def rename_learning_file():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/sessions/<session_id>/rename', methods=['POST'])
+@jwt_required()
 def rename_session(session_id):
     """Rename a session (updates meta.session_name)"""
+    # Ownership check
+    current_user_id = int(get_jwt_identity())
+    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+    current_user = User.query.get(current_user_id)
+    if int(s_meta.user_id) != current_user_id and not current_user.is_admin:
+        return jsonify({"error": "Access denied"}), 403
+
     data = request.get_json()
     new_name = data.get('new_name')
     if not new_name:
@@ -2625,8 +2744,17 @@ def rename_session(session_id):
         return jsonify({"error": "Failed to rename session due to an internal error"}), 500
 
 @app.route('/api/sessions/<session_id>/notes', methods=['PUT'])
+@jwt_required()
 def update_session_notes(session_id):
     """Update session notes"""
+    current_user_id = int(get_jwt_identity())
+    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+    current_user = User.query.get(current_user_id)
+    if int(s_meta.user_id) != current_user_id and not current_user.is_admin:
+        return jsonify({"error": "Access denied"}), 403
+
     data = request.get_json()
     notes = data.get('notes', '')
     
