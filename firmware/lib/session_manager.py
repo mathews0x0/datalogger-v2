@@ -114,23 +114,35 @@ class SessionManager:
             return False
     
     def get_storage_info(self):
-        """Get flash storage statistics"""
+        """Get storage statistics for flash and SD card"""
+        info = {}
+        
+        # Flash Stats
         try:
-            stat = os.statvfs('/')
-            block_size = stat[0]
-            total_blocks = stat[2]
-            free_blocks = stat[3]
-            
-            total_kb = (total_blocks * block_size) // 1024
-            free_kb = (free_blocks * block_size) // 1024
-            used_kb = total_kb - free_kb
-            
-            return {
-                'total_kb': total_kb,
-                'used_kb': used_kb,
-                'free_kb': free_kb,
-                'sessions': len(self.list_sessions())
+            stat_flash = os.statvfs('/')
+            tb_f = stat_flash[2] * stat_flash[0] // 1024
+            fb_f = stat_flash[3] * stat_flash[0] // 1024
+            info['flash'] = {
+                'total_kb': tb_f,
+                'used_kb': tb_f - fb_f,
+                'free_kb': fb_f
             }
-        except Exception as e:
-            print(f"Storage info error: {e}")
-            return None
+        except:
+            info['flash'] = {'total_kb': 0, 'used_kb': 0, 'free_kb': 0}
+            
+        # SD Stats
+        info['sd'] = {'mounted': self.sd_mounted, 'total_kb': 0, 'used_kb': 0, 'free_kb': 0}
+        if self.sd_mounted:
+            try:
+                stat_sd = os.statvfs('/sd')
+                tb_s = stat_sd[2] * stat_sd[0] // 1024
+                fb_s = stat_sd[3] * stat_sd[0] // 1024
+                info['sd'].update({
+                    'total_kb': tb_s,
+                    'used_kb': tb_s - fb_s,
+                    'free_kb': fb_s
+                })
+            except:
+                pass
+                
+        return info

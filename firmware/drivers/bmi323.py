@@ -54,8 +54,9 @@ class BMI323:
         if (cid & 0xFF) != self.CHIP_ID:
             print("Warning: Unexpected Chip ID " + hex(cid))
             
-        # 4. Enable Accel, Gyro, Temp
-        self._write_word(self.REG_PWR_CTRL, 0x0007)
+        # 4. Enable Accel, Gyro, Temp (Disable adv_power_save which blocks Gyro)
+        # Bit 3: temp_en=1 | Bit 2: gyr_en=1 | Bit 1: acc_en=1 | Bit 0: adv_power_save=0 -> 0x000E
+        self._write_word(self.REG_PWR_CTRL, 0x000E)
         time.sleep(0.05)
         
         # 5. Configure Accel (100Hz, +/- 2g, Normal Mode)

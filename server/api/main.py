@@ -2253,7 +2253,21 @@ def check_device():
         print(f"[Check] Response: {r.status_code}")
         if r.status_code == 200:
             data = r.json()
-            print(f"[Check] Data: {data}")
+            did = data.get('device_id', 'Unknown')
+            w_mode = data.get('wifi_mode', 'Unknown')
+            ssid = data.get('wifi_ssid', 'Unknown')
+            f_pct = data.get('flash_used_pct', 0)
+            s_mnt = data.get('sd_mounted', False)
+            s_pct = data.get('sd_used_pct', 0)
+            
+            print(f"[Check] Connected to {did} ({ip})")
+            print(f"        WiFi: {w_mode} | SSID: {ssid}")
+            print(f"        Flash Used: {f_pct}%")
+            if s_mnt:
+                print(f"        SD Used: {s_pct}%")
+            else:
+                print(f"        SD Card: Not inserted")
+                
             v = data.get('version', '0.0.0')
             return jsonify({
                 "reachable": True, 

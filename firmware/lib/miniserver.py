@@ -164,35 +164,57 @@ class MiniServer:
         cl.send(content.encode())
 
     def handle_status(self, cl):
-        # Get storage info
-        try:
-            stat = os.statvfs('/')
-            block_size = stat[0]
-            total_blocks = stat[2]
-            free_blocks = stat[3]
-            
-            total_kb = (total_blocks * block_size) // 1024
-            free_kb = (free_blocks * block_size) // 1024
-            used_kb = total_kb - free_kb
-            used_pct = int((used_kb * 100) / total_kb) if total_kb > 0 else 0
-        except:
-            total_kb = 0
-            used_kb = 0
-            free_kb = 0
-            used_pct = 0
+        import network
+        import ubinascii
+        
+        info = self.sm.get_storage_info()
+        
+        # Get Flash stats
+        flash = info.get('flash', {})
+        f_tot = flash.get('total_kb', 0)
+        f_used = flash.get('used_kb', 0)
+        f_free = flash.get('free_kb', 0)
+        f_pct = int((f_used * 100) / f_tot) if f_tot > 0 else 0
+        
+        # Get SD stats
+        sd = info.get('sd', {})
+        s_mounted = sd.get('mounted', False)
+        s_tot = sd.get('total_kb', 0)
+        s_used = sd.get('used_kb', 0)
+        s_free = sd.get('free_kb', 0)
+        s_pct = int((s_used * 100) / s_tot) if s_tot > 0 else 0
+
+        # Get Device ID
+        sta = network.WLAN(network.STA_IF)
+        ap = network.WLAN(network.AP_IF)
+        mac = ubinascii.hexlify(ap.config('mac') if ap.active() else sta.config('mac')).decode()
+        device_id = 'RS-Core-' + mac[-4:].upper()
+        
+        # Get WiFi info
+        wifi_ssid = sta.config('essid') if sta.active() and sta.isconnected() else (ap.config('essid') if ap.active() else "Unknown")
+        wifi_mode = "STA" if sta.active() and sta.isconnected() else ("AP" if ap.active() else "Offline")
         
         status = {
             "version": self.VERSION,
-            "storage": "FLASH",
+            "device_id": device_id,
+            "wifi_mode": wifi_mode,
+            "wifi_ssid": wifi_ssid,
             "status": "running",
-            "wifi_mode": "AP",
-            "networks_stored": 0,
-            "storage_total_kb": total_kb,
-            "storage_used_kb": used_kb,
-            "storage_free_kb": free_kb,
-            "storage_used_pct": used_pct,
             "active_track": self.track_engine.track.get('id') if self.track_engine and self.track_engine.track else None,
-            "track_identified": self.track_engine.track_identified if self.track_engine else False
+            "track_identified": self.track_engine.track_identified if self.track_engine else False,
+            "storage_total_kb": f_tot, # legacy
+            "storage_used_kb": f_used, # legacy
+            "storage_free_kb": f_free, # legacy
+            "storage_used_pct": f_pct, # legacy
+            "flash_total_kb": f_tot,
+            "flash_used_kb": f_used,
+            "flash_free_kb": f_free,
+            "flash_used_pct": f_pct,
+            "sd_mounted": s_mounted,
+            "sd_total_kb": s_tot,
+            "sd_used_kb": s_used,
+            "sd_free_kb": s_free,
+            "sd_used_pct": s_pct
         }
 
         # Add GPS info if available
