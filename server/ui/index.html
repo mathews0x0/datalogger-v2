@@ -251,53 +251,79 @@
     <main class="main" id="mainContent">
       <!-- Home View -->
       <div class="view active" id="homeView">
-        <h2><i class="fas fa-tachometer-alt"></i> Dashboard</h2>
+        <!-- Greeting Banner -->
+        <div class="home-greeting" id="homeGreeting">
+          <div class="greeting-content">
+            <h2 class="greeting-text" id="greetingText">Welcome back 🏍️</h2>
+            <p class="greeting-sub" id="greetingSub">Let's see how you're doing on the track.</p>
+          </div>
+        </div>
+
+        <!-- Context Banner (device / empty state) -->
+        <div id="homeContextBanner" class="home-context-banner" style="display: none;">
+          <div class="context-banner-inner">
+            <div class="context-banner-icon" id="contextBannerIcon">
+              <i class="fas fa-satellite-dish"></i>
+            </div>
+            <div class="context-banner-text">
+              <span class="context-banner-title" id="contextBannerTitle">RS-Core Connected</span>
+              <span class="context-banner-detail" id="contextBannerDetail">Ready to sync your latest ride</span>
+            </div>
+            <div class="context-banner-action" id="contextBannerAction"></div>
+          </div>
+        </div>
+
+        <!-- Device Sync Status Banner (legacy - kept for updateDeviceStatus compatibility) -->
+        <div id="deviceSyncBanner" style="display: none;">
+          <span id="syncBannerTitle" style="display: none;">RS-Core Connected</span>
+          <span id="syncBannerDetail" style="display: none;">Auto-sync active</span>
+          <button id="btnBrowserSync" style="display: none;" onclick="triggerBrowserSync()"></button>
+        </div>
+
+        <!-- Stats Grid -->
         <div class="quick-stats" id="quickStats">
-          <div class="stat-card">
+          <div class="stat-card stat-card-tracks">
             <div class="stat-icon"><i class="fas fa-road"></i></div>
             <div class="stat-info">
-              <div class="stat-label">Total Tracks</div>
-              <div class="stat-value" id="totalTracks">-</div>
+              <div class="stat-label">Tracks Ridden</div>
+              <div class="stat-value count-up" id="totalTracks" data-target="0">0</div>
             </div>
+            <div class="stat-accent"></div>
           </div>
-          <div class="stat-card">
-            <div class="stat-icon"><i class="fas fa-flag-checkered"></i></div>
+          <div class="stat-card stat-card-sessions">
+            <div class="stat-icon"
+              style="background: rgba(0, 210, 106, 0.1); border-color: rgba(0, 210, 106, 0.2); color: var(--success);">
+              <i class="fas fa-flag-checkered"></i>
+            </div>
             <div class="stat-info">
-              <div class="stat-label">Total Sessions</div>
-              <div class="stat-value" id="totalSessions">-</div>
+              <div class="stat-label">Sessions Logged</div>
+              <div class="stat-value count-up" id="totalSessions" data-target="0">0</div>
             </div>
+            <div class="stat-accent" style="background: var(--success);"></div>
           </div>
-          <div class="stat-card">
-            <div class="stat-icon"><i class="fas fa-clock"></i></div>
+          <div class="stat-card stat-card-recent">
+            <div class="stat-icon"
+              style="background: rgba(0, 78, 137, 0.15); border-color: rgba(0, 78, 137, 0.3); color: #4da6ff;">
+              <i class="fas fa-clock"></i>
+            </div>
             <div class="stat-info">
               <div class="stat-label">Last Session</div>
-              <div class="stat-value" id="recentSession" style="font-size: 1.25rem;">-</div>
+              <div class="stat-value" id="recentSession" style="font-size: 1.1rem;">-</div>
+              <div class="stat-detail" id="recentSessionTrack"
+                style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.15rem;"></div>
             </div>
+            <div class="stat-accent" style="background: #4da6ff;"></div>
           </div>
         </div>
 
-        <!-- Device Sync Status Banner -->
-        <div id="deviceSyncBanner"
-          style="display: none; margin: 1.5rem 0; background: rgba(76,175,80,0.08); border: 1px solid rgba(76,175,80,0.3); border-radius: 12px; padding: 1rem 1.5rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between;">
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-              <i class="fas fa-satellite-dish" style="font-size: 1.2rem; color: var(--success);"></i>
-              <div>
-                <span id="syncBannerTitle" style="font-weight: 600;">RS-Core Connected</span>
-                <span id="syncBannerDetail"
-                  style="display: block; font-size: 0.8rem; color: var(--text-muted);">Auto-sync
-                  active</span>
-              </div>
-            </div>
-            <button class="btn btn-sm" onclick="triggerBrowserSync()" id="btnBrowserSync"
-              style="background: var(--success); color: #000; padding: 0.5rem 1rem;">
-              <i class="fas fa-cloud-upload-alt"></i> Sync Now
+        <!-- Recent Sessions -->
+        <div class="section">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="margin: 0;">Recent Sessions</h3>
+            <button class="btn btn-sm secondary" onclick="showView('sessions')" style="font-size: 0.75rem;">
+              View All <i class="fas fa-arrow-right" style="margin-left: 0.25rem;"></i>
             </button>
           </div>
-        </div>
-
-        <div class="section">
-          <h3>Recent Sessions</h3>
           <div id="recentSessionsList" class="sessions-list">
             <div class="loading">Loading...</div>
           </div>

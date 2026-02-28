@@ -28,6 +28,7 @@ let tracks = [];
 let sessions = [];
 let activeTrackId = null;  // Track identified by ESP32 status
 let lastSyncedTrackId = null; // Track we last pushed to ESP32
+let isDeviceConnected = false; // True only when device is confirmed reachable
 
 // ============================================================================
 // INITIALIZATION
@@ -1570,15 +1571,33 @@ async function loadHomeData() {
         tracks = tracksData.tracks || [];
         sessions = sessionsData || [];
 
-        // Update quick stats
-        document.getElementById('totalTracks').textContent = tracks.length;
-        document.getElementById('totalSessions').textContent = sessions.length;
+        // === GREETING ===
+        updateHomeGreeting();
+
+        // === CONTEXT BANNER ===
+        updateHomeContextBanner(sessions.length);
+
+        // === STATS with count-up animation ===
+        animateCountUp('totalTracks', tracks.length);
+        animateCountUp('totalSessions', sessions.length);
 
         if (sessions.length > 0) {
-            const lastSession = new Date(sessions[0].start_time);
-            document.getElementById('recentSession').textContent = lastSession.toLocaleDateString();
+            const lastSession = sessions[0];
+            const lastDate = new Date(lastSession.start_time);
+            const daysDiff = Math.floor((Date.now() - lastDate) / (1000 * 60 * 60 * 24));
+            let timeAgo;
+            if (daysDiff === 0) timeAgo = 'Today';
+            else if (daysDiff === 1) timeAgo = 'Yesterday';
+            else if (daysDiff < 7) timeAgo = `${daysDiff} days ago`;
+            else timeAgo = lastDate.toLocaleDateString();
+
+            document.getElementById('recentSession').textContent = timeAgo;
+            const trackEl = document.getElementById('recentSessionTrack');
+            if (trackEl) trackEl.textContent = lastSession.track_name || '';
         } else {
-            document.getElementById('recentSession').textContent = 'None';
+            document.getElementById('recentSession').textContent = 'None yet';
+            const trackEl = document.getElementById('recentSessionTrack');
+            if (trackEl) trackEl.textContent = 'Head to Sync Data to get started';
         }
 
         // Show recent sessions (last 5)
@@ -1587,6 +1606,110 @@ async function loadHomeData() {
     } catch (error) {
         console.error('Failed to load home data:', error);
     }
+}
+
+// === HOME GREETING ===
+function updateHomeGreeting() {
+    const greetingEl = document.getElementById('greetingText');
+    const subEl = document.getElementById('greetingSub');
+    if (!greetingEl) return;
+
+    const hour = new Date().getHours();
+    const name = (currentUser && currentUser.name) ? currentUser.name.split(' ')[0] : '';
+
+    let greeting, sub;
+    if (hour < 5) {
+        greeting = name ? `Burning the midnight oil, ${name}?` : 'Late night session?';
+        sub = 'Reviewing data while the world sleeps.';
+    } else if (hour < 12) {
+        greeting = name ? `Good morning, ${name} 🏍️` : 'Good morning 🏍️';
+        sub = 'Ready to review your rides?';
+    } else if (hour < 17) {
+        greeting = name ? `Good afternoon, ${name}` : 'Good afternoon';
+        sub = "Let's see how you're doing on track.";
+    } else if (hour < 21) {
+        greeting = name ? `Good evening, ${name}` : 'Good evening';
+        sub = 'Time to analyze the day\'s laps.';
+    } else {
+        greeting = name ? `Hey ${name}, still at it?` : 'Evening rider';
+        sub = 'Reviewing telemetry before bed?';
+    }
+
+    greetingEl.textContent = greeting;
+    if (subEl) subEl.textContent = sub;
+}
+
+// === HOME CONTEXT BANNER ===
+function updateHomeContextBanner(sessionCount) {
+    const banner = document.getElementById('homeContextBanner');
+    const icon = document.getElementById('contextBannerIcon');
+    const title = document.getElementById('contextBannerTitle');
+    const detail = document.getElementById('contextBannerDetail');
+    const action = document.getElementById('contextBannerAction');
+    if (!banner) return;
+
+    const deviceIP = localStorage.getItem('lastDeviceIP');
+    const isConnected = isDeviceConnected;
+
+    if (isConnected && deviceIP) {
+        // Device is connected
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-connected';
+        icon.innerHTML = '<i class="fas fa-satellite-dish"></i>';
+        title.textContent = 'RS-Core Online';
+        detail.textContent = 'Your device is connected. Sync your latest sessions.';
+        action.innerHTML = '<button class="btn btn-sm" onclick="triggerBrowserSync()" style="background: var(--success); color: #000;"><i class="fas fa-cloud-upload-alt"></i> Sync Now</button>';
+    } else if (sessionCount === 0) {
+        // Brand new user
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-welcome';
+        icon.innerHTML = '<i class="fas fa-rocket"></i>';
+        title.textContent = 'Welcome to RaceSense!';
+        detail.textContent = 'Upload or sync your first session to get started.';
+        action.innerHTML = '<button class="btn btn-sm btn-primary" onclick="showView(\'process\')"><i class="fas fa-upload"></i> Sync Data</button>';
+    } else if (!deviceIP) {
+        // Has sessions but no device configured
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-nodevice';
+        icon.innerHTML = '<i class="fas fa-plug"></i>';
+        title.textContent = 'No RS-Core detected';
+        detail.textContent = 'Connect your module to sync new sessions.';
+        action.innerHTML = '<button class="btn btn-sm secondary" onclick="showView(\'settings\')"><i class="fas fa-cog"></i> Device Settings</button>';
+    } else {
+        // Has IP but device is offline
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-offline';
+        icon.innerHTML = '<i class="fas fa-wifi" style="opacity: 0.5;"></i>';
+        title.textContent = 'RS-Core is offline';
+        detail.textContent = 'Your module will auto-sync when it reconnects.';
+        action.innerHTML = '';
+    }
+}
+
+// === COUNT-UP ANIMATION ===
+function animateCountUp(elementId, target) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+
+    const duration = 800; // ms
+    const start = 0;
+    const startTime = performance.now();
+
+    if (target === 0) {
+        el.textContent = '0';
+        return;
+    }
+
+    function update(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // Ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = Math.round(start + (target - start) * eased);
+        el.textContent = current;
+        if (progress < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
 }
 
 function renderRecentSessions(recentSessions) {
@@ -6066,6 +6189,7 @@ async function fastConnectCheck() {
             const data = await response.json();
             badge.className = 'status-badge online';
             text.textContent = 'RS-Core Online';
+            isDeviceConnected = true;
             updateStorageIndicator(data);
             console.log('[FastCheck] Direct connection success:', ip);
             return;
@@ -6128,6 +6252,7 @@ async function checkDeviceConnection() {
     if (!ip) {
         badge.className = 'status-badge offline';
         text.textContent = 'No Device';
+        isDeviceConnected = false;
         updateDeviceStatus(false, null);
         return;
     }
@@ -6137,6 +6262,7 @@ async function checkDeviceConnection() {
         if (res && res.reachable) {
             badge.className = 'status-badge online';
             text.textContent = 'RS-Core Online';
+            isDeviceConnected = true;
 
             updateDeviceStatus(true, ip);
 
@@ -6164,6 +6290,7 @@ async function checkDeviceConnection() {
         } else {
             badge.className = 'status-badge offline';
             text.textContent = 'Module Offline';
+            isDeviceConnected = false;
 
             updateDeviceStatus(false, ip);
 
@@ -6173,6 +6300,7 @@ async function checkDeviceConnection() {
     } catch (err) {
         badge.className = 'status-badge offline';
         text.textContent = 'Module Offline';
+        isDeviceConnected = false;
 
         updateDeviceStatus(false, null);
 
@@ -6402,6 +6530,7 @@ function finishScanSuccess(ip, data, btn) {
     if (badge && text) {
         badge.className = 'status-badge online';
         text.textContent = 'RS-Core Online';
+        isDeviceConnected = true;
     }
     updateStorageIndicator(data);
     finishScan(btn);

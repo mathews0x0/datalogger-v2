@@ -254,6 +254,130 @@ h2::before {
   letter-spacing: 1px;
 }
 
+/* Stat Card Accent Bar */
+.stat-accent {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 3px;
+  background: var(--primary);
+  opacity: 0.6;
+}
+
+/* ==================== HOME GREETING ==================== */
+.home-greeting {
+  margin-bottom: 1.5rem;
+}
+
+.greeting-text {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  margin-bottom: 0.25rem;
+}
+
+/* Override the h2::before bar for greeting */
+.greeting-text::before {
+  display: none;
+}
+
+.greeting-sub {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  font-weight: 400;
+  margin: 0;
+}
+
+/* ==================== HOME CONTEXT BANNER ==================== */
+.home-context-banner {
+  margin-bottom: 1.5rem;
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+  border: 1px solid var(--glass-border);
+  background: var(--glass);
+  animation: viewEnter 0.4s ease;
+}
+
+.context-banner-inner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.context-banner-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.context-banner-text {
+  flex: 1;
+}
+
+.context-banner-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  display: block;
+}
+
+.context-banner-detail {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 0.15rem;
+}
+
+/* Connected state */
+.context-connected {
+  background: rgba(0, 210, 106, 0.06);
+  border-color: rgba(0, 210, 106, 0.25);
+}
+
+.context-connected .context-banner-icon {
+  background: rgba(0, 210, 106, 0.12);
+  color: var(--success);
+}
+
+/* Welcome state */
+.context-welcome {
+  background: rgba(255, 107, 53, 0.06);
+  border-color: rgba(255, 107, 53, 0.25);
+}
+
+.context-welcome .context-banner-icon {
+  background: rgba(255, 107, 53, 0.12);
+  color: var(--primary);
+}
+
+/* No device state */
+.context-nodevice {
+  background: rgba(255, 162, 0, 0.06);
+  border-color: rgba(255, 162, 0, 0.2);
+}
+
+.context-nodevice .context-banner-icon {
+  background: rgba(255, 162, 0, 0.12);
+  color: var(--warning);
+}
+
+/* Offline state */
+.context-offline {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--glass-border);
+}
+
+.context-offline .context-banner-icon {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+}
+
+
 /* Cards */
 .card {
   background: var(--glass);
