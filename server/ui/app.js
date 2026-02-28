@@ -6947,3 +6947,17 @@ function filterAdminUsers() {
     const query = document.getElementById('adminSearchInput').value;
     loadAdminUsers(1, query, tier, approval);
 }
+
+// === SCROLL REVEAL ANIMATION ===
+(function initScrollReveal() {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry, i) => {
+            if (entry.isIntersecting) {
+                setTimeout(() => entry.target.classList.add('visible'), i * 100);
+                observer.unobserve(entry.target);
+            }
+        });
+    }, { threshold: 0.15 });
+
+    document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
+})();

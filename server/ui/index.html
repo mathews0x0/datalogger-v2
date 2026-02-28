@@ -80,26 +80,26 @@
       </div>
       <div class="hero-content">
         <div class="hero-badge">
-          <i class="fas fa-microchip"></i> HARDWARE + SOFTWARE TELEMETRY PLATFORM
+          <i class="fas fa-satellite-dish"></i> PRECISION ANALYTICS FOR DATA-DRIVEN RACING
         </div>
         <div style="margin-bottom: 2rem; display: flex; justify-content: center;">
           <img src="assets/RS%20full%20logo.png" alt="RaceSense Logo"
             style="width: 100%; max-width: 600px; height: auto; mix-blend-mode: screen; filter: drop-shadow(0 10px 40px rgba(255,102,0,0.3)); mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent); -webkit-mask-image: linear-gradient(to right, transparent, black 15%, black 85%, transparent);" />
         </div>
-        <h1 class="hero-title" style="margin-top: 0rem; font-size: 3rem;">
-          Ride <span class="hero-gradient-text">Faster.</span><br />
-          Ride <span class="hero-gradient-text">Smarter.</span>
+        <h1 class="hero-title" style="margin-top: 0; font-size: 2.8rem;">
+          Know exactly where<br>
+          you're <span class="hero-gradient-text">losing time.</span>
         </h1>
         <p class="hero-subtitle">
-          RaceSense is a motorcycle telemetry platform that analyzes your riding with precision sensor data. Get lap
-          times, lean angles, braking zones, racing lines, and AI-powered feedback to shave seconds off your laps.
+          RaceSense captures every detail of your ride — lap times, lean angles, braking zones, and racing lines.
+          See what the data says, and ride faster next session.
         </p>
         <div class="hero-cta-row">
           <button class="btn btn-primary btn-lg hero-cta-btn" onclick="showAuthModal('register')">
             <i class="fas fa-rocket"></i> Get Started
           </button>
           <button class="btn secondary btn-lg hero-cta-btn-alt" onclick="showAuthModal('login')">
-            <i class="fas fa-sign-in-alt"></i> Login
+            Sign In
           </button>
         </div>
         <div class="hero-stats-bar">
@@ -110,12 +110,12 @@
           <div class="hero-stat-divider"></div>
           <div class="hero-stat">
             <span class="hero-stat-value"><i class="fas fa-motorcycle"></i></span>
-            <span class="hero-stat-label">Lean Analysis</span>
+            <span class="hero-stat-label">Lean Angles</span>
           </div>
           <div class="hero-stat-divider"></div>
           <div class="hero-stat">
             <span class="hero-stat-value"><i class="fas fa-chart-line"></i></span>
-            <span class="hero-stat-label">Live Sectors</span>
+            <span class="hero-stat-label">Sector Splits</span>
           </div>
           <div class="hero-stat-divider"></div>
           <div class="hero-stat">
@@ -129,47 +129,53 @@
     <!-- Features Section -->
     <section class="landing-section" id="features">
       <div class="landing-container">
-        <div class="section-label"><i class="fas fa-bolt"></i> CORE CAPABILITIES</div>
-        <h2 class="landing-section-title">Everything You Need to Go Faster</h2>
+        <div class="section-label"><i class="fas fa-bolt"></i> WHAT YOU GET</div>
+        <h2 class="landing-section-title">Your riding, in full detail</h2>
         <p class="landing-section-desc">The RS-Core module sits on your bike and captures full telemetry — no phone
           mount needed. Just ride and review.</p>
 
         <div class="features-grid">
-          <div class="feature-card feature-card-highlight">
+          <div class="feature-card feature-card-highlight" data-animate="fade-up">
             <div class="feature-icon"><i class="fas fa-stopwatch"></i></div>
             <h3>Precision Lap Times</h3>
+            <p class="feature-subtitle">Know your pace to the millisecond</p>
             <p>GPS-based start/finish detection with sector splits. Compare every lap against your personal best in
               real-time.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card" data-animate="fade-up">
             <div class="feature-icon"><i class="fas fa-motorcycle"></i></div>
             <h3>Lean Angle Tracking</h3>
-            <p>High-frequency IMU captures your lean angles through every corner. See exactly how far you're pushing.
-            </p>
+            <p class="feature-subtitle">See how far you're really pushing</p>
+            <p>High-frequency IMU captures your lean angles through every corner. Visualize your commitment corner by
+              corner.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card" data-animate="fade-up">
             <div class="feature-icon"><i class="fas fa-chart-area"></i></div>
             <h3>Braking & Acceleration</h3>
+            <p class="feature-subtitle">Find time in the transitions</p>
             <p>Longitudinal and lateral G-force analysis. Identify where you're losing time in braking zones and corner
               exits.</p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card" data-animate="fade-up">
             <div class="feature-icon"><i class="fas fa-route"></i></div>
             <h3>Racing Line Overlay</h3>
+            <p class="feature-subtitle">Compare lines, find the fast one</p>
             <p>Visualize your actual line on the track map. Compare lines between laps to find the fastest trajectory.
             </p>
           </div>
-          <div class="feature-card">
+          <div class="feature-card" data-animate="fade-up">
             <div class="feature-icon"><i class="fas fa-play-circle"></i></div>
             <h3>Full Lap Replay</h3>
-            <p>Replay any lap with synchronized telemetry — speed, lean, G-force, and position all animated in
-              real-time.</p>
+            <p class="feature-subtitle">Relive every moment with data</p>
+            <p>Replay any lap with synchronized telemetry — speed, lean, G-force, and position all animated together.
+            </p>
           </div>
-          <div class="feature-card feature-card-highlight">
+          <div class="feature-card feature-card-highlight" data-animate="fade-up">
             <div class="feature-icon"><i class="fas fa-star"></i></div>
             <h3>Ghost Lap™</h3>
-            <p>Your theoretical best lap combined from your best sector times. See how fast you <em>could</em> have
-              gone. Live sector delta feedback helps you beat it.</p>
+            <p class="feature-subtitle">Your theoretical best, calculated</p>
+            <p>Your ideal lap built from your best sector times. See how fast you <em>could</em> have gone, and chase it
+              with live sector deltas.</p>
           </div>
         </div>
       </div>
@@ -179,25 +185,24 @@
     <section class="landing-section landing-section-alt" id="how-it-works">
       <div class="landing-container">
         <div class="section-label"><i class="fas fa-cogs"></i> HOW IT WORKS</div>
-        <h2 class="landing-section-title">Plug In. Ride. Analyze.</h2>
+        <h2 class="landing-section-title">Three steps. Zero complexity.</h2>
         <div class="how-it-works-grid">
-          <div class="how-step">
+          <div class="how-step" data-animate="fade-up">
             <div class="how-step-number">01</div>
-            <h3>Mount the RS-Core Module</h3>
-            <p>The compact RS-Core unit mounts on your motorcycle. No wiring — it's powered by its own battery and
-              connects to your WiFi when you're back in the pits.</p>
+            <h3>Mount the RS-Core</h3>
+            <p>Compact, battery-powered module. Mounts in seconds, no wiring required. It starts recording the moment
+              you move.</p>
           </div>
-          <div class="how-step">
+          <div class="how-step" data-animate="fade-up">
             <div class="how-step-number">02</div>
-            <h3>Hit the Track</h3>
-            <p>Ride as you normally would. The RS-Core records GPS position, acceleration, lean angles, and more at high
-              frequency, completely autonomously.</p>
+            <h3>Ride</h3>
+            <p>That's it. The RS-Core records GPS, acceleration, lean angles, and more at high frequency. Completely
+              autonomous.</p>
           </div>
-          <div class="how-step">
+          <div class="how-step" data-animate="fade-up">
             <div class="how-step-number">03</div>
-            <h3>Auto-Sync & Analyze</h3>
-            <p>When you return to WiFi range, sessions automatically upload. Open the dashboard to explore detailed
-              telemetry, replays, and improvement suggestions.</p>
+            <h3>Review & Improve</h3>
+            <p>Sessions auto-upload when you're back on WiFi. Open the dashboard and see exactly where to find time.</p>
           </div>
         </div>
       </div>
@@ -206,12 +211,12 @@
     <!-- Mission Section -->
     <section class="landing-section" id="mission">
       <div class="landing-container" style="text-align: center; max-width: 800px;">
-        <div class="section-label"><i class="fas fa-bullseye"></i> OUR MISSION</div>
-        <h2 class="landing-section-title">Making Every Rider Faster</h2>
+        <div class="section-label"><i class="fas fa-bullseye"></i> WHY WE BUILD THIS</div>
+        <h2 class="landing-section-title">Professional telemetry for every rider</h2>
         <p class="landing-section-desc" style="font-size: 1.15rem; line-height: 1.8;">
-          We believe performance data shouldn't be locked behind expensive racing teams. RaceSense brings
-          professional-grade telemetry to every trackday rider — from weekend warriors to aspiring racers. Our vision is
-          a world where every rider has the tools to understand, improve, and push their limits safely.
+          Performance data shouldn't be locked behind expensive racing teams. RaceSense brings
+          the same analysis tools used by professionals to every trackday rider. Understand your riding,
+          measure your progress, and push your limits with confidence.
         </p>
       </div>
     </section>
@@ -219,7 +224,7 @@
     <!-- Footer / CTA -->
     <section class="landing-footer">
       <div class="landing-container" style="text-align: center;">
-        <h2 class="landing-footer-title">Ready to find those missing seconds?</h2>
+        <h2 class="landing-footer-title">Start finding those missing seconds.</h2>
         <button class="btn btn-primary btn-lg hero-cta-btn" onclick="showAuthModal('register')"
           style="margin-bottom: 2rem;">
           <i class="fas fa-rocket"></i> Create Your Account
