@@ -3583,7 +3583,11 @@ async function processFile(filename) {
             body: JSON.stringify({ filename: filename })
         });
 
-        showToast('Session processed successfully!', 'success');
+        if (result && result.status === 'already_processed') {
+            showToast(result.message || 'Already analyzed', 'info');
+        } else {
+            showToast('Session processed successfully!', 'success');
+        }
 
         // Refresh data
         setTimeout(() => {
@@ -3626,10 +3630,11 @@ async function processAllFiles() {
     showToast(`Analyzing ${filesToProcess.length} files...`, 'info');
 
     try {
+        const isForce = selectedCheckboxes.length > 0;
         const result = await apiCall('/api/process/all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesToProcess })
+            body: JSON.stringify({ files: filesToProcess, force: isForce })
         });
 
         if (result.processed > 0) {

@@ -152,10 +152,10 @@ async function apiCall(endpoint, options = {}) {
         // Prevent caching
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${API_BASE}${endpoint}${separator}_t=${Date.now()}`;
-        
+
         // Ensure credentials are included for Capacitor mobile app cross-origin calls
         options.credentials = 'include';
-        
+
         const response = await fetch(url, options);
 
         if (response.status === 401 && !endpoint.includes('/api/auth/')) {
@@ -3222,10 +3222,11 @@ async function processAllFiles() {
     showToast(`Processing ${filesToProcess.length} files...`, 'info');
 
     try {
+        const isForce = selectedCheckboxes.length > 0;
         const result = await apiCall('/api/process/all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesToProcess })
+            body: JSON.stringify({ files: filesToProcess, force: isForce })
         });
 
         if (result.processed > 0) {
@@ -6680,15 +6681,15 @@ async function provisionHotspot() {
         // 2. Send credentials
         showToast(`Provisioning ESP32 for hotspot: ${ssid}...`, 'info');
         await bleConnector.configureWifi(ssid, pass);
-        
+
         // 3. Save to local storage for future auto-shares
         saveToWifiVault(ssid, pass);
-        
+
         showToast('Provisioned! ESP32 is now searching for your hotspot.', 'success');
-        
+
         // 4. Start checking for connection
         setTimeout(() => checkDeviceConnection(), 5000);
-        
+
     } catch (e) {
         showToast(`Provisioning failed: ${e.message}`, 'error');
     }

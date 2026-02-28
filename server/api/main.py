@@ -1966,7 +1966,7 @@ def upload_file():
                 output_dir = str(config.get_user_sessions_dir(user_id))
                 tracks_dir = str(config.get_user_tracks_dir(user_id))
                 result = subprocess.run([
-                    'python3', script_path, str(save_path),
+                    sys.executable, script_path, str(save_path),
                     '--output', output_dir,
                     '--tracks', tracks_dir
                 ], capture_output=True, text=True, timeout=60)
@@ -2083,7 +2083,7 @@ def sync_from_device():
                     output_dir = str(config.get_user_sessions_dir(user_id))
                     tracks_dir = str(config.get_user_tracks_dir(user_id))
                     result = subprocess.run([
-                        'python3', script_path, str(save_path),
+                        sys.executable, script_path, str(save_path),
                         '--output', output_dir,
                         '--tracks', tracks_dir
                     ], capture_output=True, text=True, timeout=60)
@@ -2201,6 +2201,25 @@ def process_session():
     if not csv_path.exists():
         return jsonify({"error": "File not found"}), 404
     
+    # Check if already processed (unless force=True)
+    force = data.get('force', False)
+    if not force:
+        sessions_dir = config.get_user_sessions_dir(user_id)
+        if sessions_dir.exists():
+            for sfile in os.listdir(sessions_dir):
+                if sfile.endswith('.json') and not sfile.endswith('_telemetry.json'):
+                    try:
+                        with open(sessions_dir / sfile, 'r') as f:
+                            sdata = json.load(f)
+                            if os.path.basename(sdata.get('meta', {}).get('source_file', '')) == safe_name:
+                                return jsonify({
+                                    "status": "already_processed",
+                                    "message": f"{safe_name} has already been analyzed",
+                                    "session_id": sdata.get('meta', {}).get('session_id')
+                                })
+                    except Exception:
+                        continue
+    
     # Run analysis script
     try:
         # Locate script in our core folder
@@ -2241,6 +2260,8 @@ def process_session():
         }), 500
 
 
+@app.route('/api/tracks/<int:track_id>/rename', methods=['POST'])
+@jwt_required()
 def rename_track(track_id):
     """Rename a track"""
     current_user_id = int(get_jwt_identity())
@@ -2257,27 +2278,21 @@ def rename_track(track_id):
     if not new_name:
         return jsonify({"error": "new_name required"}), 400
     
-    # Run rename script
+    if len(new_name) > 255:
+        return jsonify({"error": "Track name too long (max 255 characters)"}), 400
+    
     try:
-        # Use echo to auto-confirm
-        result = subprocess.run([
-            'python3', 'scripts/rename_track.py',
-            '--track_id', str(track_id),
-            '--new_name', new_name
-        ], capture_output=True, text=True, input='y\n', cwd=BASE_DIR, timeout=10)
+        old_name = track.track_name
+        track.track_name = new_name
+        db.session.commit()
         
-        if result.returncode == 0:
-            return jsonify({
-                "success": True,
-                "message": f"Renamed to {new_name}"
-            })
-        else:
-            return jsonify({
-                "success": False,
-                "error": result.stderr
-            }), 400
+        return jsonify({
+            "success": True,
+            "message": f"Renamed '{old_name}' to '{new_name}'"
+        })
     
     except Exception as e:
+        db.session.rollback()
         return jsonify({
             "success": False,
             "error": str(e)
@@ -2642,7 +2657,7 @@ def get_processed_files():
                         data = json.load(f)
                         source_file = data.get('meta', {}).get('source_file')
                         if source_file:
-                            processed.add(source_file)
+                            processed.add(os.path.basename(source_file))
                 except Exception:
                     continue
     
@@ -2658,14 +2673,38 @@ def process_all_files():
     # Get already processed files for this user
     processed_count = SessionMeta.query.filter_by(user_id=user_id).count()
     
+    # Build set of source filenames that have already been processed
+    already_processed = set()
+    sessions_dir = config.get_user_sessions_dir(user_id)
+    if sessions_dir.exists():
+        for fname in os.listdir(sessions_dir):
+            if fname.endswith('.json') and not fname.endswith('_telemetry.json'):
+                try:
+                    with open(sessions_dir / fname, 'r') as f:
+                        sdata = json.load(f)
+                        source_file = sdata.get('meta', {}).get('source_file')
+                        if source_file:
+                            already_processed.add(os.path.basename(source_file))
+                except Exception:
+                    continue
+    
     # Check if specific files were requested
     data = request.get_json() or {}
     requested_files = data.get('files', None)  # Optional list of specific files
+    force = data.get('force', False)
     
     # Get list of learning files
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     files = user_file_mgr.get_files()
-    to_process = requested_files if requested_files else [f['filename'] for f in files]
+    all_files = requested_files if requested_files else [f['filename'] for f in files]
+    
+    # Filter out already-processed files (unless explicit force flag)
+    if not force:
+        to_process = [f for f in all_files if f not in already_processed]
+    else:
+        to_process = all_files
+    
+    skipped = len(all_files) - len(to_process)
 
     # Limit check for free tier
     if user.subscription_tier == 'free':
@@ -2682,6 +2721,16 @@ def process_all_files():
         if len(to_process) > remaining:
             to_process = to_process[:remaining]
     
+    if not to_process:
+        return jsonify({
+            "status": "complete",
+            "message": f"No new files to process ({skipped} already analyzed)",
+            "processed": 0,
+            "failed": 0,
+            "skipped": skipped,
+            "details": {"success": [], "failed": []}
+        })
+    
     results = {"success": [], "failed": []}
     
     for filename in to_process:
@@ -2692,7 +2741,7 @@ def process_all_files():
             tracks_dir = str(config.get_user_tracks_dir(user_id))
             
             result = subprocess.run([
-                'python3', script_path, str(csv_path),
+                sys.executable, script_path, str(csv_path),
                 '--output', output_dir,
                 '--tracks', tracks_dir
             ], capture_output=True, text=True, timeout=60)
@@ -2709,9 +2758,10 @@ def process_all_files():
         
     return jsonify({
         "status": "complete",
-        "message": f"Processed {len(results['success'])} files",
+        "message": f"Processed {len(results['success'])} files ({skipped} already analyzed)",
         "processed": len(results["success"]),
         "failed": len(results["failed"]),
+        "skipped": skipped,
         "details": results
     })
 
