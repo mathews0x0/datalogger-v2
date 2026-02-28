@@ -166,6 +166,10 @@ def protect_api():
         # Also allow shared and public session data
         if request.path.startswith('/api/shared/') or request.path.startswith('/api/public/'):
             return
+        
+        # Allow profile photo serving
+        if request.path.endswith('/photo') and request.path.startswith('/api/users/') and request.method == 'GET':
+            return
             
         # Also allow logout (it handles its own JWT if needed, or just clears cookies)
         if request.path == '/api/auth/logout':
@@ -300,6 +304,95 @@ def update_profile():
     
     db.session.commit()
     return jsonify(user.to_dict())
+
+@app.route('/api/auth/profile/photo', methods=['POST'])
+@jwt_required()
+def upload_profile_photo():
+    """Upload a profile photo (JPEG/PNG, max 2MB)."""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if 'photo' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['photo']
+    if file.filename == '':
+        return jsonify({"error": "No file selected"}), 400
+
+    # Validate file type
+    allowed = {'jpg', 'jpeg', 'png', 'webp'}
+    ext = file.filename.rsplit('.', 1)[-1].lower() if '.' in file.filename else ''
+    if ext not in allowed:
+        return jsonify({"error": "Only JPG, PNG, and WebP files are allowed"}), 400
+
+    # Save file
+    user_dir = config.get_user_dir(int(user_id))
+    photo_filename = f"profile.{ext}"
+    photo_path = user_dir / photo_filename
+
+    # Remove old profile photo if it exists
+    if user.profile_photo:
+        old_path = user_dir / user.profile_photo
+        if old_path.exists():
+            old_path.unlink()
+
+    file.save(str(photo_path))
+
+    # Try to resize with Pillow if available
+    try:
+        from PIL import Image
+        img = Image.open(str(photo_path))
+        img = img.convert('RGB')
+        # Crop to square
+        w, h = img.size
+        side = min(w, h)
+        left = (w - side) // 2
+        top = (h - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+        img = img.resize((256, 256), Image.LANCZOS)
+        photo_filename = "profile.jpg"
+        photo_path = user_dir / photo_filename
+        img.save(str(photo_path), "JPEG", quality=85)
+    except ImportError:
+        pass  # Pillow not installed, save as-is
+
+    user.profile_photo = photo_filename
+    db.session.commit()
+    return jsonify({"success": True, "profile_photo": photo_filename, "user": user.to_dict()})
+
+@app.route('/api/auth/profile/photo', methods=['DELETE'])
+@jwt_required()
+def delete_profile_photo():
+    """Remove the current profile photo."""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    if user.profile_photo:
+        photo_path = config.get_user_dir(int(user_id)) / user.profile_photo
+        if photo_path.exists():
+            photo_path.unlink()
+        user.profile_photo = None
+        db.session.commit()
+
+    return jsonify({"success": True, "user": user.to_dict()})
+
+@app.route('/api/users/<int:uid>/photo', methods=['GET'])
+def get_user_photo(uid):
+    """Serve a user's profile photo. Public endpoint."""
+    user = User.query.get(uid)
+    if not user or not user.profile_photo:
+        return '', 204  # No content
+
+    user_dir = config.get_user_dir(uid)
+    photo_path = user_dir / user.profile_photo
+    if not photo_path.exists():
+        return '', 204
+
+    return send_file(str(photo_path), mimetype='image/jpeg')
 
 @app.route('/api/auth/change-password', methods=['POST'])
 @jwt_required()

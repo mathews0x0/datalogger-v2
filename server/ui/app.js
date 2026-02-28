@@ -266,6 +266,9 @@ function updateAuthUI() {
         if (bikeInput) bikeInput.value = currentUser.bike_info || '';
         if (trackInput) trackInput.value = currentUser.home_track || '';
 
+        // Profile photo
+        setProfileAvatars(currentUser);
+
         // My Devices section visibility
         const myDevicesCard = document.getElementById('myDevicesCard');
         if (myDevicesCard) myDevicesCard.style.display = 'block';
@@ -294,6 +297,80 @@ function openChangePasswordModal() {
 function closeChangePasswordModal() {
     const modal = document.getElementById('changePasswordModal');
     if (modal) modal.classList.remove('active');
+}
+
+// === PROFILE PHOTO ===
+function setProfileAvatars(user) {
+    const headerImg = document.getElementById('headerAvatarImg');
+    const headerIcon = document.getElementById('headerAvatarIcon');
+    const panelImg = document.getElementById('profilePanelAvatar');
+    const panelIcon = document.getElementById('profilePanelAvatarIcon');
+    const removeBtn = document.getElementById('removePhotoBtn');
+
+    if (user && user.profile_photo) {
+        const photoUrl = `${API_BASE}/api/users/${user.id}/photo?t=${Date.now()}`;
+        if (headerImg) { headerImg.src = photoUrl; headerImg.style.display = 'block'; }
+        if (headerIcon) headerIcon.style.display = 'none';
+        if (panelImg) { panelImg.src = photoUrl; panelImg.style.display = 'block'; }
+        if (panelIcon) panelIcon.style.display = 'none';
+        if (removeBtn) removeBtn.style.display = 'inline';
+    } else {
+        if (headerImg) { headerImg.src = ''; headerImg.style.display = 'none'; }
+        if (headerIcon) headerIcon.style.display = 'inline';
+        if (panelImg) { panelImg.src = ''; panelImg.style.display = 'none'; }
+        if (panelIcon) panelIcon.style.display = 'inline';
+        if (removeBtn) removeBtn.style.display = 'none';
+    }
+}
+
+async function uploadProfilePhoto(input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+
+    // Max 2MB
+    if (file.size > 2 * 1024 * 1024) {
+        showToast('Photo must be under 2MB', 'error');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('photo', file);
+
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/profile/photo`, {
+            method: 'POST',
+            credentials: 'include',
+            body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+            currentUser = data.user;
+            setProfileAvatars(currentUser);
+            showToast('Profile photo updated', 'success');
+        } else {
+            showToast(data.error || 'Upload failed', 'error');
+        }
+    } catch (e) {
+        showToast('Upload failed', 'error');
+    }
+    input.value = ''; // Reset file input
+}
+
+async function removeProfilePhoto() {
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/profile/photo`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+            currentUser = data.user;
+            setProfileAvatars(currentUser);
+            showToast('Profile photo removed', 'info');
+        }
+    } catch (e) {
+        showToast('Failed to remove photo', 'error');
+    }
 }
 
 // === PROFILE PANEL ===
@@ -1748,9 +1825,9 @@ function renderRecentSessions(recentSessions) {
         container.innerHTML = renderEmptyState(
             '🏁',
             'No sessions yet',
-            'Connect your device and hit the track to start logging laps!',
-            'Connect Device',
-            "showView('settings')"
+            'Head to Sync Data to upload your first ride, or connect your RS-Core to auto-upload.',
+            'Go to Sync Data',
+            "showView('process')"
         );
         return;
     }
@@ -1792,8 +1869,8 @@ async function loadTracks() {
             container.innerHTML = renderEmptyState(
                 '🗺️',
                 'No tracks yet',
-                'Analyze your first ride session and we\'ll automatically learn the track layout.',
-                'Sync Data',
+                'Tracks are auto-detected when you analyze ride sessions. Head to Sync Data to import your first ride.',
+                'Go to Sync Data',
                 "showView('process')"
             );
             return;
@@ -2009,8 +2086,8 @@ async function loadSessions(filterTrackId = null) {
             container.innerHTML = renderEmptyState(
                 '📊',
                 'No sessions yet',
-                'Analyze your first ride data to see your sessions here.',
-                'Sync Data',
+                'Upload a CSV from your RS-Core in the Sync Data tab, then analyze it to see your sessions here.',
+                'Go to Sync Data',
                 "showView('process')"
             );
             return;
