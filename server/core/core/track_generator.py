@@ -4,8 +4,9 @@ import matplotlib.pyplot as plt
 from typing import Dict, Optional, List
 import src.config as config
 from src.analysis.core.models import Session, Lap
-from src.analysis.processing.laps import LapDetector, StartLine
 from src.analysis.processing.geo import haversine_distance
+from src.analysis.processing.laps import LapDetector, StartLine
+from src.analysis.core.registry_manager import RegistryManager
 
 class TrackGenerator:
     """
@@ -13,13 +14,13 @@ class TrackGenerator:
     Used for both 'Learning Mode' and 'Auto-Track' generation.
     """
 
-    def __init__(self, output_dir: str = None):
-        self.output_dir = output_dir if output_dir else config.TRACKS_DIR
+    def __init__(self, tracks_dir: str = None):
+        self.output_dir = tracks_dir if tracks_dir else config.TRACKS_DIR
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Initialize Registry Manager for sequential track IDs
-        from src.analysis.core.registry_manager import RegistryManager
-        self.registry = RegistryManager()
+        registry_path = os.path.join(self.output_dir, "registry.json")
+        self.registry = RegistryManager(registry_path=registry_path)
 
     def generate_from_session(self, session: Session, track_id: int, track_name: str, radius_m: float = 20.0) -> Optional[Dict]:
         """

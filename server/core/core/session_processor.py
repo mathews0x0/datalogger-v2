@@ -23,12 +23,12 @@ class SessionProcessor:
     OUTPUT: Updated Artifacts (Tracks, TBL, Session JSON)
     """
 
-    def __init__(self, output_dir=None):
+    def __init__(self, output_dir=None, tracks_dir=None):
         self.log = get_logger("analysis")
         self.loader = CSVLoader()
-        self.tm = TrackManager()
-        self.gen = TrackGenerator()
-        self.tbl_mgr = TBLManager()
+        self.tm = TrackManager(tracks_dir=tracks_dir)
+        self.gen = TrackGenerator(tracks_dir=tracks_dir)
+        self.tbl_mgr = TBLManager(tracks_dir=tracks_dir)
         self.exporter = SessionExporter(output_dir=output_dir)
 
     def process_session(self, file_path: str, force_track_id: str = None) -> bool:
@@ -65,7 +65,8 @@ class SessionProcessor:
             if not track_info:
                 self.log.info("Track not identified. Initiating Auto-Generation...")
                 # Generate sequential numeric track ID via registry
-                registry = RegistryManager()
+                registry_path = os.path.join(self.tm.tracks_dir, "registry.json")
+                registry = RegistryManager(registry_path=registry_path)
                 new_id = registry.get_next_track_id()  # Returns numeric ID
                 
                 new_name = f"track_{new_id}"  # Human name, will be sanitized to folder

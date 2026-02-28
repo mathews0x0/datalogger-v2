@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 import shutil
+import sys
 
 # Point to UI folder in same server directory
 static_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../ui'))
@@ -68,6 +69,12 @@ from models import db, bcrypt, User, SessionMeta, TrackMeta, TrackDayMeta, Follo
 
 # Base directory
 import config
+
+# Add src/analysis/core to path for RegistryManager
+analysis_core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src/analysis/core'))
+if analysis_core_path not in sys.path:
+    sys.path.append(analysis_core_path)
+from registry_manager import RegistryManager
 OUTPUT_DIR = config.DATA_DIR
 
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(config.DATA_DIR / 'racesense.db')
@@ -293,6 +300,36 @@ def update_profile():
     
     db.session.commit()
     return jsonify(user.to_dict())
+
+@app.route('/api/auth/change-password', methods=['POST'])
+@jwt_required()
+def change_password():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    old_password = data.get('old_password')
+    new_password = data.get('new_password')
+
+    if not old_password or not new_password:
+        return jsonify({"error": "Both old and new passwords are required"}), 400
+
+    if not user.check_password(old_password):
+        return jsonify({"error": "Incorrect current password"}), 401
+
+    # Password strength validation (matches registration rules)
+    if len(new_password) < 8:
+        return jsonify({"error": "New password must be at least 8 characters long"}), 400
+    if new_password.lower() == new_password:
+        if not any(c.isdigit() for c in new_password):
+            return jsonify({"error": "New password must contain at least one number or uppercase letter"}), 400
+
+    user.set_password(new_password)
+    db.session.commit()
+
+    return jsonify({"success": True, "message": "Password updated successfully!"})
 
 @app.route('/api/sessions/limit', methods=['GET'])
 @jwt_required()
@@ -1102,11 +1139,14 @@ def get_track_leaderboard(track_id):
 @app.route('/api/leaderboards/trackday/<trackday_id>')
 def get_trackday_leaderboard(trackday_id):
     """Get leaderboard for a specific trackday across all participants"""
-    # Find the trackday details
-    trackdays = load_trackdays()
+    td_meta = TrackDayMeta.query.filter_by(trackday_id=trackday_id).first()
+    if not td_meta:
+        return jsonify({"error": "Trackday not found"}), 404
+    
+    trackdays = load_trackdays(td_meta.user_id)
     td_data = next((td for td in trackdays if td['id'] == trackday_id), None)
     if not td_data:
-        return jsonify({"error": "Trackday not found"}), 404
+        return jsonify({"error": "Trackday details not found on disk"}), 404
         
     # In V2, we might want to allow multiple users to join a trackday.
     # For now, let's find all public sessions on the same track and same day.
@@ -1194,7 +1234,8 @@ def compare_laps():
                     return None, "Access denied"
         
         # Load session to get lap start/end indices
-        session_file = config.SESSIONS_DIR / f"{session_id}.json"
+        sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
+        session_file = sessions_dir / f"{session_id}.json"
         if not session_file.exists():
             return None, "Session data not found"
             
@@ -1210,7 +1251,7 @@ def compare_laps():
         end_idx = lap.get('end_index')
         
         # Load telemetry
-        telemetry_file = config.SESSIONS_DIR / f"{session_id}_telemetry.json"
+        telemetry_file = sessions_dir / f"{session_id}_telemetry.json"
         if not telemetry_file.exists():
             return None, "Telemetry data not found"
             
@@ -1351,7 +1392,7 @@ def get_tracks():
     for t in tracks_meta:
         folder = t.folder_name
         session_pattern = f"{folder}_session_"
-        sessions_dir = config.SESSIONS_DIR
+        sessions_dir = config.get_user_sessions_dir(user_id)
         
         session_count = 0
         if sessions_dir.exists():
@@ -1376,7 +1417,7 @@ def get_track(track_id):
     if not folder:
         return jsonify({"error": "Track not found"}), 404
     
-    track_dir = config.TRACKS_DIR / folder
+    track_dir = config.get_user_tracks_dir(user_id) / folder
     
     # Load track.json
     track_file = track_dir / "track.json"
@@ -1418,7 +1459,7 @@ def update_track(track_id):
     if not folder:
         return jsonify({"error": "Track not found"}), 404
     
-    track_dir = config.TRACKS_DIR / folder
+    track_dir = config.get_user_tracks_dir(user_id) / folder
     track_file = track_dir / "track.json"
     
     if not track_file.exists():
@@ -1451,7 +1492,8 @@ def get_track_map(track_id):
     if not folder:
         return jsonify({"error": "Track not found"}), 404
     
-    map_file = config.TRACKS_DIR / folder / "track_map.png"
+    track_dir = config.get_user_tracks_dir(user_id) / folder
+    map_file = track_dir / "track_map.png"
     if not map_file.exists():
         return jsonify({"error": "Map not found"}), 404
     
@@ -1545,7 +1587,7 @@ def get_session(session_id):
             if not has_team_access:
                 return jsonify({"error": "Access denied"}), 403
         
-    sessions_dir = config.SESSIONS_DIR
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     session_file = sessions_dir / f"{session_id}.json"
     
     if not session_file.exists():
@@ -1605,7 +1647,7 @@ def get_session_telemetry(session_id):
             if not has_team_access:
                 return jsonify({"error": "Access denied"}), 403
         
-    sessions_dir = config.SESSIONS_DIR
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     telemetry_file = sessions_dir / f"{session_id}_telemetry.json"
     
     if telemetry_file.exists():
@@ -1664,7 +1706,7 @@ def get_shared_session(token):
     if s_meta.share_expires_at and s_meta.share_expires_at < datetime.utcnow():
         return jsonify({"error": "Shared link has expired"}), 410
         
-    sessions_dir = config.SESSIONS_DIR
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     session_file = sessions_dir / f"{s_meta.session_id}.json"
     
     if not session_file.exists():
@@ -1688,7 +1730,7 @@ def get_shared_telemetry(token):
     if not s_meta:
         return jsonify({"error": "Shared session not found"}), 404
         
-    sessions_dir = config.SESSIONS_DIR
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     telemetry_file = sessions_dir / f"{s_meta.session_id}_telemetry.json"
     
     if telemetry_file.exists():
@@ -1817,22 +1859,34 @@ def upload_file():
         if not safe_name.lower().endswith('.csv'):
              safe_name += '.csv'
 
-        save_path = config.LEARNING_DIR / safe_name
+        save_path = config.get_user_learning_dir(user_id) / safe_name
 
         with open(save_path, 'w') as f:
             f.write(content)
 
-        # Auto-trigger analysis
-        try:
-            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-            result = subprocess.run(['python3', script_path, str(save_path)], capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                register_new_sessions(user_id)
-                print(f"[Upload] Analyzed and registered session for user {user_id}")
-            else:
-                print(f"[Upload] Analysis failed: {result.stderr}")
-        except Exception as ae:
-            print(f"[Upload] Failed to auto-trigger analysis: {ae}")
+        skip_analysis = data.get('skip_analysis', False)
+        
+        if not skip_analysis:
+            # Auto-trigger analysis
+            try:
+                script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
+                output_dir = str(config.get_user_sessions_dir(user_id))
+                tracks_dir = str(config.get_user_tracks_dir(user_id))
+                result = subprocess.run([
+                    'python3', script_path, str(save_path),
+                    '--output', output_dir,
+                    '--tracks', tracks_dir
+                ], capture_output=True, text=True, timeout=60)
+                
+                if result.returncode == 0:
+                    register_new_sessions(user_id)
+                    print(f"[Upload] Analyzed and registered session for user {user_id}")
+                else:
+                    print(f"[Upload] Analysis failed: {result.stderr}")
+            except Exception as ae:
+                print(f"[Upload] Failed to auto-trigger analysis: {ae}")
+        else:
+            print(f"[Upload] Saved {safe_name} to learning folder for user {user_id} (skip_analysis=True)")
 
         # Update last_sync on device token
         if device_token:
@@ -1919,12 +1973,12 @@ def sync_from_device():
                         pass
                     continue
 
-                # Save to learning directory
+                # Save to user-specific learning directory
                 safe_name = os.path.basename(fname)
                 if not safe_name.lower().endswith('.csv'):
                     safe_name += '.csv'
                 
-                save_path = config.LEARNING_DIR / safe_name
+                save_path = config.get_user_learning_dir(user_id) / safe_name
                 with open(save_path, 'w') as f:
                     f.write(content)
                 
@@ -1933,7 +1987,14 @@ def sync_from_device():
                 # Auto-trigger analysis
                 try:
                     script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-                    result = subprocess.run(['python3', script_path, str(save_path)], capture_output=True, text=True, timeout=60)
+                    output_dir = str(config.get_user_sessions_dir(user_id))
+                    tracks_dir = str(config.get_user_tracks_dir(user_id))
+                    result = subprocess.run([
+                        'python3', script_path, str(save_path),
+                        '--output', output_dir,
+                        '--tracks', tracks_dir
+                    ], capture_output=True, text=True, timeout=60)
+                    
                     if result.returncode == 0 and user_id:
                         register_new_sessions(user_id)
                         print(f"[Sync] Analyzed and registered: {fname}")
@@ -1971,8 +2032,8 @@ def sync_from_device():
 
 
 def register_new_sessions(user_id):
-    """Scan sessions directory and register any new sessions to the user"""
-    sessions_dir = config.SESSIONS_DIR
+    """Scan user-specific sessions directory and register any new sessions"""
+    sessions_dir = config.get_user_sessions_dir(user_id)
     if not sessions_dir.exists():
         return
     
@@ -2042,7 +2103,7 @@ def process_session():
     
     # Sandbox enforcement
     safe_name = os.path.basename(filename)
-    csv_path = config.LEARNING_DIR / safe_name
+    csv_path = config.get_user_learning_dir(user_id) / safe_name
     
     if not csv_path.exists():
         return jsonify({"error": "File not found"}), 404
@@ -2051,9 +2112,13 @@ def process_session():
     try:
         # Locate script in our core folder
         script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
+        output_dir = str(config.get_user_sessions_dir(user_id))
+        tracks_dir = str(config.get_user_tracks_dir(user_id))
         
         result = subprocess.run([
-            'python3', script_path, str(csv_path)
+            'python3', script_path, str(csv_path),
+            '--output', output_dir,
+            '--tracks', tracks_dir
         ], capture_output=True, text=True, timeout=60)
 
         
@@ -2129,21 +2194,24 @@ def rename_track(track_id):
 # FILE MANAGEMENT
 # ============================================================================
 from file_manager import FileManager
-file_mgr = FileManager(base_dir=config.LEARNING_DIR)
 
 @app.route('/api/learning/list')
 @jwt_required()
 def list_learning_files():
     """List learning CSV files with metadata"""
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     archived = request.args.get('archived', 'false').lower() == 'true'
-    return jsonify(file_mgr.get_files(archived=archived))
+    return jsonify(user_file_mgr.get_files(archived=archived))
 
 @app.route('/api/learning/<filename>/lock', methods=['POST'])
 @jwt_required()
 def lock_learning_file(filename):
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     locked = data.get('locked', True)
-    if file_mgr.set_lock(filename, locked):
+    if user_file_mgr.set_lock(filename, locked):
         return jsonify({"success": True, "locked": locked})
     return jsonify({"error": "Failed to update lock"}), 500
 
@@ -2151,51 +2219,61 @@ def lock_learning_file(filename):
 @jwt_required()
 def delete_learning_files():
     """Permanent Bulk Delete"""
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     filenames = data.get('files', [])
     from_archive = data.get('from_archive', False)
     if not filenames:
         return jsonify({"error": "No files specified"}), 400
         
-    result = file_mgr.delete_files(filenames, from_archive=from_archive)
+    result = user_file_mgr.delete_files(filenames, from_archive=from_archive)
     return jsonify(result)
 
 @app.route('/api/learning/archive', methods=['POST'])
 @jwt_required()
 def archive_learning_files():
     """Soft delete - Move to archive"""
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     filenames = data.get('files', [])
     if not filenames:
         return jsonify({"error": "No files specified"}), 400
         
-    result = file_mgr.archive_files(filenames)
+    result = user_file_mgr.archive_files(filenames)
     return jsonify(result)
 
 @app.route('/api/learning/restore', methods=['POST'])
 @jwt_required()
 def restore_learning_files():
     """Restore from archive"""
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     filenames = data.get('files', [])
     if not filenames:
         return jsonify({"error": "No files specified"}), 400
         
-    result = file_mgr.restore_files(filenames)
+    result = user_file_mgr.restore_files(filenames)
     return jsonify(result)
 
 @app.route('/api/learning/<filename>/raw')
 @jwt_required()
 def get_learning_file_raw(filename):
     """Get raw head of file"""
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     lines = request.args.get('lines', 100, type=int)
-    return jsonify(file_mgr.read_file_head(filename, lines))
+    return jsonify(user_file_mgr.read_file_head(filename, lines))
 
 @app.route('/api/learning/<filename>/geo')
 @jwt_required()
 def get_learning_file_geo(filename):
     """Get Geo Path for Visualization"""
-    return jsonify(file_mgr.extract_geo_path(filename))
+    user_id = get_jwt_identity()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
+    return jsonify(user_file_mgr.extract_geo_path(filename))
 
 @app.route('/api/device/configure', methods=['POST'])
 @local_only
@@ -2459,8 +2537,9 @@ def device_update_ota():
 @jwt_required()
 def get_processed_files():
     """Returns set of source filenames that have already been processed into sessions."""
+    user_id = get_jwt_identity()
+    sessions_dir = config.get_user_sessions_dir(user_id)
     processed = set()
-    sessions_dir = config.SESSIONS_DIR
     
     if sessions_dir.exists():
         for filename in os.listdir(sessions_dir):
@@ -2491,7 +2570,8 @@ def process_all_files():
     requested_files = data.get('files', None)  # Optional list of specific files
     
     # Get list of learning files
-    files = file_mgr.get_files()
+    user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
+    files = user_file_mgr.get_files()
     to_process = requested_files if requested_files else [f['filename'] for f in files]
 
     # Limit check for free tier
@@ -2499,7 +2579,7 @@ def process_all_files():
         if processed_count >= 5:
              return jsonify({
                 "error": "Limit reached",
-                "message": "Free tier is limited to 5 processed sessions. Please upgrade to Pro for unlimited storage.",
+                "message": "Free tier is limited to 5 processed sessions.",
                 "used": processed_count,
                 "max": 5
             }), 403
@@ -2508,17 +2588,20 @@ def process_all_files():
         remaining = 5 - processed_count
         if len(to_process) > remaining:
             to_process = to_process[:remaining]
-            # We'll continue but notify user? Or just process what we can?
-            # For now, just process what we can.
     
     results = {"success": [], "failed": []}
     
     for filename in to_process:
-        csv_path = config.LEARNING_DIR / filename
+        csv_path = config.get_user_learning_dir(user_id) / filename
         try:
             script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
+            output_dir = str(config.get_user_sessions_dir(user_id))
+            tracks_dir = str(config.get_user_tracks_dir(user_id))
+            
             result = subprocess.run([
-                'python3', script_path, str(csv_path)
+                'python3', script_path, str(csv_path),
+                '--output', output_dir,
+                '--tracks', tracks_dir
             ], capture_output=True, text=True, timeout=60)
             
             if result.returncode == 0:
@@ -2562,7 +2645,8 @@ def get_track_geometry(track_id):
     if not folder_name:
          return jsonify({"error": "Track not found"}), 404
          
-    geo_path = OUTPUT_DIR / "tracks" / folder_name / "geometry.json"
+    track_dir = config.get_user_tracks_dir(user_id)
+    geo_path = track_dir / folder_name / "geometry.json"
     if geo_path.exists():
         return send_file(geo_path)
     
@@ -2582,9 +2666,9 @@ def delete_session_endpoint(session_id):
         return jsonify({"error": "Access denied — you can only delete your own sessions"}), 403
 
     try:
-            
-        s_path = config.SESSIONS_DIR / f"{session_id}.json"
-        t_path = config.SESSIONS_DIR / f"{session_id}_telemetry.json"
+        sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
+        s_path = sessions_dir / f"{session_id}.json"
+        t_path = sessions_dir / f"{session_id}_telemetry.json"
         
         if s_path.exists(): os.remove(s_path)
         if t_path.exists(): os.remove(t_path)
@@ -2611,21 +2695,23 @@ def delete_track_endpoint(track_id):
         return jsonify({"error": "Access denied — you can only delete your own tracks"}), 403
 
     try:
-            
-        registry = RegistryManager()
+        user_tracks_dir = config.get_user_tracks_dir(current_user_id)
+        registry_path = user_tracks_dir / "registry.json"
+        registry = RegistryManager(registry_path=str(registry_path))
         
         track = registry.get_track_by_id(track_id)
         # If not in registry but in DB, we should still clean up DB
         folder_name = track_meta.folder_name
-        print(f"[API] Deleting track {track_id} ({folder_name}) for user {user_id}...")
+        print(f"[API] Deleting track {track_id} ({folder_name}) for user {current_user_id}...")
         
         # 1. Delete associated processed sessions for THIS user only
-        sessions_to_delete = SessionMeta.query.filter_by(track_id=track_id, user_id=user_id).all()
+        sessions_to_delete = SessionMeta.query.filter_by(track_id=track_id, user_id=current_user_id).all()
         
         deleted_sessions = 0
+        user_sessions_dir = config.get_user_sessions_dir(current_user_id)
         for s in sessions_to_delete:
-            s_file = OUTPUT_DIR / "sessions" / f"{s.session_id}.json"
-            t_file = OUTPUT_DIR / "sessions" / f"{s.session_id}_telemetry.json"
+            s_file = user_sessions_dir / f"{s.session_id}.json"
+            t_file = user_sessions_dir / f"{s.session_id}_telemetry.json"
             try:
                 if s_file.exists(): os.remove(s_file)
                 if t_file.exists(): os.remove(t_file)
@@ -2634,27 +2720,13 @@ def delete_track_endpoint(track_id):
             except Exception as e:
                 print(f"Failed to delete session {s.session_id}: {e}")
         
-        # 2. Delete Track Folder ONLY if no other users are using it
-        # (Though in Phase 1, each user has their own folders)
-        other_users = TrackMeta.query.filter(TrackMeta.track_id == track_id, TrackMeta.user_id != user_id).count()
-        
-        if other_users == 0:
-            track_dir = OUTPUT_DIR / "tracks" / folder_name
-            def on_rm_error(func, path, exc_info):
-                os.chmod(path, stat.S_IWRITE)
-                try: func(path)
-                except: pass
-
-            if track_dir.exists():
-                for i in range(3):
-                    try:
-                        shutil.rmtree(track_dir, onerror=on_rm_error)
-                        break
-                    except Exception:
-                        time.sleep(0.5)
+        # 2. Delete Track Folder
+        track_dir = user_tracks_dir / folder_name
+        if track_dir.exists():
+            shutil.rmtree(track_dir, ignore_errors=True)
             
-            # Also remove from registry.json if it's there
-            registry.delete_track(track_id)
+        # Also remove from registry.json if it's there
+        registry.delete_track(track_id)
         
         # 3. Remove from DB
         db.session.delete(track_meta)
@@ -2688,8 +2760,10 @@ def rename_learning_file():
         if not new_name.lower().endswith('.csv'):
             new_name += '.csv'
             
-        src = OUTPUT_DIR / "learning" / old_name
-        dst = OUTPUT_DIR / "learning" / new_name
+        user_id = get_jwt_identity()
+        user_learning_dir = config.get_user_learning_dir(user_id)
+        src = user_learning_dir / old_name
+        dst = user_learning_dir / new_name
         
         if not src.exists():
             return jsonify({"error": "Source file not found"}), 404
@@ -2721,7 +2795,7 @@ def rename_session(session_id):
     if not new_name:
         return jsonify({"error": "new_name required"}), 400
 
-    sessions_dir = OUTPUT_DIR / "sessions"
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     safe_id = os.path.basename(session_id).replace('.json', '')
     json_path = sessions_dir / f"{safe_id}.json"
     
@@ -2759,7 +2833,7 @@ def update_session_notes(session_id):
     data = request.get_json()
     notes = data.get('notes', '')
     
-    sessions_dir = OUTPUT_DIR / "sessions"
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     safe_id = os.path.basename(session_id).replace('.json', '')
     json_path = sessions_dir / f"{safe_id}.json"
     
@@ -2779,14 +2853,12 @@ def update_session_notes(session_id):
         with open(json_path, 'w') as f:
             json.dump(session_data, f, indent=2)
             
-        return jsonify({"success": True})
+        return jsonify({"success": True, "notes": notes})
     except Exception as e:
-        logger.error(f"Failed to save notes: {e}")
-        return jsonify({"error": "Failed to save notes"}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/sessions/<session_id>/export')
 @jwt_required()
-@require_tier('pro')
 def export_session(session_id):
     """
     Export session data as a ZIP file.
@@ -2796,7 +2868,11 @@ def export_session(session_id):
     import io
     
     # 1. Locate Files
-    sessions_dir = OUTPUT_DIR / "sessions"
+    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+        
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     
     # Sanitize ID
     safe_id = os.path.basename(session_id).replace('.json', '')
@@ -2877,17 +2953,17 @@ Generated by Datalogger Companion
 # TRACKDAY AGGREGATION
 # ============================================================================
 
-def load_trackdays():
-    """Load trackdays.json or return empty list"""
-    trackdays_file = OUTPUT_DIR / "trackdays.json"
+def load_trackdays(user_id):
+    """Load user'specific trackdays.json or return empty list"""
+    trackdays_file = config.get_user_dir(user_id) / "trackdays.json"
     if trackdays_file.exists():
         with open(trackdays_file, 'r') as f:
             return json.load(f)
     return []
 
-def save_trackdays(trackdays):
-    """Save trackdays to JSON file"""
-    trackdays_file = OUTPUT_DIR / "trackdays.json"
+def save_trackdays(user_id, trackdays):
+    """Save trackdays to user-specific JSON file"""
+    trackdays_file = config.get_user_dir(user_id) / "trackdays.json"
     with open(trackdays_file, 'w') as f:
         json.dump(trackdays, f, indent=2)
 
@@ -2900,13 +2976,14 @@ def get_trackdays():
     
     # We still need to load the session data for counts, or store it in DB
     # For now, let's just use the trackdays.json for the details, but filtered by DB
-    trackdays_list = load_trackdays() # This loads ALL trackdays from file
+    trackdays_list = load_trackdays(user_id) # This loads trackdays from user silo
     
     # Filter by IDs found in DB for this user
     user_td_ids = [td.trackday_id for td in trackdays_meta]
     user_trackdays = [td for td in trackdays_list if td['id'] in user_td_ids]
     
     # Enrich with session counts and quick stats
+    user_sessions_dir = config.get_user_sessions_dir(user_id)
     for td in user_trackdays:
         sessions = td.get('session_ids', [])
         td['session_count'] = len(sessions)
@@ -2917,7 +2994,7 @@ def get_trackdays():
         
         for sid in sessions:
             try:
-                session_path = OUTPUT_DIR / "sessions" / f"{sid}.json"
+                session_path = user_sessions_dir / f"{sid}.json"
                 if session_path.exists():
                     with open(session_path, 'r') as f:
                         sdata = json.load(f)
@@ -2941,7 +3018,7 @@ def create_trackday():
     user_id = get_jwt_identity()
     data = request.get_json()
     
-    trackdays = load_trackdays()
+    trackdays = load_trackdays(user_id)
     
     # Generate unique ID
     import uuid
@@ -2961,7 +3038,7 @@ def create_trackday():
     }
     
     trackdays.append(new_trackday)
-    save_trackdays(trackdays)
+    save_trackdays(user_id, trackdays)
     
     # Save to DB for tracking user ownership
     td_meta = TrackDayMeta(
@@ -2985,12 +3062,13 @@ def get_trackday(trackday_id):
     if not td_meta:
         return jsonify({"error": "Trackday not found or access denied"}), 404
 
-    trackdays = load_trackdays()
+    trackdays = load_trackdays(user_id)
     trackday = next((td for td in trackdays if td['id'] == trackday_id), None)
     if not trackday:
         return jsonify({"error": "Trackday data not found"}), 404
     
     # Aggregate all sessions
+    user_sessions_dir = config.get_user_sessions_dir(user_id)
     all_laps = []
     all_sector_times = []
     total_duration = 0
@@ -3000,7 +3078,7 @@ def get_trackday(trackday_id):
     
     for sid in trackday.get('session_ids', []):
         try:
-            session_path = OUTPUT_DIR / "sessions" / f"{sid}.json"
+            session_path = user_sessions_dir / f"{sid}.json"
             if session_path.exists():
                 with open(session_path, 'r') as f:
                     sdata = json.load(f)
@@ -3030,7 +3108,7 @@ def get_trackday(trackday_id):
                         if best_lap_time is None or lap['lap_time'] < best_lap_time:
                             best_lap_time = lap['lap_time']
         except Exception as e:
-            logger.error(f"Error loading session {sid}: {e}")
+            app.logger.error(f"Error loading session {sid}: {e}")
     
     # Sort laps by lap time
     all_laps.sort(key=lambda x: x.get('lap_time') or 999999)
@@ -3097,7 +3175,7 @@ def update_trackday(trackday_id):
         return jsonify({"error": "Trackday not found or access denied"}), 404
 
     data = request.get_json()
-    trackdays = load_trackdays()
+    trackdays = load_trackdays(user_id)
     
     for td in trackdays:
         if td['id'] == trackday_id:
@@ -3106,7 +3184,7 @@ def update_trackday(trackday_id):
             td['organizer'] = data.get('organizer', td['organizer'])
             td['rider_name'] = data.get('rider_name', td.get('rider_name', ''))
             td['notes'] = data.get('notes', td['notes'])
-            save_trackdays(trackdays)
+            save_trackdays(user_id, trackdays)
             
             # Update DB meta too
             td_meta.name = td['name']
@@ -3127,9 +3205,9 @@ def delete_trackday(trackday_id):
     if not td_meta:
         return jsonify({"error": "Trackday not found or access denied"}), 404
 
-    trackdays = load_trackdays()
+    trackdays = load_trackdays(user_id)
     trackdays = [td for td in trackdays if td['id'] != trackday_id]
-    save_trackdays(trackdays)
+    save_trackdays(user_id, trackdays)
     
     # Remove from DB
     db.session.delete(td_meta)
@@ -3149,14 +3227,14 @@ def tag_session_to_trackday(trackday_id, session_id):
     if not td_meta or not s_meta:
         return jsonify({"error": "Trackday or session not found or access denied"}), 404
 
-    trackdays = load_trackdays()
+    trackdays = load_trackdays(user_id)
     for td in trackdays:
         if td['id'] == trackday_id:
             if 'session_ids' not in td:
                 td['session_ids'] = []
             if session_id not in td['session_ids']:
                 td['session_ids'].append(session_id)
-                save_trackdays(trackdays)
+                save_trackdays(user_id, trackdays)
             return jsonify({"success": True, "session_ids": td['session_ids']})
     
     return jsonify({"error": "Trackday data not found"}), 404
@@ -3171,12 +3249,12 @@ def untag_session_from_trackday(trackday_id, session_id):
     if not td_meta:
         return jsonify({"error": "Trackday not found or access denied"}), 404
 
-    trackdays = load_trackdays()
+    trackdays = load_trackdays(user_id)
     for td in trackdays:
         if td['id'] == trackday_id:
             if session_id in td.get('session_ids', []):
                 td['session_ids'].remove(session_id)
-                save_trackdays(trackdays)
+                save_trackdays(user_id, trackdays)
             return jsonify({"success": True, "session_ids": td.get('session_ids', [])})
     
     return jsonify({"error": "Trackday data not found"}), 404

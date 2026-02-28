@@ -8,15 +8,16 @@ class TrackManager:
     """
     Manages track metadata and identification (Folder Aware).
     """
-    def __init__(self, db_path: str = None):
-        if db_path is None:
-            # Load from default TRACKS_DIR
-             import src.config as config
-             self.tracks_dir = config.TRACKS_DIR
-             self.tracks = self._load_all_tracks(self.tracks_dir)
-        else:
+    def __init__(self, tracks_dir: str = None, db_path: str = None):
+        if db_path:
             # Single file mode (legacy)
             self.tracks = self._load_tracks_file(db_path)
+            self.tracks_dir = os.path.dirname(db_path)
+        else:
+            # Directory mode
+             import src.config as config
+             self.tracks_dir = tracks_dir if tracks_dir else config.TRACKS_DIR
+             self.tracks = self._load_all_tracks(self.tracks_dir)
 
     def _load_all_tracks(self, directory: str) -> list:
         tracks = []

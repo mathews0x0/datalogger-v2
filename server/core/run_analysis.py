@@ -17,7 +17,8 @@ def main():
     parser.add_argument("file", help="Path to input CSV file")
     parser.add_argument("--lat", type=float, help="Start Line Latitude")
     parser.add_argument("--lon", type=float, help="Start Line Longitude")
-    parser.add_argument("--radius", type=float, default=None, help="Detection Radius (meters)")
+    parser.add_argument("--output", help="Optional output directory for results")
+    parser.add_argument("--tracks", help="Optional tracks directory for TBL/Registry")
     
     args = parser.parse_args()
     
@@ -28,7 +29,7 @@ def main():
     print(" Datalogger Analysis Pipeline (Phase 5)")
     print("-" * 50)
     
-    processor = SessionProcessor()
+    processor = SessionProcessor(output_dir=args.output, tracks_dir=args.tracks)
     # We can pass specific override ID if --track is added to args (future)
     # For now, just pass the file.
     

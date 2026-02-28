@@ -144,6 +144,13 @@ function showView(viewName) {
 // API CALLS
 // ============================================================================
 
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
+
 async function apiCall(endpoint, options = {}) {
     try {
         // Prevent caching
@@ -152,6 +159,16 @@ async function apiCall(endpoint, options = {}) {
 
         // Ensure credentials are included for Capacitor mobile app cross-origin calls
         options.credentials = 'include';
+
+        // Handle JWT CSRF Protection (Required for non-GET requests in production)
+        const method = (options.method || 'GET').toUpperCase();
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+            const csrfToken = getCookie('csrf_access_token');
+            if (csrfToken) {
+                options.headers = options.headers || {};
+                options.headers['X-CSRF-TOKEN'] = csrfToken;
+            }
+        }
 
         const response = await fetch(url, options);
 
@@ -179,7 +196,7 @@ async function apiCall(endpoint, options = {}) {
         return await response.json();
     } catch (error) {
         console.error('API Error:', error);
-        if (!options.displayError === false) {
+        if (options.displayError !== false) {
             showToast('Connection error', 'error');
         }
         throw error;
@@ -243,6 +260,7 @@ function updateAuthUI() {
 
         if (userProfileCard) {
             userProfileCard.style.display = 'block';
+
             const nameInput = document.getElementById('profileName');
             const bikeInput = document.getElementById('profileBike');
             const trackInput = document.getElementById('profileHomeTrack');
@@ -258,6 +276,7 @@ function updateAuthUI() {
 
         if (loginBtn) loginBtn.style.display = 'block';
         if (userProfileHeader) userProfileHeader.style.display = 'none';
+
         if (userProfileCard) userProfileCard.style.display = 'none';
         if (adminToolsCard) adminToolsCard.style.display = 'none';
     }
@@ -265,6 +284,55 @@ function updateAuthUI() {
     // My Devices card visibility
     const myDevicesCard = document.getElementById('myDevicesCard');
     if (myDevicesCard) myDevicesCard.style.display = currentUser ? 'block' : 'none';
+}
+
+async function changePassword() {
+    console.log('[Auth] Change Password triggered');
+    const oldPassword = document.getElementById('oldPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+    if (!oldPassword || !newPassword || !confirmNewPassword) {
+        showToast('Please fill in all password fields', 'error');
+        return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+        showToast('New passwords do not match', 'error');
+        return;
+    }
+
+    if (newPassword.length < 8) {
+        showToast('New password must be at least 8 characters', 'error');
+        return;
+    }
+
+    // Check strength matches backend: at least one number or uppercase
+    if (newPassword.toLowerCase() === newPassword && !/\d/.test(newPassword)) {
+        showToast('Password must contain at least one number or uppercase letter', 'error');
+        return;
+    }
+
+    try {
+        const result = await apiCall('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                old_password: oldPassword,
+                new_password: newPassword
+            })
+        });
+
+        if (result && result.success) {
+            showToast('Password updated successfully!', 'success');
+            // Clear inputs
+            document.getElementById('oldPassword').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmNewPassword').value = '';
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
 }
 
 async function adminSetTier() {
@@ -849,6 +917,15 @@ async function showUserProfile(userId) {
                     <i class="fas fa-user-circle"></i>
                 </div>
                 <h2>${name}</h2>
+                
+                ${currentUser && currentUser.id == userId ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <button class="btn btn-secondary btn-sm" onclick="showView('settings')">
+                            <i class="fas fa-cog"></i> Edit Profile & Security
+                        </button>
+                    </div>
+                ` : ''}
+
                 <div style="display: flex; justify-content: center; gap: 2rem; margin: 1.5rem 0;">
                     <div style="text-align: center;">
                         <div style="font-size: 1.5rem; font-weight: 800;">${social.followers_count}</div>
@@ -1685,7 +1762,7 @@ async function viewTrack(trackId) {
 
         let mapDisplay = '';
         try {
-            const geometry = await apiCall(`/api/tracks/${trackId}/geometry`);
+            const geometry = await apiCall(`/api/tracks/${trackId}/geometry`, { displayError: false });
             mapDisplay = generateTrackMapSVG(geometry, null, null, { title: '' });
         } catch (e) {
             mapDisplay = `<img src="${API_BASE}/api/tracks/${trackId}/map" 
@@ -5822,6 +5899,77 @@ function drawFrame() {
 // ============================================================================
 // BROWSER-BASED SYNC
 // ============================================================================
+/**
+ * Manual CSV Upload Handling
+ */
+function triggerFileUpload() {
+    const input = document.getElementById('manualCsvUpload');
+    if (input) input.click();
+}
+
+async function handleManualUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    showToast(`Uploading ${files.length} file(s)...`, 'info');
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < files.length; i++) {
+        try {
+            const success = await uploadOneFile(files[i]);
+            if (success) successCount++;
+            else failCount++;
+        } catch (e) {
+            console.error('Upload failed:', e);
+            failCount++;
+        }
+    }
+
+    if (successCount > 0) {
+        showToast(`Successfully uploaded ${successCount} file(s)`, 'success');
+        if (typeof loadLearningFiles === 'function') {
+            loadLearningFiles();
+        }
+    }
+    if (failCount > 0) {
+        showToast(`Failed to upload ${failCount} file(s)`, 'error');
+    }
+
+    // Clear the input so the same files can be selected again
+    event.target.value = '';
+}
+
+async function uploadOneFile(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const content = e.target.result;
+                const res = await apiCall('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: file.name,
+                        content: content,
+                        skip_analysis: true // Just save it to learning folder
+                    })
+                });
+                resolve(res && res.success);
+            } catch (err) {
+                console.error('apiCall error:', err);
+                resolve(false);
+            }
+        };
+        reader.onerror = () => {
+            console.error('FileReader error');
+            resolve(false);
+        };
+        reader.readAsText(file);
+    });
+}
+
 
 async function syncFromDevice() {
     const ip = await autoDetectDeviceIP();

@@ -18,6 +18,8 @@ def init_db():
         try:
             from sqlalchemy import inspect, text
             inspector = inspect(db.engine)
+            
+            # Check users table
             columns = [col['name'] for col in inspector.get_columns('users')]
             if 'is_approved' not in columns:
                 db.session.execute(text('ALTER TABLE users ADD COLUMN is_approved BOOLEAN DEFAULT 0'))
@@ -25,21 +27,29 @@ def init_db():
                 db.session.execute(text('UPDATE users SET is_approved = 1'))
                 db.session.commit()
                 print("Migration: Added is_approved column and approved all existing users.")
+            
+            # Check device_tokens table
+            dt_cols = [col['name'] for col in inspector.get_columns('device_tokens')]
+            if 'expires_at' not in dt_cols:
+                db.session.execute(text('ALTER TABLE device_tokens ADD COLUMN expires_at DATETIME'))
+                db.session.commit()
+                print("Migration: Added expires_at column to device_tokens.")
+                
         except Exception as e:
-            print(f"Migration check: {e}")
+            print(f"Migration check error: {e}")
 
         # Create default admin user if it doesn't exist
-        admin = User.query.filter_by(email='admin').first()
+        admin = User.query.filter_by(email='admin@racesense.in').first()
         if not admin:
             admin = User(
-                email='admin',
+                email='admin@racesense.in',
                 name='Admin',
                 bike_info='System Default',
                 home_track='N/A',
                 is_approved=True,
                 is_admin=True
             )
-            admin.set_password('admin123') # Default password
+            admin.set_password('Admin123@') # Requested admin password
             db.session.add(admin)
             db.session.commit()
             print(f"Default admin user created with ID: {admin.id}")

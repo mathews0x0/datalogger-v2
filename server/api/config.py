@@ -17,6 +17,29 @@ SECTOR_COUNT = 3
 
 
 
-# Ensure directories exist
-for d in [LEARNING_DIR, TRACKS_DIR, SESSIONS_DIR, METADATA_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
+# Legacy global directories (keeping definitions for migration/reference but not creating them)
+
+
+def get_user_dir(user_id):
+    """Get the base data directory for a specific user"""
+    u_dir = DATA_DIR / "users" / str(user_id)
+    u_dir.mkdir(parents=True, exist_ok=True)
+    return u_dir
+
+def get_user_sessions_dir(user_id):
+    """Get the sessions directory for a specific user"""
+    s_dir = get_user_dir(user_id) / "sessions"
+    s_dir.mkdir(parents=True, exist_ok=True)
+    return s_dir
+
+def get_user_learning_dir(user_id):
+    """Get the learning directory for a specific user"""
+    l_dir = get_user_dir(user_id) / "learning"
+    l_dir.mkdir(parents=True, exist_ok=True)
+    return l_dir
+
+def get_user_tracks_dir(user_id):
+    """Get the tracks directory for a specific user"""
+    t_dir = get_user_dir(user_id) / "tracks"
+    t_dir.mkdir(parents=True, exist_ok=True)
+    return t_dir

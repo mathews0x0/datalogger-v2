@@ -79,8 +79,12 @@ class SessionMeta(db.Model):
 class TrackMeta(db.Model):
     __tablename__ = 'tracks'
     id = db.Column(db.Integer, primary_key=True)
-    track_id = db.Column(db.Integer, unique=True, nullable=False)
+    track_id = db.Column(db.Integer, nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    __table_args__ = (
+        db.UniqueConstraint('track_id', 'user_id', name='_track_user_uc'),
+    )
     track_name = db.Column(db.String(255))
     folder_name = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
