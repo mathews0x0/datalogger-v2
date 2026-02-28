@@ -2116,7 +2116,7 @@ def process_session():
         tracks_dir = str(config.get_user_tracks_dir(user_id))
         
         result = subprocess.run([
-            'python3', script_path, str(csv_path),
+            sys.executable, script_path, str(csv_path),
             '--output', output_dir,
             '--tracks', tracks_dir
         ], capture_output=True, text=True, timeout=60)

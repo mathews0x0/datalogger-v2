@@ -5,3 +5,8 @@ flask-sqlalchemy
 flask-bcrypt
 requests
 gunicorn
+pandas
+scipy
+matplotlib
+numpy
+pillow

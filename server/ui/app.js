@@ -612,12 +612,12 @@ function updateConnectionStatus(connected) {
         statusEl.classList.remove('offline');
         statusEl.classList.add('online');
         dot.classList.add('connected');
-        text.textContent = 'Connected';
+        text.textContent = 'RS-Core Online';
     } else {
         statusEl.classList.remove('online');
         statusEl.classList.add('offline');
         dot.classList.remove('connected');
-        text.textContent = 'Disconnected';
+        text.textContent = 'Module Offline';
     }
 }
 
@@ -6052,6 +6052,7 @@ async function fastConnectCheck() {
         return;
     }
 
+
     badge.className = 'status-badge checking';
     text.textContent = 'Checking...';
 
@@ -6064,7 +6065,7 @@ async function fastConnectCheck() {
         if (response.ok) {
             const data = await response.json();
             badge.className = 'status-badge online';
-            text.textContent = `Connected: ${ip}`;
+            text.textContent = 'RS-Core Online';
             updateStorageIndicator(data);
             console.log('[FastCheck] Direct connection success:', ip);
             return;
@@ -6126,7 +6127,7 @@ async function checkDeviceConnection() {
 
     if (!ip) {
         badge.className = 'status-badge offline';
-        text.textContent = 'No Device IP';
+        text.textContent = 'No Device';
         updateDeviceStatus(false, null);
         return;
     }
@@ -6135,7 +6136,7 @@ async function checkDeviceConnection() {
         const res = await apiCall(`/api/device/check?ip=${ip}`);
         if (res && res.reachable) {
             badge.className = 'status-badge online';
-            text.textContent = `Connected: ${ip}`;
+            text.textContent = 'RS-Core Online';
 
             updateDeviceStatus(true, ip);
 
@@ -6162,7 +6163,7 @@ async function checkDeviceConnection() {
             }
         } else {
             badge.className = 'status-badge offline';
-            text.textContent = 'Device Offline';
+            text.textContent = 'Module Offline';
 
             updateDeviceStatus(false, ip);
 
@@ -6171,7 +6172,7 @@ async function checkDeviceConnection() {
         }
     } catch (err) {
         badge.className = 'status-badge offline';
-        text.textContent = 'Check Failed';
+        text.textContent = 'Module Offline';
 
         updateDeviceStatus(false, null);
 
@@ -6400,7 +6401,7 @@ function finishScanSuccess(ip, data, btn) {
     const text = document.getElementById('connText');
     if (badge && text) {
         badge.className = 'status-badge online';
-        text.textContent = `Connected: ${ip}`;
+        text.textContent = 'RS-Core Online';
     }
     updateStorageIndicator(data);
     finishScan(btn);
@@ -6522,7 +6523,7 @@ function updateDeviceStatus(connected, ip) {
             const title = document.getElementById('syncBannerTitle');
             const detail = document.getElementById('syncBannerDetail');
             if (title) title.textContent = 'RS-Core Connected';
-            if (detail) detail.textContent = `Auto-sync active · ${ip}`;
+            if (detail) detail.textContent = 'Auto-sync active';
         }
     } else {
         if (dot) dot.style.background = 'var(--error)';
