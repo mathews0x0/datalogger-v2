@@ -1763,8 +1763,8 @@ async function loadTracks() {
             container.innerHTML = renderEmptyState(
                 '🗺️',
                 'No tracks yet',
-                'Process your first session and we\'ll automatically learn the track layout.',
-                'Process Files',
+                'Analyze your first ride session and we\'ll automatically learn the track layout.',
+                'Sync Data',
                 "showView('process')"
             );
             return;
@@ -1980,8 +1980,8 @@ async function loadSessions(filterTrackId = null) {
             container.innerHTML = renderEmptyState(
                 '📊',
                 'No sessions yet',
-                'Process your first ride data to see your sessions here.',
-                'Process Files',
+                'Analyze your first ride data to see your sessions here.',
+                'Sync Data',
                 "showView('process')"
             );
             return;
@@ -3203,7 +3203,7 @@ function renderFileTable() {
     const limit = window.sessionLimit;
 
     if (files.length === 0) {
-        container.innerHTML = '<p class="help-text">No learning files available</p>';
+        container.innerHTML = '<p class="help-text">No files found. Upload a CSV or sync from your RS-Core to get started.</p>';
         return;
     }
 
@@ -3247,7 +3247,7 @@ function renderFileTable() {
         const processedBadge = isProcessed ? '<span style="color:#4CAF50; margin-left:0.5rem;" title="Already Processed">✅</span>' : '';
 
         const isLimitReached = limit && limit.tier === 'free' && limit.used >= limit.max;
-        const processBtn = `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">${isProcessed ? 'Re-process' : 'Process'}</button>`;
+        const processBtn = `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">${isProcessed ? 'Re-analyze' : 'Analyze'}</button>`;
 
         return `
             <tr class="${rowClass}">
@@ -3291,7 +3291,7 @@ function renderFileTable() {
         ${limitBanner}
         <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
             <button class="btn btn-primary" id="btnProcessAll" onclick="processAllFiles()" ${(unprocessedCount === 0 || (limit && limit.tier === 'free' && limit.used >= limit.max)) ? 'disabled style="opacity:0.5;"' : ''}>
-                🚀 Process All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}
+                🚀 Analyze All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}
             </button>
             <button class="btn btn-danger btn-sm" id="btnDeleteBulk" onclick="deleteSelectedFiles()" style="display:none;">
                 Delete Selected
@@ -3357,7 +3357,7 @@ function updateBulkUI() {
         const files = window.currentFiles || [];
         const unprocessedCount = files.filter(f => !processedFiles.has(f.filename)).length;
         if (processBtn) {
-            processBtn.textContent = `🚀 Process All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}`;
+            processBtn.textContent = `🚀 Analyze All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}`;
             processBtn.disabled = unprocessedCount === 0;
             processBtn.style.opacity = unprocessedCount === 0 ? '0.5' : '1';
         }
@@ -3468,7 +3468,7 @@ async function processFile(filename) {
         return;
     }
 
-    showToast('Processing session...', 'info');
+    showToast('Analyzing session...', 'info');
 
     try {
         const result = await apiCall('/api/process', {
@@ -3485,7 +3485,7 @@ async function processFile(filename) {
         }, 1000);
 
     } catch (error) {
-        showToast('Processing failed', 'error');
+        showToast('Analysis failed', 'error');
     }
 }
 
@@ -3517,7 +3517,7 @@ async function processAllFiles() {
         return;
     }
 
-    showToast(`Processing ${filesToProcess.length} files...`, 'info');
+    showToast(`Analyzing ${filesToProcess.length} files...`, 'info');
 
     try {
         const result = await apiCall('/api/process/all', {
