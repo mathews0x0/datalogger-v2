@@ -231,9 +231,7 @@ function updateAuthUI() {
     const loginBtn = document.getElementById('loginBtn');
     const userProfileHeader = document.getElementById('userProfileHeader');
     const headerUserName = document.getElementById('headerUserName');
-    const userProfileCard = document.getElementById('userProfileCard');
     const tierBadge = document.getElementById('tierBadge');
-    const adminToolsCard = document.getElementById('adminToolsCard');
     const adminNavBtn = document.getElementById('adminNavBtn');
     const landingPage = document.getElementById('landingPage');
     const appContent = document.getElementById('appContent');
@@ -254,21 +252,23 @@ function updateAuthUI() {
             tierBadge.className = `tier-badge ${currentUser.subscription_tier || 'free'}`;
         }
 
-        // Admin Check
+        // Admin nav
         const isAdmin = !!currentUser.is_admin;
-        if (adminToolsCard) adminToolsCard.style.display = isAdmin ? 'block' : 'none';
         if (adminNavBtn) adminNavBtn.style.display = isAdmin ? 'flex' : 'none';
 
-        if (userProfileCard) {
-            userProfileCard.style.display = 'block';
+        // Populate profile panel fields
+        const nameInput = document.getElementById('profileName');
+        const emailInput = document.getElementById('profileEmail');
+        const bikeInput = document.getElementById('profileBike');
+        const trackInput = document.getElementById('profileHomeTrack');
+        if (nameInput) nameInput.value = currentUser.name || '';
+        if (emailInput) emailInput.value = currentUser.email || '';
+        if (bikeInput) bikeInput.value = currentUser.bike_info || '';
+        if (trackInput) trackInput.value = currentUser.home_track || '';
 
-            const nameInput = document.getElementById('profileName');
-            const bikeInput = document.getElementById('profileBike');
-            const trackInput = document.getElementById('profileHomeTrack');
-            if (nameInput) nameInput.value = currentUser.name || '';
-            if (bikeInput) bikeInput.value = currentUser.bike_info || '';
-            if (trackInput) trackInput.value = currentUser.home_track || '';
-        }
+        // My Devices section visibility
+        const myDevicesCard = document.getElementById('myDevicesCard');
+        if (myDevicesCard) myDevicesCard.style.display = 'block';
     } else {
         // Show landing page, hide app
         if (landingPage) landingPage.style.display = 'block';
@@ -278,14 +278,43 @@ function updateAuthUI() {
         if (loginBtn) loginBtn.style.display = 'block';
         if (userProfileHeader) userProfileHeader.style.display = 'none';
 
-        if (userProfileCard) userProfileCard.style.display = 'none';
-        if (adminToolsCard) adminToolsCard.style.display = 'none';
+        // Hide devices card
+        const myDevicesCard = document.getElementById('myDevicesCard');
+        if (myDevicesCard) myDevicesCard.style.display = 'none';
     }
-
-    // My Devices card visibility
-    const myDevicesCard = document.getElementById('myDevicesCard');
-    if (myDevicesCard) myDevicesCard.style.display = currentUser ? 'block' : 'none';
 }
+
+// === PASSWORD MODAL ===
+function openChangePasswordModal() {
+    closeProfilePanel();
+    const modal = document.getElementById('changePasswordModal');
+    if (modal) modal.classList.add('active');
+}
+
+function closeChangePasswordModal() {
+    const modal = document.getElementById('changePasswordModal');
+    if (modal) modal.classList.remove('active');
+}
+
+// === PROFILE PANEL ===
+function openProfilePanel() {
+    const overlay = document.getElementById('profilePanelOverlay');
+    const panel = document.getElementById('profilePanel');
+    if (overlay) overlay.classList.add('active');
+    if (panel) panel.classList.add('active');
+}
+
+function closeProfilePanel() {
+    const overlay = document.getElementById('profilePanelOverlay');
+    const panel = document.getElementById('profilePanel');
+    if (overlay) overlay.classList.remove('active');
+    if (panel) panel.classList.remove('active');
+}
+
+// Close profile panel on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeProfilePanel();
+});
 
 async function changePassword() {
     console.log('[Auth] Change Password triggered');

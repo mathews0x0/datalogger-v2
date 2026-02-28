@@ -57,11 +57,12 @@
     <div style="display: flex; gap: 0.5rem; margin-left: auto">
       <div id="userProfileHeader" style="display: none; align-items: center; gap: 0.75rem; margin-right: 1rem;">
         <span id="tierBadge" class="tier-badge free">FREE</span>
-        <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;"
-          onclick="showUserProfile(currentUser.id)"></span>
+        <div class="header-avatar" onclick="openProfilePanel()" title="My Account">
+          <i class="fas fa-user-circle" style="font-size: 1.6rem; color: var(--text-dim); cursor: pointer;"></i>
+          <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;"></span>
+        </div>
         <button class="btn btn-sm" onclick="logout()" title="Logout"
-          style="background: transparent; border: 1px solid var(--border); color: var(--text-dim);"><i
-            class="fas fa-sign-out-alt"></i></button>
+          style="background: transparent; border: 1px solid var(--border); color: var(--text-dim); font-size: 0.8rem;">Logout</button>
       </div>
       <button id="loginBtn" class="btn btn-primary btn-sm" onclick="showAuthModal()">Login / Register</button>
     </div>
@@ -241,7 +242,7 @@
       <button class="nav-btn" data-view="community"><i class="fas fa-users"></i> Community</button>
       <button class="nav-btn" data-view="teams"><i class="fas fa-users-cog"></i> Teams</button>
       <button class="nav-btn" data-view="process"><i class="fas fa-sync-alt"></i> Sync Data</button>
-      <button class="nav-btn" data-view="settings"><i class="fas fa-cog"></i> Settings</button>
+      <button class="nav-btn" data-view="settings"><i class="fas fa-hdd"></i> Device Settings</button>
       <button class="nav-btn" data-view="admin" id="adminNavBtn" style="display: none;"><i
           class="fas fa-user-shield"></i>
         Admin</button>
@@ -494,127 +495,12 @@
 
 
 
-      <!-- Settings View -->
+      <!-- Device Settings View -->
       <div class="view" id="settingsView">
-        <div style="
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          ">
-          <h2>System Settings</h2>
-          <button class="btn" style="background: var(--success); color: #000" onclick="saveSettings()">
-            Save Changes
-          </button>
-        </div>
+        <h2>Device Settings</h2>
 
         <div class="settings-grid">
-          <!-- USER PROFILE CONFIG -->
-          <div class="card" id="userProfileCard" style="border-left: 4px solid var(--primary);">
-            <h3>User Profile</h3>
-            <div class="input-group">
-              <label>Display Name</label>
-              <input type="text" id="profileName" class="form-input" placeholder="Your Name">
-            </div>
-            <div class="input-group">
-              <label>Bike Info</label>
-              <input type="text" id="profileBike" class="form-input" placeholder="e.g., 2023 Yamaha R1">
-            </div>
-            <div class="input-group">
-              <label>Home Track</label>
-              <input type="text" id="profileHomeTrack" class="form-input" placeholder="e.g., Mugello">
-            </div>
-            <button class="btn btn-primary btn-sm" onclick="saveProfile()" style="width: 100%; margin-top: 1rem;">
-              Update Profile
-            </button>
-          </div>
-
-          <!-- CHANGE PASSWORD CONFIG -->
-          <div class="card" id="changePasswordCard" style="border-left: 4px solid var(--error);">
-            <h3><i class="fas fa-key"></i> Change Password</h3>
-            <p class="help-text">Update your account security by changing your password.</p>
-            <form>
-              <div class="input-group" style="margin-bottom: 0.75rem;">
-                <label style="font-size: 0.75rem; color: var(--text-muted);">Current Password</label>
-                <input type="password" id="oldPassword" class="form-input" style="background: var(--bg-secondary);"
-                  autocomplete="current-password">
-              </div>
-              <div class="input-group" style="margin-bottom: 0.75rem;">
-                <label style="font-size: 0.75rem; color: var(--text-muted);">New Password</label>
-                <input type="password" id="newPassword" class="form-input" placeholder="Min 8 chars, 1 digit/Caps"
-                  style="background: var(--bg-secondary);" autocomplete="new-password">
-              </div>
-              <div class="input-group" style="margin-bottom: 1.25rem;">
-                <label style="font-size: 0.75rem; color: var(--text-muted);">Confirm New Password</label>
-                <input type="password" id="confirmNewPassword" class="form-input"
-                  style="background: var(--bg-secondary);" autocomplete="new-password">
-              </div>
-              <button type="button" class="btn btn-primary btn-sm" onclick="changePassword()"
-                style="width: 100%; background: var(--error); color: #fff;">
-                Update Password
-              </button>
-            </form>
-          </div>
-
-          <!-- MY DEVICES (Device Token Management) -->
-          <div class="card" id="myDevicesCard" style="border-left: 4px solid var(--success); display: none;">
-            <h3><i class="fas fa-microchip"></i> My Devices</h3>
-            <p class="help-text">Generate upload tokens for your RS-Core devices. Paste the token into your device's
-              captive portal during first-time setup.</p>
-
-            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
-              <input type="text" id="newDeviceName" class="form-input" placeholder="Device name (e.g. RS-Core #1)"
-                style="flex: 1;">
-              <button class="btn btn-primary btn-sm" onclick="generateDeviceToken()">
-                <i class="fas fa-plus"></i> Generate Token
-              </button>
-            </div>
-
-            <!-- New Token Display (shown once after generation) -->
-            <div id="newTokenDisplay"
-              style="display: none; background: rgba(76, 175, 80, 0.1); border: 1px solid var(--success); border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
-              <p style="font-size: 0.8rem; color: var(--success); font-weight: 600; margin-bottom: 0.5rem;">
-                <i class="fas fa-check-circle"></i> Token Generated — Copy it now, it won't be shown again!
-              </p>
-              <div style="display: flex; gap: 0.5rem;">
-                <input type="text" id="newTokenValue" class="form-input" readonly
-                  style="flex: 1; font-family: monospace; background: var(--bg-secondary); font-size: 0.85rem;">
-                <button class="btn btn-sm" onclick="copyDeviceToken()" style="white-space: nowrap;">
-                  <i class="fas fa-copy"></i> Copy
-                </button>
-              </div>
-            </div>
-
-            <!-- Device List -->
-            <div id="deviceTokensList" style="min-height: 40px;">
-              <span style="color: var(--text-muted); font-size: 0.85rem;">Loading devices...</span>
-            </div>
-          </div>
-
-          <!-- SYSTEM CONFIG -->
-
-
-
-          <!-- NETWORK CONFIG -->
-          <div class="card" style="border-left: 4px solid var(--primary)">
-            <h3>Network Config</h3>
-            <div class="input-group">
-              <label>API Base URL (Cloud/Tunnel Override)</label>
-              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                <input type="text" id="customApiUrl" class="form-input"
-                  placeholder="https://your-tunnel.trycloudflare.com" style="flex: 1;">
-                <button class="btn btn-primary btn-sm" onclick="setCustomApiUrl()">Apply</button>
-              </div>
-              <p class="help-text" style="font-size: 0.7rem;">Default: <span id="defaultApiUrl"
-                  style="font-family: monospace;"></span></p>
-              <p class="help-text" style="font-size: 0.7rem; color: var(--warning); margin-top: 0.5rem;">
-                <i class="fas fa-exclamation-triangle"></i> Use this to connect to your Nitro 5 Cloudflare tunnel.
-              </p>
-            </div>
-          </div>
-
-
-
-          <!-- DEVICE STATUS (Simplified) -->
+          <!-- DEVICE STATUS -->
           <div class="card" style="border-left: 4px solid #9C27B0">
             <h3><i class="fas fa-satellite-dish"></i> Device Status</h3>
             <p class="help-text">Your RS-Core auto-uploads sessions when it connects to your WiFi network.</p>
@@ -650,10 +536,10 @@
             </p>
           </div>
 
-          <!-- ESP32 FIRMWARE CONFIG -->
+          <!-- ESP32 FIRMWARE -->
           <div class="card" style="border-left: 4px solid var(--success)">
-            <h3>ESP32 Firmware</h3>
-            <p class="help-text">Manage remote datalogger protocol version and OTA updates</p>
+            <h3><i class="fas fa-microchip"></i> Firmware Updates</h3>
+            <p class="help-text">Check and update your RS-Core firmware over WiFi</p>
 
             <div id="espFirmwareStatus" class="input-group"
               style="padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px;">
@@ -693,32 +579,109 @@
             </div>
           </div>
 
-          <!-- ADMIN TOOLS -->
-          <div class="card" id="adminToolsCard" style="border-left: 4px solid var(--error); display: none;">
-            <h3>Admin Tools</h3>
-            <p class="help-text">Manage user subscriptions and system settings</p>
+          <!-- MY DEVICES (Device Token Management) -->
+          <div class="card" id="myDevicesCard" style="border-left: 4px solid var(--warning); display: none;">
+            <h3><i class="fas fa-key"></i> Device Tokens</h3>
+            <p class="help-text">Generate upload tokens for your RS-Core devices. Paste the token into your device's
+              captive portal during first-time setup.</p>
 
-            <div class="input-group">
-              <label>Set User Tier</label>
-              <div style="display: flex; gap: 0.5rem; margin-bottom: 0.5rem;">
-                <input type="number" id="adminUserId" class="form-input" placeholder="User ID" style="width: 80px;">
-                <select id="adminTierSelect" class="form-input" style="flex: 1;">
-                  <option value="free">Free</option>
-                  <option value="pro">Pro</option>
-                  <option value="team">Team</option>
-                </select>
-                <button class="btn btn-danger btn-sm" onclick="adminSetTier()">Set Tier</button>
+            <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+              <input type="text" id="newDeviceName" class="form-input" placeholder="Device name (e.g. RS-Core #1)"
+                style="flex: 1;">
+              <button class="btn btn-primary btn-sm" onclick="generateDeviceToken()">
+                <i class="fas fa-plus"></i> Generate
+              </button>
+            </div>
+
+            <div id="newTokenDisplay"
+              style="display: none; background: rgba(76, 175, 80, 0.1); border: 1px solid var(--success); border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem;">
+              <p style="font-size: 0.75rem; color: var(--success); font-weight: 600; margin-bottom: 0.5rem;">
+                <i class="fas fa-check-circle"></i> Copy this token now — it won't be shown again!
+              </p>
+              <div style="display: flex; gap: 0.5rem;">
+                <input type="text" id="newTokenValue" class="form-input" readonly
+                  style="flex: 1; font-family: monospace; background: var(--bg-secondary); font-size: 0.8rem;">
+                <button class="btn btn-sm" onclick="copyDeviceToken()">
+                  <i class="fas fa-copy"></i> Copy
+                </button>
               </div>
             </div>
+
+            <div id="deviceTokensList" style="min-height: 30px;">
+              <span style="color: var(--text-muted); font-size: 0.85rem;">Loading devices...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== CHANGE PASSWORD MODAL ==================== -->
+      <div class="modal" id="changePasswordModal">
+        <div class="modal-content" style="max-width: 400px;">
+          <span class="modal-close" onclick="closeChangePasswordModal()">&times;</span>
+          <h3 style="margin-bottom: 1rem;"><i class="fas fa-key"></i> Change Password</h3>
+          <form>
+            <div class="input-group" style="margin-bottom: 0.75rem;">
+              <label style="font-size: 0.8rem; color: var(--text-muted);">Current Password</label>
+              <input type="password" id="oldPassword" class="form-input" autocomplete="current-password">
+            </div>
+            <div class="input-group" style="margin-bottom: 0.75rem;">
+              <label style="font-size: 0.8rem; color: var(--text-muted);">New Password</label>
+              <input type="password" id="newPassword" class="form-input" placeholder="Min 8 chars, 1 digit/Caps"
+                autocomplete="new-password">
+            </div>
+            <div class="input-group" style="margin-bottom: 1.25rem;">
+              <label style="font-size: 0.8rem; color: var(--text-muted);">Confirm New Password</label>
+              <input type="password" id="confirmNewPassword" class="form-input" autocomplete="new-password">
+            </div>
+            <button type="button" class="btn" onclick="changePassword()"
+              style="width: 100%; background: var(--error); color: #fff;">
+              Update Password
+            </button>
+          </form>
+        </div>
+      </div>
+
+      <!-- ==================== PROFILE PANEL (Slide-out) ==================== -->
+      <div class="profile-panel-overlay" id="profilePanelOverlay" onclick="closeProfilePanel()"></div>
+      <div class="profile-panel" id="profilePanel">
+        <div class="profile-panel-header">
+          <h3 style="margin: 0;">My Account</h3>
+          <button class="btn-icon" onclick="closeProfilePanel()" style="font-size: 1.2rem;">&times;</button>
+        </div>
+
+        <div class="profile-panel-body">
+          <!-- Profile Info -->
+          <div class="profile-section">
+            <div class="profile-section-title"><i class="fas fa-user"></i> Profile</div>
+            <div class="input-group">
+              <label>Display Name</label>
+              <input type="text" id="profileName" class="form-input" placeholder="Your Name">
+            </div>
+            <div class="input-group">
+              <label>Email</label>
+              <input type="email" id="profileEmail" class="form-input" readonly
+                style="opacity: 0.6; cursor: not-allowed;">
+            </div>
+            <div class="input-group">
+              <label>Bike</label>
+              <input type="text" id="profileBike" class="form-input" placeholder="e.g., 2023 Yamaha R1">
+            </div>
+            <div class="input-group">
+              <label>Home Track</label>
+              <input type="text" id="profileHomeTrack" class="form-input" placeholder="e.g., Mugello">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="saveProfile()" style="width: 100%; margin-top: 0.5rem;">
+              Save Profile
+            </button>
           </div>
 
-          <!-- LED CONFIG -->
-
-
-
-          <!-- Service Maintenance -->
-
-
+          <!-- Change Password -->
+          <div class="profile-section">
+            <div class="profile-section-title"><i class="fas fa-key"></i> Security</div>
+            <button class="btn btn-sm secondary" onclick="openChangePasswordModal()" style="width: 100%;">
+              <i class="fas fa-lock"></i> Change Password
+            </button>
+          </div>
         </div>
       </div>
 
