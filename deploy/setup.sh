@@ -9,7 +9,7 @@ set -e
 
 APP_DIR="/opt/racesense"
 APP_USER="racesense"
-REPO_URL="https://github.com/YOUR_USERNAME/datalogger-v2.git"  # <-- UPDATE THIS
+REPO_URL="https://github.com/mathews0x0/datalogger-v2.git"
 
 echo "========================================"
 echo " RaceSense VPS Setup"
