@@ -95,24 +95,30 @@ def register_new_sessions(user_id):
     for filename in os.listdir(sessions_dir):
         if filename.endswith('.json') and not filename.endswith('_telemetry.json'):
             session_id = filename.replace('.json', '')
-            existing = SessionMeta.query.filter_by(session_id=session_id).first()
-            if not existing:
-                try:
-                    with open(sessions_dir / filename, 'r') as f:
-                        data = json.load(f)
-                        # Ensure track is registered
-                        track_id = data.get('track', {}).get('track_id')
-                        if track_id:
-                            track_meta = TrackMeta.query.filter_by(track_id=track_id).first()
-                            if not track_meta:
-                                track_meta = TrackMeta(
-                                    track_id=track_id,
-                                    user_id=user_id,
-                                    track_name=data.get('track', {}).get('track_name') or f"Track {track_id}",
-                                    folder_name=data.get('track', {}).get('folder_name') or f"track_{track_id}"
-                                )
-                                db.session.add(track_meta)
-                        
+            try:
+                with open(sessions_dir / filename, 'r') as f:
+                    data = json.load(f)
+                    # print(f"  Checking {filename} (tracks: {data.get('track', {}).get('track_id')})")
+                    
+                    # 1. Ensure track is registered for THIS user
+                    track_id = data.get('track', {}).get('track_id')
+                    if track_id:
+                        track_meta = TrackMeta.query.filter_by(track_id=track_id, user_id=user_id).first()
+                        if not track_meta:
+                            print(f"    Registering missing track {track_id} for user {user_id}")
+                            track_meta = TrackMeta(
+                                track_id=track_id,
+                                user_id=user_id,
+                                track_name=data.get('track', {}).get('track_name') or f"Track {track_id}",
+                                folder_name=data.get('track', {}).get('folder_name') or f"track_{track_id}"
+                            )
+                            db.session.add(track_meta)
+                            db.session.commit() # Commit track before session
+
+                    # 2. Register session if missing for this user
+                    existing = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
+                    if not existing:
+                        print(f"    Registering new session {session_id} for user {user_id}")
                         sm = SessionMeta(
                             session_id=session_id,
                             user_id=user_id,
@@ -125,8 +131,8 @@ def register_new_sessions(user_id):
                         )
                         db.session.add(sm)
                         new_found = True
-                except Exception as e:
-                    print(f"Failed to auto-register session {filename}: {e}")
+            except Exception as e:
+                print(f"Failed to auto-register session {filename}: {e}")
     
     if new_found:
         db.session.commit()

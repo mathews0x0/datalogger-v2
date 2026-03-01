@@ -45,8 +45,12 @@ class User(db.Model):
 class SessionMeta(db.Model):
     __tablename__ = 'sessions'
     id = db.Column(db.Integer, primary_key=True)
-    session_id = db.Column(db.String(100), unique=True, nullable=False)
+    session_id = db.Column(db.String(100), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    __table_args__ = (
+        db.UniqueConstraint('session_id', 'user_id', name='_session_user_uc'),
+    )
     track_id = db.Column(db.Integer)
     session_name = db.Column(db.String(255))
     start_time = db.Column(db.String(100)) # Storing as string to match existing JSON format for now
