@@ -638,6 +638,12 @@ function toggleAuthMode(mode) {
     }
 }
 
+window.toggleDetailsSection = function (sectionId) {
+    const el = document.getElementById(sectionId);
+    if (!el) return;
+    el.classList.toggle('collapsed');
+};
+
 async function submitLogin() {
     const email = document.getElementById('loginEmail')?.value || '';
     const password = document.getElementById('loginPassword')?.value || '';
@@ -4848,18 +4854,18 @@ async function runComparison(sessionId) {
     status.innerText = "Analyzing telemetry...";
 
     try {
-        const res = await apiCall(`/api/sessions/${sessionId}/compare?lap1=${ref}&lap2=${target}`);
-        currentComparisonData = res.data;
+        const res = await apiCall(`/api/compare?session1=${sessionId}&lap1=${ref}&session2=${sessionId}&lap2=${target}`);
+        currentComparisonData = res;
 
         status.innerText = "";
         results.style.display = "block";
 
         // Setup Replay
-        initReplayMap(res.data);
+        initReplayMap(res);
 
         // Draw Chart
         setTimeout(() => {
-            drawDeltaChart(res.data);
+            drawDeltaChart(res);
         }, 50);
 
     } catch (e) {
