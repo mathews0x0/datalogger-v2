@@ -6,9 +6,7 @@ Run with: python run.py
 import sys
 from pathlib import Path
 
-# Add core to path
-# Add core to path
-CORE_PATH = Path(__file__).parent / "core"
+# Add server directories to path
 API_PATH = Path(__file__).parent / "api"
 ROOT_PATH = Path(__file__).parent
 
@@ -27,7 +25,10 @@ from api.models import db
 
 if __name__ == "__main__":
     with app.app_context():
-        db.create_all()
+        try:
+            db.create_all()
+        except Exception as e:
+            print(f"[RaceSense] db.create_all() skipped: {e}")
 
     import os
     is_dev = os.environ.get('FLASK_ENV', 'development') == 'development'

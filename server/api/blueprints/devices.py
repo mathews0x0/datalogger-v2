@@ -2,6 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 import os
 import uuid
+import requests
 from datetime import datetime
 
 from api.models import db, User, DeviceToken

@@ -1,5 +1,4 @@
 import os
-import sys
 from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
@@ -38,10 +37,7 @@ def create_app(config_name='default'):
 
     import api.config as config
 
-    # Add src/analysis/core to path for RegistryManager
-    analysis_core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../src/analysis/core'))
-    if analysis_core_path not in sys.path:
-        sys.path.append(analysis_core_path)
+
     
     # App configuration
     # Note: Test cases might override this after create_app() is called

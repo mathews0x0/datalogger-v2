@@ -19,14 +19,7 @@ def get_tracks():
     
     tracks = []
     for t in tracks_meta:
-        folder = t.folder_name
-        session_pattern = f"{folder}_session_"
-        sessions_dir = config.get_user_sessions_dir(user_id)
-        
-        session_count = 0
-        if sessions_dir.exists():
-            # Filter sessions by user_id in DB too
-            session_count = SessionMeta.query.filter_by(user_id=user_id, track_id=t.track_id).count()
+        session_count = SessionMeta.query.filter_by(user_id=user_id, track_id=t.track_id).count()
         
         tracks.append({
             "track_id": t.track_id,

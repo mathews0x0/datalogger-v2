@@ -5,9 +5,11 @@ import json
 import zipfile
 import io
 import time
+import uuid
+from datetime import datetime
 from werkzeug.utils import safe_join
 
-from api.models import db, User, SessionMeta, TrackMeta
+from api.models import db, User, SessionMeta, TrackMeta, TeamMember
 from api.decorators import require_tier, local_only
 import api.config as config
 from api.helpers import get_track_folder

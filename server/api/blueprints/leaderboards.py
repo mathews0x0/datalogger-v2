@@ -6,6 +6,7 @@ import json
 from api.models import db, User, SessionMeta, TrackMeta, TrackDayMeta, TeamMember
 import api.config as config
 from api.helpers import robust_get_json
+from api.blueprints.sessions import load_trackdays
 
 leaderboards_bp = Blueprint('leaderboards', __name__)
 

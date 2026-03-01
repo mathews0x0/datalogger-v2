@@ -2,7 +2,7 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 import os
 
-from api.models import db, User, SessionMeta, Annotation
+from api.models import db, User, SessionMeta, Annotation, TeamMember
 
 annotations_bp = Blueprint('annotations', __name__)
 

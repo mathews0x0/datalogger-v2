@@ -152,7 +152,7 @@ def get_trackday(trackday_id):
                         if best_lap_time is None or lap['lap_time'] < best_lap_time:
                             best_lap_time = lap['lap_time']
         except Exception as e:
-            app.logger.error(f"Error loading session {sid}: {e}")
+            print(f"[Trackday] Error loading session {sid}: {e}")
     
     # Sort laps by lap time
     all_laps.sort(key=lambda x: x.get('lap_time') or 999999)
@@ -303,28 +303,3 @@ def untag_session_from_trackday(trackday_id, session_id):
     
     return jsonify({"error": "Trackday data not found"}), 404
 
-
-
-
-
-
-
-
-
-
-
-# ============================================================================
-# CLOUD / API SERVER ENTRY POINT
-# ============================================================================
-
-if __name__ == '__main__':
-    # Development mode
-    print("=" * 60)
-    print("Datalogger Cloud API Server")
-    print("=" * 60)
-    print(f"Output directory: {OUTPUT_DIR}")
-    print()
-    print("Starting server on http://localhost:5000")
-    print("=" * 60)
-    
-    app.run(host='0.0.0.0', port=5001, debug=False)
