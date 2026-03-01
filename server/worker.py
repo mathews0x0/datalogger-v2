@@ -10,8 +10,13 @@ server_path = os.path.abspath(os.path.join(os.path.dirname(__file__)))
 if server_path not in sys.path:
     sys.path.insert(0, server_path)
 
+project_root = os.path.abspath(os.path.join(server_path, '..'))
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
 from api.models import db, Job
-from api.main import app, register_new_sessions
+from api.main import app
+from api.helpers import register_new_sessions
 import api.config as config
 
 print("="*50)
@@ -77,7 +82,7 @@ def process_job(job):
             else:
                 print(f"[Worker] Job {job.id} failed with return code {result.returncode}")
                 job.status = 'failed'
-                job.error = result.stderr
+                job.error = result.stderr if result.stderr else result.stdout
         
         else:
             job.status = 'failed'
