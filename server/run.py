@@ -20,15 +20,14 @@ PROJECT_ROOT = Path(__file__).parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from api.main import app
+from api import create_app
 from api.models import db
+
+app = create_app()
 
 if __name__ == "__main__":
     with app.app_context():
-        try:
-            db.create_all()
-        except Exception as e:
-            print(f"[RaceSense] db.create_all() skipped: {e}")
+        pass
 
     import os
     is_dev = os.environ.get('FLASK_ENV', 'development') == 'development'

@@ -8,7 +8,9 @@ User=racesense
 Group=racesense
 WorkingDirectory=/opt/racesense/server
 EnvironmentFile=/opt/racesense/.env
-ExecStart=/opt/racesense/venv/bin/gunicorn --config gunicorn.conf.py 'api.main:app'
+Environment=FLASK_APP=run
+ExecStartPre=/opt/racesense/venv/bin/flask db upgrade
+ExecStart=/opt/racesense/venv/bin/gunicorn --config gunicorn.conf.py 'run:app'
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 Restart=always

@@ -11,7 +11,7 @@ if server_path not in sys.path:
     sys.path.insert(0, server_path)
 
 from api.models import db, Job, User
-from api.main import app
+from run import app
 from worker import check_stalled_jobs, process_job
 
 class TestJobs(unittest.TestCase):

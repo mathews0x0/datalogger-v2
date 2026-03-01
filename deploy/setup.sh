@@ -69,8 +69,9 @@ sudo -u "$APP_USER" bash -c "
     cd $APP_DIR/server && \
     source $APP_DIR/venv/bin/activate && \
     FLASK_ENV=production \
+    FLASK_APP=run \
     JWT_SECRET_KEY=\$(grep JWT_SECRET_KEY $APP_DIR/.env | cut -d= -f2) \
-    python3 api/init_db.py
+    flask db upgrade
 "
 
 # --- 7. Log Directory ---

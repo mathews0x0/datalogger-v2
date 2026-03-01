@@ -1,11 +1,14 @@
 import os
+import sys
 from flask import Flask
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
+from flask_migrate import Migrate
 
 from api.models import db, bcrypt
 
 jwt = JWTManager()
+migrate = Migrate()
 
 def create_app(config_name='default'):
     """Application Factory for RaceSense API"""
@@ -61,6 +64,7 @@ def create_app(config_name='default'):
     
     # Init extensions
     db.init_app(app)
+    migrate.init_app(app, db, render_as_batch=True)
     bcrypt.init_app(app)
     jwt.init_app(app)
     
@@ -102,4 +106,14 @@ def create_app(config_name='default'):
     app.register_blueprint(users_bp, url_prefix='/api/users')
     app.register_blueprint(sessions_misc_bp, url_prefix='/api/sessions')
     
+    # Auto-run migrations on startup if running as a web server
+    # We skip this during 'flask db' CLI commands to avoid locking issues
+    if 'db' not in sys.argv:
+        with app.app_context():
+            try:
+                from flask_migrate import upgrade
+                upgrade()
+            except Exception as e:
+                print(f"[RaceSense] db upgrade skipped/failed: {e}")
+
     return app

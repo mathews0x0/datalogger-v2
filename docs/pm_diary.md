@@ -1879,3 +1879,134 @@ We merged all stable components into a dedicated workbench test script (`full_sy
    - Configured Nginx as a highly-optimized reverse proxy to natively serve the Vue/JS frontend while securely routing API traffic.
 
 **Status:** ✅ **Complete & Live.** The system is now fully integrated with a production cloud backend accessible at https://racesense.in.
+
+---
+
+## 33. Server API Security Hardening (2026-02-27)
+
+**Objective:** Secure the Flask API server for cloud production deployments, protecting against unauthorized access, IDOR, SSRF, and other vulnerabilities.
+
+### Actions Completed:
+1. **Authentication Enforcement:** Added `@jwt_required()` to 15+ previously unprotected endpoints (including learning files, sessions, and user social data).
+2. **IDOR Prevention:** Implemented strict ownership checks across all state-modifying endpoints (rename, delete, notes). Only resource owners or admins can modify data.
+3. **SSRF Mitigation:** Introduced `IS_CLOUD` mode and a `@local_only` decorator to completely block local network scanning endpoints when deployed to the cloud. Added IP validation (blocking link-local/loopback).
+4. **JWT & Request Hardening:**
+   - Enforced `Secure` and `SameSite='Lax'` for JWT cookies in production mode.
+   - Implemented a `MAX_CONTENT_LENGTH` (50MB) to mitigate large payload DoS.
+   - Added password strength and regex-based email format validation during registration.
+5. **Production Headers & CORS:**
+   - Applied comprehensive security headers: `X-Content-Type-Options`, `X-Frame-Options`, `X-XSS-Protection`, `Referrer-Policy`, `Strict-Transport-Security`, and a strict `Content-Security-Policy`.
+   - Hardened CORS configuration to restrict allowed origins to the specific production domain.
+   - Sanitized all backend error responses (500s) to hide traceback details in production mode.
+
+**Status:** ✅ **Complete.** API is hardened for the cloud baseline. Remaining tasks for high-scale environments include PostgreSQL migration and Rate Limiting.
+
+---
+
+## 34. Phase 8 — UI/UX Overhaul & Architecture Review (2026-02-28)
+
+**Objective:** Modernize the racer-facing interface, streamline user management, and establish a clear technical debt cleanup strategy to ensure production scaling.
+
+### Completed Actions:
+1. **Profile Picture Feature (Full Stack):**
+   - Built a complete, end-to-end avatar system. Backend resizes incoming images to 256x256 via Pillow, saving securely into the `data/users/<id>/` sandbox.
+   - Modified API middleware to allow unauthenticated GET access to `/api/users/<id>/photo`, enabling native browser caching via `<img>` tags.
+   - Created a dynamic frontend component with hover overlays and seamless upload/remove states.
+2. **UI & Navigation Polish:**
+   - Remapped the application header and profile side-panel. Fixed transparency bugs and improved visual hierarchy.
+   - Moved "Change Password" and "Generate Device Tokens" into contextual UI flow modals rather than standalone pages.
+   - Updated core branding to "PRECISION RIDE ANALYTICS and DATA-DRIVEN racing".
+3. **Comprehensive Architecture Review:**
+   - Performed an objective audit of the system, identifying the 3,380-line `main.py` and the synchronous `subprocess.run()` analysis pipeline as critical scalability risks.
+   - Outputted a formal priority matrix and 7 self-contained markdown prompts covering: HTTPS/SSL enforcement, decoupling blueprints, background job queues, and Postgres migration.
+4. **Targeted Bug Fixes (The Deduplication Gap):**
+   - **Analyze All Bug:** Fixed a flaw where the system would re-process already analyzed CSV files. The logic now accurately scans the session JSON `source_file` metadata and filters the queue.
+   - **Track Renaming:** Replaced a broken subprocess call to a non-existent script with a direct, safe SQLAlchemy `db.session.commit()`.
+   - **Environment Consistency:** Replaced all hardcoded `python3` subprocess invocations with `sys.executable` to guarantee correct virtual environment resolution in production.
+
+**Status:** ✅ **Complete.** The application interface feels significantly more premium, and the engineering team has a clear, documented path to dismantle the technical debt in the backend.
+
+---
+
+## 35. Comprehensive Architecture Review & Cleanup Plan (2026-03-01)
+
+**Objective:** Having reached a reasonably feature-rich state, PM mandated a comprehensive technical review of the entire system architecture to identify scalability risks, architectural bottlenecks, and single points of failure before scaling production traffic.
+
+### Key Architectural Findings
+
+**✅ The Good (Solid Foundations):**
+- **Token Segregation:** Dual-auth architecture properly separates device token uploads (ESP32) from user JWT web interactions.
+- **Processing Pipeline:** The core `SessionProcessor` remains highly modular and isolated, successfully persisting results into standalone JSON artifacts.
+- **User Sandboxing:** Complete file-system separation between user workspaces (`data/users/<id>/...`) guarantees data isolation. 
+
+**❌ The Bad (Critical Technical Debt):**
+- **The Monolith:** `main.py` has grown to an unmanageable 3,380 lines and 128 endpoints, intermixing auth, tracks, processing, and hardware sync layers.
+- **Synchronous Subprocesses:** The analysis pipeline uses blocking `subprocess.run()` calls. With only 2 Gunicorn workers on the VPS, a single heavy ESP32 sync (or "Analyze All" command) effectively stalls the entire web server, causing `ConnectionTimeout` failures for other riders.
+- **Database Contention:** Heavy reliance on SQLite limits concurrent writes, creating "database locked" scenarios during simultaneously occurring uploads and user profile updates.
+- **Security Gaps:** No Rate-Limiting makes the API vulnerable to brute force and spam, and the lack of HTTPS combined with `Secure=True` JWTs breaks cloud authentication flows.
+
+### PM Prioritized Action Plan
+
+To systematically resolve these issues, 7 explicit execution prompts were generated and placed in `docs/plans/architecture-cleanup/`:
+
+- **🔴 P0 (Critical - Must Fix Immediately):**
+  1. `01-https-ssl-setup.md` - Deploy Certbot/Nginx Let's Encrypt to enable HTTPS and fix JWT secure cookie failures.
+  2. `02-fix-sys-executable.md` - Fix virtual environment pathing in all subprocess calls to prevent analysis failures in production (Completed).
+
+- **🟠 P1 (High - Structural Scaling):**
+  1. `03-background-job-queue.md` - Migrate from blocking subprocesses to asynchronous background jobs (e.g., standard Queue + Worker) to protect Gunicorn thread pools.
+  2. `04-split-main-into-blueprints.md` - Refactor `main.py` into distinct functional Flask Blueprints (`auth`, `sessions`, `tracks`, etc.) to restore maintainability.
+
+- **🟡 P2 (Medium - Reliability and Security):**
+  1. `05-database-migrations.md` - Implement Flask-Migrate (Alembic) to safely evolve schemas without risking production data loss.
+  2. `06-sqlite-to-postgresql.md` - Transition to Postgres to natively handle concurrent locking.
+  3. `07-rate-limiting.md` - Implement Flask-Limiter for API abuse protection.
+
+**Status:** 📋 **Prioritized.** The technical debt has been documented, triaged, and segmented into actionable work units. Engineering is clear to proceed with execution starting from P0.
+
+---
+
+## 36. Phase 8.1 — P0 Architecture Fixes (2026-03-01)
+
+**Objective:** Immediately resolve the two critical (P0) architectural issues identified as active production blockers.
+
+### Completed Actions:
+
+1. **P0-1: HTTPS/SSL Setup Readiness (Validated)**
+   - Re-architected `server/racesense_nginx.conf` into a robust, production-ready SSL template.
+   - Configured port 80 to issue 301 permanent redirects to HTTPS.
+   - Set up the main `listen 443 ssl` block mapped to Certbot's standard Let's Encrypt path.
+   - Authored `deploy/setup_ssl.sh`: A 5-step automated deployment script for the VPS that handles apt-installing certbot, linking nginx profiles, generating certificates, and verifying auto-renewal.
+   - _Impact:_ This fully unblocks the secure distribution of `SameSite='Lax'` JWT Session Cookies over the `racesense.in` domain.
+
+2. **P0-2: Subprocess Virtual Environment Consistency (Validated)**
+   - Identified 4 separate hardcoded invocations of `'python3'` bypassing the `/venv/` in `main.py` (`upload_file`, `sync_from_device`, `process_all_files`, and `rename_track`).
+   - Replaced all raw binary strings with standard Python `sys.executable`.
+   - _Impact:_ Guarantees that production scripts natively bind to the initialized Gunicorn application environment, eliminating mysterious `ModuleNotFound` data-processing failures in production.
+
+**Status:** ✅ **Complete.** Both P0 items implemented and validated. The foundation is stable enough to proceed to the intensive P1 (Gunicorn Thread Scaling & Blueprint Decoupling) workstreams.
+
+---
+
+## 37. Phase 8.2 — P1 Architecture Fixes: Blueprint Decoupling & App Factory (2026-03-01)
+
+**Objective:** Dismantle the 3,380-line `main.py` monolith to restore engineering velocity, improve testing isolation, and establish a scalable `create_app` factory structure. 
+
+### Completed Actions:
+
+1. **P1-1: Flask Blueprint Decoupling (Validated)**
+   - Extracted all functional domains from `main.py` into 13 discrete Blueprints under `server/api/blueprints/` (e.g., `auth.py`, `sessions.py`, `tracks.py`, `devices.py`, etc.).
+   - Abstracted shared logic into centralized middleware (`server/api/middleware.py`), utility helpers (`server/api/helpers.py`), and RBAC wrappers (`server/api/decorators.py`).
+   - _Impact:_ Reduced `main.py` from 3,380 lines to a mere 26-line transparent proxy. Codebase organization now strongly enforces separation of concerns.
+
+2. **P1-2: Application Factory implementation (Validated)**
+   - Replaced global Flask `app` instantiation with the definitive `create_app()` factory pattern in `server/api/__init__.py`.
+   - Deferred database, JWT, and CORS initialization into the factory scope, allowing tests to mock variables cleanly without polluting the global namespace.
+   - _Impact:_ Eliminates circular import nightmares and drastically simplifies unit testing setup. System can now reliably spin up explicit `testing`, `development`, or `production` contexts.
+
+3. **P2-1: Flask-Migrate/Alembic Integration (Validated)**
+   - Successfully overlaid `Flask-Migrate` into the `create_app` factory workflow.
+   - Bypassed the fragile `db.create_all()` locking race-condition entirely during server restarts holding connections open. 
+   - _Impact:_ Unblocked the ability to perform complex schema evolutions (e.g., Phase 9 Social Features or PostgreSQL conversion) without relying on destructive table drops or manual SQLite surgery in production.
+
+**Status:** ✅ **Complete.** The system's backend has been profoundly de-risked. With 34 API tests actively passing and verifying regression integrity, the foundation is primed for P2 scale-out work (Database evolution and Rate-Limiting).

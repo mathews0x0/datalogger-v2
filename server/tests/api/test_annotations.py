@@ -5,7 +5,7 @@ import json
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from api.main import app
+from run import app
 from api.models import db, User, SessionMeta, Annotation
 
 @pytest.fixture

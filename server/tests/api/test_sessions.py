@@ -7,7 +7,7 @@ from flask_jwt_extended import create_access_token
 # Add server directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from api.main import app
+from run import app
 from api.models import db, User, SessionMeta
 import api.config as config
 

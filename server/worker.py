@@ -15,7 +15,8 @@ if project_root not in sys.path:
     sys.path.append(project_root)
 
 from api.models import db, Job
-from api.main import app
+from api import create_app
+app = create_app()
 from api.helpers import register_new_sessions
 import api.config as config
 
