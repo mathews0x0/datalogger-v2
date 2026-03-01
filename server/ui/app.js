@@ -48,9 +48,6 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set up navigation
     setupNavigation();
 
-    // Check connection
-    checkConnection();
-
     // Check Auth
     checkAuth();
 
@@ -710,34 +707,7 @@ async function logout() {
     updateAuthUI();
     showToast('Logged out', 'info');
 }
-
-async function checkConnection() {
-    try {
-        await apiCall('/api/health');
-        updateConnectionStatus(true);
-    } catch (error) {
-        updateConnectionStatus(false);
-    }
-}
-
-function updateConnectionStatus(connected) {
-    const statusEl = document.getElementById('connectionStatus');
-    const dot = statusEl.querySelector('.status-dot');
-    const text = document.getElementById('connText');
-
-    if (connected) {
-        statusEl.classList.remove('offline');
-        statusEl.classList.add('online');
-        dot.classList.add('connected');
-        text.textContent = 'RS-Core Online';
-    } else {
-        statusEl.classList.remove('online');
-        statusEl.classList.add('offline');
-        dot.classList.remove('connected');
-        text.textContent = 'Module Offline';
-    }
-}
-
+// Deleted legacy checkConnection and updateConnectionStatus
 async function pollStatus() {
     try {
         // 1. Get Pi Status (Recording, Storage, etc)
