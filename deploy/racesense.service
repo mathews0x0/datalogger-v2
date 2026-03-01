@@ -4,13 +4,14 @@ After=network.target
 
 [Service]
 Type=notify
-User=racesense
-Group=racesense
-WorkingDirectory=/opt/racesense/server
-EnvironmentFile=/opt/racesense/.env
+User=root
+Group=root
+WorkingDirectory=/var/www/racesense/server
+EnvironmentFile=/var/www/racesense/.env
 Environment=FLASK_APP=run
-ExecStartPre=/opt/racesense/venv/bin/flask db upgrade
-ExecStart=/opt/racesense/venv/bin/gunicorn --config gunicorn.conf.py 'run:app'
+Environment=PYTHONPATH=/var/www/racesense/server:/var/www/racesense/server/api:/var/www/racesense/src
+ExecStartPre=/var/www/racesense/server/venv/bin/flask db upgrade
+ExecStart=/var/www/racesense/server/venv/bin/gunicorn --config gunicorn.conf.py 'run:app'
 ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 Restart=always

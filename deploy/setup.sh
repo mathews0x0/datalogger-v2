@@ -29,14 +29,8 @@ else
     echo "User $APP_USER already exists"
 fi
 
-# --- 3. Clone Repository ---
-echo "[3/8] Setting up application directory..."
-if [ -d "$APP_DIR" ]; then
-    echo "Directory $APP_DIR already exists. Pulling latest..."
-    cd "$APP_DIR" && git pull
-else
-    git clone "$REPO_URL" "$APP_DIR"
-fi
+# --- 3. Set Application Directory Permissions ---
+echo "[3/8] Setting application directory permissions..."
 chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 
 # --- 4. Python Virtual Environment ---
