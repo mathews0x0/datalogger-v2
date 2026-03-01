@@ -10,15 +10,17 @@ server_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if server_path not in sys.path:
     sys.path.insert(0, server_path)
 
+from api import create_app
 from api.models import db, Job, User
-from run import app
 from worker import check_stalled_jobs, process_job
 
 class TestJobs(unittest.TestCase):
     def setUp(self):
-        app.config['TESTING'] = True
-        app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
-        self.app_context = app.app_context()
+        self.app = create_app(config_overrides={
+            'TESTING': True,
+            'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:'
+        })
+        self.app_context = self.app.app_context()
         self.app_context.push()
         db.create_all()
 

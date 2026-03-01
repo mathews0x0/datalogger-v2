@@ -4,13 +4,10 @@ import os
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from run import app
 from api.models import db, User, SessionMeta, TrackMeta
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -36,7 +33,7 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_follow_user(client):
+def test_follow_user(client, app):
     resp = client.post('/api/users/2/follow')
     assert resp.status_code == 200
     assert resp.json['success'] is True
@@ -48,7 +45,7 @@ def test_follow_user(client):
     assert len(resp2.json) == 1
     assert resp2.json[0]['id'] == 1
 
-def test_unfollow_user(client):
+def test_unfollow_user(client, app):
     client.post('/api/users/2/follow')
     
     resp = client.delete('/api/users/2/follow')
@@ -59,7 +56,7 @@ def test_unfollow_user(client):
     assert type(resp2.json) is list
     assert len(resp2.json) == 0
 
-def test_social_counts(client):
+def test_social_counts(client, app):
     client.post('/api/users/2/follow')
     
     resp = client.get('/api/users/2/social-counts')
@@ -72,7 +69,7 @@ def test_social_counts(client):
     assert resp2.status_code == 200
     assert resp2.json.get('following_count', resp2.json.get('following', -1)) == 1
 
-def test_user_stats(client):
+def test_user_stats(client, app):
     resp = client.get('/api/users/2/stats')
     assert resp.status_code == 200
     assert 'total_sessions' in resp.json

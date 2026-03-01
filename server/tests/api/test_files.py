@@ -4,13 +4,10 @@ import os
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from run import app
 from api.models import db, User
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -32,17 +29,17 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_process_missing_file(client):
+def test_process_missing_file(client, app):
     resp = client.post('/api/process', json={'filename': 'missing.csv'})
     assert resp.status_code == 404
     assert 'error' in resp.json
 
-def test_learning_list(client):
+def test_learning_list(client, app):
     resp = client.get('/api/learning/list')
     assert resp.status_code == 200
     assert type(resp.json) is list
 
-def test_learning_delete_missing(client):
+def test_learning_delete_missing(client, app):
     resp = client.post('/api/learning/delete', json={'files': ['missing.csv']})
     assert resp.status_code == 200
     assert resp.json['success'] is True

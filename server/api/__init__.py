@@ -10,7 +10,7 @@ from api.models import db, bcrypt
 jwt = JWTManager()
 migrate = Migrate()
 
-def create_app(config_name='default'):
+def create_app(config_overrides=None):
     """Application Factory for RaceSense API"""
     
     # Point to UI folder in same server directory
@@ -62,6 +62,9 @@ def create_app(config_name='default'):
     app.config['JWT_COOKIE_SECURE'] = IS_PRODUCTION
     app.config['JWT_COOKIE_SAMESITE'] = 'Lax'
     
+    if config_overrides:
+        app.config.update(config_overrides)
+        
     # Init extensions
     db.init_app(app)
     migrate.init_app(app, db, render_as_batch=True)
@@ -108,7 +111,7 @@ def create_app(config_name='default'):
     
     # Auto-run migrations on startup if running as a web server
     # We skip this during 'flask db' CLI commands to avoid locking issues
-    if 'db' not in sys.argv:
+    if 'db' not in sys.argv and not app.config.get('TESTING'):
         with app.app_context():
             try:
                 from flask_migrate import upgrade

@@ -5,13 +5,10 @@ import os
 # Add server directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from run import app
 from api.models import db, User
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -20,7 +17,7 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_register_and_login(client):
+def test_register_and_login(client, app):
     # Test registration
     resp = client.post('/api/auth/register', json={
         'email': 'test@example.com',

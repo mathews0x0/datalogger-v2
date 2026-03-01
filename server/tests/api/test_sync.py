@@ -4,13 +4,10 @@ import os
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from run import app
 from api.models import db, User
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -32,12 +29,12 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_sync_device_invalid_ip(client):
+def test_sync_device_invalid_ip(client, app):
     resp = client.post('/api/sync/device', json={'ip': 'invalid_ip'})
     assert resp.status_code == 400
     assert 'error' in resp.json
 
-def test_sync_device_missing_ip(client):
+def test_sync_device_missing_ip(client, app):
     resp = client.post('/api/sync/device', json={})
     assert resp.status_code == 400
     assert 'error' in resp.json

@@ -6,14 +6,11 @@ import shutil
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from run import app
 from api.models import db, User, TrackMeta
 import api.config as config
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -50,19 +47,19 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_get_tracks(client):
+def test_get_tracks(client, app):
     resp = client.get('/api/tracks')
     assert resp.status_code == 200
     assert len(resp.json['tracks']) == 1
     assert resp.json['tracks'][0]['track_name'] == 'Silverstone'
 
-def test_get_track(client):
+def test_get_track(client, app):
     resp = client.get('/api/tracks/101')
     assert resp.status_code == 200
     assert resp.json['track_name'] == 'Silverstone'
     assert 'tbl' in resp.json
 
-def test_update_track(client):
+def test_update_track(client, app):
     resp = client.post('/api/tracks/101', json={'track_name': 'Silverstone GP', 'pit_center_lat': 52.1})
     assert resp.status_code == 200
     

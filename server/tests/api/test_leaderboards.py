@@ -6,13 +6,10 @@ import shutil
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from run import app
 from api.models import db, User, SessionMeta, TrackMeta
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -45,7 +42,7 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_get_track_leaderboard(client):
+def test_get_track_leaderboard(client, app):
     resp = client.get('/api/leaderboards/track/999')
     assert resp.status_code == 200
     assert type(resp.json) is list
@@ -53,12 +50,12 @@ def test_get_track_leaderboard(client):
     assert resp.json[0]['session_id'] == 'lb-s1'
     assert resp.json[0]['lap_time'] == 60.0
 
-def test_compare_missing_params(client):
+def test_compare_missing_params(client, app):
     resp = client.get('/api/compare?session1=s1&lap1=0')
     assert resp.status_code == 400
     assert 'Missing parameters' in resp.json.get('error', '')
 
-def test_compare_session_not_found(client):
+def test_compare_session_not_found(client, app):
     resp = client.get('/api/compare?session1=missing&lap1=0&session2=missing2&lap2=0')
     # Because endpoints might crash or handle it differently, 
     # Let's see what api/compare does when session is not found

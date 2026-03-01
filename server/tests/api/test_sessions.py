@@ -7,14 +7,11 @@ from flask_jwt_extended import create_access_token
 # Add server directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from run import app
 from api.models import db, User, SessionMeta
 import api.config as config
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -60,13 +57,13 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_list_sessions(client):
+def test_list_sessions(client, app):
     resp = client.get('/api/sessions')
     assert resp.status_code == 200
     assert len(resp.json) == 1
     assert resp.json[0]['session_id'] == 'test-session-123'
 
-def test_rename_session(client):
+def test_rename_session(client, app):
     resp = client.post('/api/sessions/test-session-123/rename', json={'new_name': 'Renamed Session'})
     print("Rename response:", resp.json)
     assert resp.status_code == 200
@@ -78,7 +75,7 @@ def test_rename_session(client):
             data = json.load(f)
         assert data['meta']['session_name'] == 'Renamed Session'
 
-def test_set_privacy(client):
+def test_set_privacy(client, app):
     resp = client.put('/api/sessions/test-session-123/privacy', json={'is_public': True})
     assert resp.status_code == 200
     assert resp.json['is_public'] is True
@@ -87,7 +84,7 @@ def test_set_privacy(client):
     assert resp_feed.status_code == 200
     assert len(resp_feed.json) == 1
 
-def test_update_notes(client):
+def test_update_notes(client, app):
     resp = client.put('/api/sessions/test-session-123/notes', json={
         'notes': 'Sunny race'
     })

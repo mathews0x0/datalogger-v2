@@ -8,13 +8,10 @@ from flask_jwt_extended import create_access_token
 # Add server directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from run import app
 from api.models import db, User
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -44,12 +41,12 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_admin_list_users(client):
+def test_admin_list_users(client, app):
     resp = client.get('/api/admin/users')
     assert resp.status_code == 200
     assert resp.json['total'] == 2
 
-def test_admin_approve_user(client):
+def test_admin_approve_user(client, app):
     with app.app_context():
         u = User.query.filter_by(email='user@racesense.in').first()
         uid = u.id
@@ -58,7 +55,7 @@ def test_admin_approve_user(client):
     assert resp.status_code == 200
     assert resp.json['user']['is_approved'] is True
 
-def test_admin_update_user_tier(client):
+def test_admin_update_user_tier(client, app):
     with app.app_context():
         u = User.query.filter_by(email='user@racesense.in').first()
         uid = u.id
@@ -67,7 +64,7 @@ def test_admin_update_user_tier(client):
     assert resp.status_code == 200
     assert resp.json['user']['subscription_tier'] == 'pro'
 
-def test_admin_get_user(client):
+def test_admin_get_user(client, app):
     with app.app_context():
         u = User.query.filter_by(email='user@racesense.in').first()
         uid = u.id

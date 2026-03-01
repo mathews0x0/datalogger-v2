@@ -5,13 +5,10 @@ import json
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from run import app
 from api.models import db, User, SessionMeta, Annotation
 
 @pytest.fixture
-def client():
-    app.config['TESTING'] = True
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///:memory:'
+def client(app):
     
     with app.test_client() as client:
         with app.app_context():
@@ -41,14 +38,14 @@ def client():
             db.session.remove()
             db.drop_all()
 
-def test_get_annotations(client):
+def test_get_annotations(client, app):
     resp = client.get('/api/sessions/ano-s1/annotations')
     assert resp.status_code == 200
     assert type(resp.json) is list
     assert len(resp.json) == 1
     assert resp.json[0]['text'] == 'Test annotation'
 
-def test_add_annotation(client):
+def test_add_annotation(client, app):
     resp = client.post('/api/sessions/ano-s1/annotations', json={
         'lap_number': 3,
         'sector_number': 2,
@@ -57,7 +54,7 @@ def test_add_annotation(client):
     assert resp.status_code == 201
     assert resp.json['text'] == 'Another annotation'
 
-def test_delete_annotation(client):
+def test_delete_annotation(client, app):
     resp = client.delete('/api/annotations/1')
     assert resp.status_code == 200
     
