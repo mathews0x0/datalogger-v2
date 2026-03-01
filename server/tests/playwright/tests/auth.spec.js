@@ -5,7 +5,7 @@ test.describe('Authentication', () => {
     await page.goto('/');
     const loginEmail = page.locator('#loginEmail');
     if (await loginEmail.isHidden()) {
-        await page.locator('#loginBtn').click({ force: true });
+      await page.locator('#loginBtn').click({ force: true });
     }
     await expect(loginEmail).toBeVisible();
   });
@@ -23,10 +23,12 @@ test.describe('Authentication', () => {
     // Click Register
     await page.locator('#registerForm button:has-text("Register")').click();
 
-    // Verify success toast
-    const toast = page.locator('#toast');
-    await expect(toast).toBeVisible({ timeout: 10000 });
-    await expect(toast).toHaveText(/Registered! Please login/i);
+    // Verify Registration Success pending approval panel
+    await expect(page.locator('#regSuccessPanel')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#regSuccessPanel')).toContainText(/Registration Successful!/i);
+
+    // Click 'Back to Login' internally
+    await page.locator('#regSuccessPanel button:has-text("Back to Login")').click();
 
     // Verify switch back to login form
     await expect(page.locator('#loginForm')).toBeVisible();
@@ -35,12 +37,12 @@ test.describe('Authentication', () => {
   test('User Login Flow', async ({ page }) => {
     // Ensure we are on login form
     if (await page.locator('#loginForm').isHidden()) {
-        await page.locator('a:has-text("Login")').click();
+      await page.locator('a:has-text("Login")').click();
     }
 
     // Enter credentials
-    await page.fill('#loginEmail', 'admin');
-    await page.fill('#loginPassword', 'admin123');
+    await page.fill('#loginEmail', 'admin@racesense.in');
+    await page.fill('#loginPassword', 'Admin123@');
 
     // Click Login
     await page.locator('#loginForm button:has-text("Login")').click();
@@ -61,7 +63,7 @@ test.describe('Authentication', () => {
 
     // Fill existing email (admin)
     await page.fill('#regName', 'Existing User');
-    await page.fill('#regEmail', 'admin@example.com'); 
+    await page.fill('#regEmail', 'admin@example.com');
     await page.fill('#regPassword', 'ValidPass123!');
 
     // Submit
@@ -70,7 +72,7 @@ test.describe('Authentication', () => {
     // Expect error
     const errorMsg = page.locator('#regError');
     await expect(errorMsg).toBeVisible();
-    await expect(errorMsg).toContainText(/Email already exists/i);
+    await expect(errorMsg).toContainText(/Email already registered/i);
   });
 
   test('Weak Password', async ({ page }) => {
@@ -90,18 +92,18 @@ test.describe('Authentication', () => {
     const errorMsg = page.locator('#regError');
     // If validation is client-side HTML5, check that first
     const validationMessage = await page.locator('#regPassword').evaluate(el => el.validationMessage);
-    
+
     if (validationMessage) {
-        expect(validationMessage).toBeTruthy();
+      expect(validationMessage).toBeTruthy();
     } else {
-        await expect(errorMsg).toBeVisible();
+      await expect(errorMsg).toBeVisible();
     }
   });
 
   test('Logout Flow', async ({ page }) => {
     // Login first
-    await page.fill('#loginEmail', 'admin');
-    await page.fill('#loginPassword', 'admin123');
+    await page.fill('#loginEmail', 'admin@racesense.in');
+    await page.fill('#loginPassword', 'Admin123@');
     await page.locator('#loginForm button:has-text("Login")').click();
 
     // Verify login success
@@ -113,7 +115,7 @@ test.describe('Authentication', () => {
     // Verify logged out state
     await expect(page.locator('#loginBtn')).toBeVisible();
     await expect(page.locator('#userProfileHeader')).toBeHidden();
-    
+
     // Toast check
     await expect(page.locator('#toast')).toHaveText(/Logged out/i);
   });
@@ -124,17 +126,17 @@ test.describe('Profile Management', () => {
     await page.goto('/');
     const loginEmail = page.locator('#loginEmail');
     if (await loginEmail.isHidden()) {
-        await page.locator('#loginBtn').click({ force: true });
+      await page.locator('#loginBtn').click({ force: true });
     }
     await expect(loginEmail).toBeVisible();
-    await loginEmail.fill('admin');
-    await page.fill('#loginPassword', 'admin123');
+    await loginEmail.fill('admin@racesense.in');
+    await page.fill('#loginPassword', 'Admin123@');
     await page.locator('#loginForm button:has-text("Login")').click();
-    
+
     // Wait for login toast to clear
     const toast = page.locator('#toast');
     await expect(toast).not.toHaveClass(/active/, { timeout: 10000 });
-    
+
     await expect(page.locator('#userProfileHeader')).toBeVisible();
   });
 

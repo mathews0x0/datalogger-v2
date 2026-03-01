@@ -8,8 +8,8 @@ test.describe('Admin Management', () => {
         await page.locator('#loginBtn').click({ force: true });
     }
     await expect(loginEmail).toBeVisible();
-    await loginEmail.fill('admin');
-    await page.fill('#loginPassword', 'admin123');
+    await loginEmail.fill('admin@racesense.in');
+    await page.fill('#loginPassword', 'Admin123@');
     await page.locator('#loginForm button:has-text("Login")').click();
     await expect(page.locator('#userProfileHeader')).toBeVisible();
     
@@ -25,7 +25,7 @@ test.describe('Admin Management', () => {
     
     // Search for a user
     const searchInput = page.locator('#adminSearchInput');
-    await searchInput.fill('admin');
+    await searchInput.fill('admin@racesense.in');
     await page.locator('button:has-text("Search")').click();
     
     // Verify results

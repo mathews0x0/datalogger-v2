@@ -8,8 +8,8 @@ test.describe('Community & Social', () => {
         await page.locator('#loginBtn').click({ force: true });
     }
     await expect(loginEmail).toBeVisible();
-    await loginEmail.fill('admin');
-    await page.fill('#loginPassword', 'admin123');
+    await loginEmail.fill('admin@racesense.in');
+    await page.fill('#loginPassword', 'Admin123@');
     await page.locator('#loginForm button:has-text("Login")').click();
     await expect(page.locator('#userProfileHeader')).toBeVisible();
     

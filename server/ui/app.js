@@ -183,6 +183,8 @@ async function apiCall(endpoint, options = {}) {
             if (errorData.error === "Upgrade required" || errorData.error === "Limit reached") {
                 showUpgradeModal(errorData.required_tier ? errorData.required_tier.charAt(0).toUpperCase() + errorData.required_tier.slice(1) : "Pro Feature");
                 return null;
+            } else if (endpoint === '/api/auth/login') {
+                throw new Error(errorData.error);
             }
         }
 
@@ -645,7 +647,8 @@ async function submitLogin() {
         const result = await apiCall('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
+            body: JSON.stringify({ email, password }),
+            displayError: false
         });
         if (result && result.success) {
             currentUser = result.user;
@@ -673,7 +676,8 @@ async function submitRegister() {
         const result = await apiCall('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, email, password })
+            body: JSON.stringify({ name, email, password }),
+            displayError: false
         });
         if (result && result.success) {
             // Show the registration success / pending approval panel
