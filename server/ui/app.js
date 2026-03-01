@@ -3580,8 +3580,18 @@ async function performDelete(filenames, fromArchive = false) {
 }
 
 async function processFile(filename) {
-    if (!confirm(`Process session '${filename}'? This will be dispatched to the background queue.`)) {
-        return;
+    const isProcessed = window.processedFiles && window.processedFiles.has(filename);
+    let isForce = false;
+
+    if (isProcessed) {
+        if (!confirm(`Warning: This session has already been analyzed. Re-analyzing may cause duplicate sessions if the old one is not already deleted.\n\nProceed with processing?`)) {
+            return;
+        }
+        isForce = true;
+    } else {
+        if (!confirm(`Process session '${filename}'? This will be dispatched to the background queue.`)) {
+            return;
+        }
     }
 
     showToast('Queuing session...', 'info');
@@ -3590,7 +3600,7 @@ async function processFile(filename) {
         const result = await apiCall('/api/process', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: filename })
+            body: JSON.stringify({ filename: filename, force: isForce })
         });
 
         if (result && result.status === 'already_processed') {
@@ -3641,13 +3651,15 @@ async function processAllFiles() {
     let filesToProcess = [];
 
     if (selectedCheckboxes.length > 0) {
-        // Process only selected files (allowing re-processing)
+        // Process only selected non-analyzed files
         filesToProcess = Array.from(selectedCheckboxes)
-            .map(cb => cb.value);
+            .map(cb => cb.value)
+            .filter(filename => !processedFiles.has(filename));
     } else {
-        // Process all files (allowing re-processing)
+        // Process all non-analyzed files
         filesToProcess = files
-            .map(f => f.filename);
+            .map(f => f.filename)
+            .filter(filename => !processedFiles.has(filename));
     }
 
     if (filesToProcess.length === 0) {
@@ -3663,11 +3675,10 @@ async function processAllFiles() {
     showToast(`Analyzing ${filesToProcess.length} files...`, 'info');
 
     try {
-        const isForce = selectedCheckboxes.length > 0;
         const result = await apiCall('/api/process/all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesToProcess, force: isForce })
+            body: JSON.stringify({ files: filesToProcess, force: false })
         });
 
         if (result.status === 'queued') {
