@@ -1,6 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
 from flask_bcrypt import Bcrypt
+import uuid
 
 db = SQLAlchemy()
 bcrypt = Bcrypt()
@@ -187,3 +188,32 @@ class DeviceToken(db.Model):
             "last_sync": self.last_sync.isoformat() if self.last_sync else None,
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
         }
+
+class Job(db.Model):
+    __tablename__ = 'jobs'
+    id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    type = db.Column(db.String(50), nullable=False) # e.g., 'analysis'
+    status = db.Column(db.String(20), default='queued') # queued, running, complete, failed
+    input_data = db.Column(db.Text) # JSON string
+    result = db.Column(db.Text) # JSON string
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime)
+    completed_at = db.Column(db.DateTime)
+    error = db.Column(db.Text)
+
+    def to_dict(self):
+        import json
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "type": self.type,
+            "status": self.status,
+            "input_data": json.loads(self.input_data) if self.input_data else None,
+            "result": json.loads(self.result) if self.result else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "error": self.error
+        }
+

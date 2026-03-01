@@ -65,10 +65,10 @@ def add_header(response):
     return response
 
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity, set_access_cookies, unset_jwt_cookies, verify_jwt_in_request
-from models import db, bcrypt, User, SessionMeta, TrackMeta, TrackDayMeta, Follow, Team, TeamMember, TeamInvite, Annotation, DeviceToken
+from api.models import db, bcrypt, User, SessionMeta, TrackMeta, TrackDayMeta, Follow, Team, TeamMember, TeamInvite, Annotation, DeviceToken, Job
 
 # Base directory
-import config
+import api.config as config
 
 # Add src/analysis/core to path for RegistryManager
 analysis_core_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../src/analysis/core'))
@@ -199,7 +199,7 @@ import requests  # Required for device scanning and checking
 
 MIN_ESP_VERSION = "0.0.0"
 
-from update_manager import UpdateManager
+from api.update_manager import UpdateManager
 FIRMWARE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../firmware'))
 update_mgr = UpdateManager(FIRMWARE_DIR)
 
@@ -1933,6 +1933,32 @@ def _resolve_upload_user():
         except Exception:
             return None, 'Authentication required', None
 
+@app.route('/api/jobs', methods=['GET'])
+@jwt_required()
+def get_jobs():
+    user_id = get_jwt_identity()
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 20, type=int)
+    
+    jobs = Job.query.filter_by(user_id=user_id).order_by(Job.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
+    
+    return jsonify({
+        "jobs": [j.to_dict() for j in jobs.items],
+        "total": jobs.total,
+        "page": page,
+        "pages": jobs.pages
+    })
+
+@app.route('/api/jobs/<job_id>', methods=['GET'])
+@jwt_required()
+def get_job(job_id):
+    user_id = get_jwt_identity()
+    job = Job.query.filter_by(id=job_id, user_id=user_id).first()
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+        
+    return jsonify(job.to_dict())
+
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
     """Receiver for CSV uploads from ESP32 (Device Token) or Browser (JWT)"""
@@ -1960,24 +1986,18 @@ def upload_file():
         skip_analysis = data.get('skip_analysis', False)
         
         if not skip_analysis:
-            # Auto-trigger analysis
+            # Queue analysis job
             try:
-                script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-                output_dir = str(config.get_user_sessions_dir(user_id))
-                tracks_dir = str(config.get_user_tracks_dir(user_id))
-                result = subprocess.run([
-                    sys.executable, script_path, str(save_path),
-                    '--output', output_dir,
-                    '--tracks', tracks_dir
-                ], capture_output=True, text=True, timeout=60)
-                
-                if result.returncode == 0:
-                    register_new_sessions(user_id)
-                    print(f"[Upload] Analyzed and registered session for user {user_id}")
-                else:
-                    print(f"[Upload] Analysis failed: {result.stderr}")
+                job = Job(
+                    user_id=user_id,
+                    type='analysis',
+                    input_data=json.dumps({"csv_path": str(save_path)})
+                )
+                db.session.add(job)
+                db.session.commit()
+                print(f"[Upload] Queued analysis job {job.id} for user {user_id}")
             except Exception as ae:
-                print(f"[Upload] Failed to auto-trigger analysis: {ae}")
+                print(f"[Upload] Failed to queue analysis job: {ae}")
         else:
             print(f"[Upload] Saved {safe_name} to learning folder for user {user_id} (skip_analysis=True)")
 
@@ -2077,24 +2097,19 @@ def sync_from_device():
                 
                 print(f"[Sync] Downloaded: {fname} ({len(content)} bytes)")
 
-                # Auto-trigger analysis
-                try:
-                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-                    output_dir = str(config.get_user_sessions_dir(user_id))
-                    tracks_dir = str(config.get_user_tracks_dir(user_id))
-                    result = subprocess.run([
-                        sys.executable, script_path, str(save_path),
-                        '--output', output_dir,
-                        '--tracks', tracks_dir
-                    ], capture_output=True, text=True, timeout=60)
-                    
-                    if result.returncode == 0 and user_id:
-                        register_new_sessions(user_id)
-                        print(f"[Sync] Analyzed and registered: {fname}")
-                    elif result.returncode != 0:
-                        print(f"[Sync] Analysis failed for {fname}: {result.stderr[:200]}")
-                except Exception as ae:
-                    print(f"[Sync] Analysis error for {fname}: {ae}")
+                # Queue analysis job
+                if user_id:
+                    try:
+                        job = Job(
+                            user_id=user_id,
+                            type='analysis',
+                            input_data=json.dumps({"csv_path": str(save_path)})
+                        )
+                        db.session.add(job)
+                        db.session.commit()
+                        print(f"[Sync] Queued job {job.id} for {fname}")
+                    except Exception as ae:
+                        print(f"[Sync] Job queue error for {fname}: {ae}")
 
                 # Delete from device after successful save
                 try:
@@ -2204,6 +2219,21 @@ def process_session():
     # Check if already processed (unless force=True)
     force = data.get('force', False)
     if not force:
+        # 1. Check if it's currently queued or running
+        active_jobs = Job.query.filter(Job.user_id == user_id, Job.status.in_(['queued', 'running'])).all()
+        for j in active_jobs:
+            try:
+                jdata = json.loads(j.input_data)
+                if 'csv_path' in jdata and os.path.basename(jdata['csv_path']) == safe_name:
+                    return jsonify({
+                        "status": "already_processed",
+                        "message": f"{safe_name} is currently processing in the background",
+                        "job_id": j.id
+                    })
+            except Exception:
+                pass
+
+        # 2. Check completed sessions
         sessions_dir = config.get_user_sessions_dir(user_id)
         if sessions_dir.exists():
             for sfile in os.listdir(sessions_dir):
@@ -2220,43 +2250,25 @@ def process_session():
                     except Exception:
                         continue
     
-    # Run analysis script
+    # Queue analysis job
     try:
-        # Locate script in our core folder
-        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-        output_dir = str(config.get_user_sessions_dir(user_id))
-        tracks_dir = str(config.get_user_tracks_dir(user_id))
-        
-        result = subprocess.run([
-            sys.executable, script_path, str(csv_path),
-            '--output', output_dir,
-            '--tracks', tracks_dir
-        ], capture_output=True, text=True, timeout=60)
-
-        
-        if result.returncode == 0:
-            register_new_sessions(user_id)
-            return jsonify({
-                "status": "complete",
-                "message": "Session processed successfully",
-                "output": result.stdout
-            })
-        else:
-            return jsonify({
-                "status": "error",
-                "message": "Processing failed",
-                "error": result.stderr
-            }), 500
-    
-    except subprocess.TimeoutExpired:
+        job = Job(
+            user_id=user_id,
+            type='analysis',
+            input_data=json.dumps({"csv_path": str(csv_path)})
+        )
+        db.session.add(job)
+        db.session.commit()
         return jsonify({
-            "status": "error",
-            "message": "Processing timeout"
-        }), 500
+            "status": "queued",
+            "job_id": job.id,
+            "message": "Analysis queued"
+        })
     except Exception as e:
+        db.session.rollback()
         return jsonify({
             "status": "error",
-            "message": str(e)
+            "message": f"Failed to queue job: {str(e)}"
         }), 500
 
 
@@ -2673,8 +2685,20 @@ def process_all_files():
     # Get already processed files for this user
     processed_count = SessionMeta.query.filter_by(user_id=user_id).count()
     
-    # Build set of source filenames that have already been processed
+    # Build set of source filenames that have already been processed or are in queue
     already_processed = set()
+    
+    # 1. Check actively queued or running jobs
+    active_jobs = Job.query.filter(Job.user_id == user_id, Job.status.in_(['queued', 'running'])).all()
+    for j in active_jobs:
+        try:
+            jdata = json.loads(j.input_data)
+            if 'csv_path' in jdata:
+                already_processed.add(os.path.basename(jdata['csv_path']))
+        except Exception:
+            pass
+
+    # 2. Check completed sessions
     sessions_dir = config.get_user_sessions_dir(user_id)
     if sessions_dir.exists():
         for fname in os.listdir(sessions_dir):
@@ -2731,35 +2755,29 @@ def process_all_files():
             "details": {"success": [], "failed": []}
         })
     
-    results = {"success": [], "failed": []}
+    results = {"success": [], "failed": [], "job_ids": []}
     
     for filename in to_process:
         csv_path = config.get_user_learning_dir(user_id) / filename
         try:
-            script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../core/run_analysis.py'))
-            output_dir = str(config.get_user_sessions_dir(user_id))
-            tracks_dir = str(config.get_user_tracks_dir(user_id))
-            
-            result = subprocess.run([
-                sys.executable, script_path, str(csv_path),
-                '--output', output_dir,
-                '--tracks', tracks_dir
-            ], capture_output=True, text=True, timeout=60)
-            
-            if result.returncode == 0:
-                results["success"].append(filename)
-            else:
-                results["failed"].append({"filename": filename, "error": result.stderr[:200]})
+            job = Job(
+                user_id=user_id,
+                type='analysis',
+                input_data=json.dumps({"csv_path": str(csv_path)})
+            )
+            db.session.add(job)
+            db.session.flush()
+            results["success"].append(filename)
+            results["job_ids"].append(str(job.id))
         except Exception as e:
             results["failed"].append({"filename": filename, "error": str(e)})
     
-    if results["success"]:
-        register_new_sessions(user_id)
-        
+    db.session.commit()
+    
     return jsonify({
-        "status": "complete",
-        "message": f"Processed {len(results['success'])} files ({skipped} already analyzed)",
-        "processed": len(results["success"]),
+        "status": "queued",
+        "message": f"Queued {len(results['success'])} files ({skipped} already analyzed)",
+        "queued": len(results["success"]),
         "failed": len(results["failed"]),
         "skipped": skipped,
         "details": results

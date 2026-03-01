@@ -3570,11 +3570,11 @@ async function performDelete(filenames, fromArchive = false) {
 }
 
 async function processFile(filename) {
-    if (!confirm(`Process session '${filename}'? This will take a few seconds.`)) {
+    if (!confirm(`Process session '${filename}'? This will be dispatched to the background queue.`)) {
         return;
     }
 
-    showToast('Analyzing session...', 'info');
+    showToast('Queuing session...', 'info');
 
     try {
         const result = await apiCall('/api/process', {
@@ -3585,8 +3585,31 @@ async function processFile(filename) {
 
         if (result && result.status === 'already_processed') {
             showToast(result.message || 'Already analyzed', 'info');
+            return;
+        }
+
+        if (result && result.job_id) {
+            showToast('Analysis processing...', 'info');
+
+            // Poll for completion
+            let isComplete = false;
+            while (!isComplete) {
+                await new Promise(res => setTimeout(res, 2000));
+                try {
+                    const statusRes = await apiCall(`/api/jobs/${result.job_id}`);
+                    if (statusRes.status === 'complete') {
+                        isComplete = true;
+                        showToast('Session processed successfully!', 'success');
+                    } else if (statusRes.status === 'failed') {
+                        isComplete = true;
+                        showToast('Analysis failed: ' + statusRes.error, 'error');
+                    }
+                } catch (e) {
+                    console.error("Polling error", e);
+                }
+            }
         } else {
-            showToast('Session processed successfully!', 'success');
+            showToast('Session processed!', 'success');
         }
 
         // Refresh data
@@ -3637,18 +3660,41 @@ async function processAllFiles() {
             body: JSON.stringify({ files: filesToProcess, force: isForce })
         });
 
-        if (result.processed > 0) {
-            showToast(`Successfully processed ${result.processed} file(s)!`, 'success');
-        } else if (result.skipped > 0) {
+        if (result.status === 'queued') {
+            showToast(`Queued ${result.queued} files for background processing!`, 'info');
+
+            if (result.details && result.details.job_ids) {
+                let pendingJobs = [...result.details.job_ids];
+                while (pendingJobs.length > 0) {
+                    await new Promise(res => setTimeout(res, 3000));
+
+                    for (let i = pendingJobs.length - 1; i >= 0; i--) {
+                        try {
+                            const statusRes = await apiCall(`/api/jobs/${pendingJobs[i]}`);
+                            if (statusRes.status === 'complete' || statusRes.status === 'failed') {
+                                pendingJobs.splice(i, 1);
+                            }
+                        } catch (e) {
+                            pendingJobs.splice(i, 1);
+                        }
+                    }
+                    if (pendingJobs.length > 0) {
+                        showToast(`Still processing ${pendingJobs.length} files...`, 'info');
+                    }
+                    loadLearningFiles(); // Load files as they complete
+                }
+                showToast(`All queued files finished processing!`, 'success');
+            }
+        } else if (result.skipped > 0 && result.queued === 0) {
             showToast('All files were already processed', 'info');
         }
 
         if (result.failed > 0) {
-            showToast(`${result.failed} file(s) failed to process`, 'warning');
-            console.error('Processing failures:', result.details?.failed);
+            showToast(`${result.failed} file(s) failed to queue`, 'warning');
+            console.error('Queue failures:', result.details?.failed);
         }
 
-        // Refresh the file list to show updated checkmarks
+        // Full refresh at the end
         setTimeout(() => {
             loadLearningFiles();
         }, 500);

@@ -79,11 +79,14 @@ mkdir -p /var/log/racesense
 chown "$APP_USER:$APP_USER" /var/log/racesense
 
 # --- 8. Systemd Service ---
-echo "[8/8] Installing systemd service..."
+echo "[8/8] Installing systemd services..."
 cp "$APP_DIR/deploy/racesense.service" /etc/systemd/system/racesense.service
+cp "$APP_DIR/deploy/racesense-worker.service" /etc/systemd/system/racesense-worker.service
 systemctl daemon-reload
 systemctl enable racesense
+systemctl enable racesense-worker
 systemctl start racesense
+systemctl start racesense-worker
 
 # --- Nginx ---
 echo "[+] Configuring Nginx..."
@@ -104,7 +107,7 @@ echo " ✅ RaceSense deployed successfully!"
 echo "========================================"
 echo ""
 echo " URL:     http://$(curl -s ifconfig.me)"
-echo " Logs:    journalctl -u racesense -f"
-echo " Reload:  sudo systemctl reload racesense"
+echo " Logs:    journalctl -u racesense -f  |  journalctl -u racesense-worker -f"
+echo " Reload:  sudo systemctl restart racesense && sudo systemctl restart racesense-worker"
 echo " Config:  nano /opt/racesense/.env"
 echo ""

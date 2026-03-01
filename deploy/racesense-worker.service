@@ -1,0 +1,20 @@
+[Unit]
+Description=RaceSense Background Worker
+After=network.target
+
+[Service]
+Type=simple
+User=racesense
+Group=racesense
+WorkingDirectory=/opt/racesense/server
+EnvironmentFile=/opt/racesense/.env
+ExecStart=/opt/racesense/venv/bin/python worker.py
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -12,10 +12,22 @@ if [ -n "$PID" ]; then
   sleep 1
 fi
 
+WORKER_PID=$(pgrep -f "worker.py")
+if [ -n "$WORKER_PID" ]; then
+  echo "Killing existing worker processes..."
+  kill -9 $WORKER_PID
+  sleep 1
+fi
+
 echo "Starting Datalogger V2 on Port 6969..."
 cd server
 export PYTHONUNBUFFERED=1
 if [ -d "venv" ]; then
   source venv/bin/activate
 fi
+
+echo "Starting background job worker..."
+nohup python3 worker.py > worker.log 2>&1 &
+
+echo "Starting main web server..."
 python3 run.py

@@ -21,8 +21,12 @@ if str(API_PATH) not in sys.path:
     sys.path.insert(0, str(API_PATH))
 
 from api.main import app
+from api.models import db
 
 if __name__ == "__main__":
+    with app.app_context():
+        db.create_all()
+
     import os
     is_dev = os.environ.get('FLASK_ENV', 'development') == 'development'
     port = int(os.environ.get('PORT', 6969))
