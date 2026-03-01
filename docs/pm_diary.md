@@ -2010,3 +2010,30 @@ To systematically resolve these issues, 7 explicit execution prompts were genera
    - _Impact:_ Unblocked the ability to perform complex schema evolutions (e.g., Phase 9 Social Features or PostgreSQL conversion) without relying on destructive table drops or manual SQLite surgery in production.
 
 **Status:** ✅ **Complete.** The system's backend has been profoundly de-risked. With 34 API tests actively passing and verifying regression integrity, the foundation is primed for P2 scale-out work (Database evolution and Rate-Limiting).
+
+---
+
+## 38. Phase 8.3 — UI Integration & Test Remediation (2026-03-01)
+
+**Objective:** Stabilize the UI and end-to-end testing suite following the massive Phase 8.2 backend refactor (Blueprint extraction and App Factory). Resolve the side-effects of removing the global testing scope and breaking changes to API endpoints.
+
+### Completed Actions:
+
+1. **Test Infrastructure Remediation (Database Wiping Bug Fix)**
+   - **Issue:** The previously implemented E2E Playwright tests and Pytest suite were natively mutating the real production database (`racesense.db`) on every execution by injecting `db.drop_all()`.
+   - **Resolution:** Implemented explicit Config overrides in the Pytest `conftest.py` utilizing the new App Factory `create_app({ "TESTING": True, "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:" })` pattern.
+   - **Impact:** E2E and Backend tests now run safely in total isolation against an in-memory database, eliminating the destructive wiping of the production data store.
+
+2. **Authentication Flow UI Fixes (403 Handling)**
+   - **Issue:** The new API decoupled logic properly returned HTTP 403 (Forbidden) for unapproved Admin users, leading the legacy centralized UI error handler to surface a generic, unhelpful `Connection error` or misfire the "Limit Reached" upgrade modal. 
+   - **Resolution:** Passed `displayError: false` to specific auth endpoints and trapped the exact `403` JSON payload. Bubbled the raw `pending admin approval` string directly into the contextual `submitLogin` `#loginError` UI container.
+   - **Impact:** Clean, accurate feedback for new users waiting for approval, without jarring popup banners.
+
+3. **Session Details UI Refactor Bugs**
+   - **Issue 1:** The `toggleDetailsSection` accordion functionality for Session Context, Visual Insights, etc. was rendered inert due to inline `<script>` tags being blocked inside dynamically injected `innerHTML`.
+   - **Fix 1:** Extracted the visual toggle logic globally to `window.toggleDetailsSection` in `app.js`.
+   - **Issue 2:** The Comparative Analysis ("Ghost Lap") feature failed silently because the old `/api/sessions/{id}/compare` endpoint was relocated and flattened to `/api/compare` during the Blueprint shuffle.
+   - **Fix 2:** Rewired the frontend to point to the new endpoint logic.
+   - **Issue 3:** The refactored `compare` backend endpoint crashed with an `Index Error` if lap arrays were incomplete or `optimal` was chosen. Furthermore, it stripped out the interpolated distance/time matrices required by the frontend SVG simulation.
+   - **Fix 3:** Rebuilt `compare_laps` in `leaderboards.py` to correctly seek by `lap_number` and re-injected the synchronous array parsing loop necessary to map the Delta Curves and side-by-side Ghost positions.
+   - **Impact:** Restored total interactivity and analytical parity to the Session dashboards.
