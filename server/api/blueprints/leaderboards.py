@@ -119,14 +119,14 @@ def get_trackday_leaderboard(trackday_id):
 def compare_laps():
     """Compare two laps (optionally from different sessions/users)"""
     s1_id = request.args.get('session1')
-    l1_idx = request.args.get('lap1', type=int)
+    l1_val = request.args.get('lap1')
     s2_id = request.args.get('session2')
-    l2_idx = request.args.get('lap2', type=int)
+    l2_val = request.args.get('lap2')
     
-    if not all([s1_id, l1_idx is not None, s2_id, l2_idx is not None]):
+    if not all([s1_id, l1_val, s2_id, l2_val]):
         return jsonify({"error": "Missing parameters"}), 400
         
-    def get_lap_telemetry(session_id, lap_idx):
+    def get_lap_telemetry(session_id, lap_val):
         # Check if session is public or owned by user
         try:
             verify_jwt_in_request(optional=True)
@@ -166,10 +166,24 @@ def compare_laps():
             s_data = json.load(f)
             
         laps = s_data.get('laps', [])
-        if lap_idx < 0 or lap_idx >= len(laps):
-            return None, "Lap index out of range"
+        
+        lap = None
+        if lap_val == 'optimal':
+            # Try to pick the fastest valid lap
+            valid_laps = [l for l in laps if l.get('valid') and l.get('lap_time', 0) > 0]
+            if not valid_laps:
+                return None, "No valid laps for optimal"
+            lap = min(valid_laps, key=lambda x: x.get('lap_time'))
+        else:
+            try:
+                lap_num = int(lap_val)
+                lap = next((l for l in laps if l.get('lap_number') == lap_num), None)
+            except ValueError:
+                return None, "Invalid lap parameter"
+                
+        if not lap:
+            return None, f"Lap {lap_val} not found"
             
-        lap = laps[lap_idx]
         start_idx = lap.get('start_index')
         end_idx = lap.get('end_index')
         
@@ -181,13 +195,36 @@ def compare_laps():
         with open(telemetry_file, 'r') as f:
             t_data = json.load(f)
             
+        if not isinstance(t_data, dict) or 'time' not in t_data:
+            return None, "Telemetry data format not supported"
+            
+        # Dynamically calculate indices if missing
+        if start_idx is None or end_idx is None:
+            t_array = t_data.get('time', [])
+            if not t_array:
+                return None, "Telemetry time array is empty"
+                
+            l_start = lap.get('start_time', 0.0)
+            l_end = l_start + lap.get('lap_time', 0.0)
+            
+            s_idx = 0
+            e_idx = len(t_array) - 1
+            
+            for i, t in enumerate(t_array):
+                if t >= l_start and s_idx == 0:
+                    s_idx = i
+                if t >= l_end:
+                    e_idx = i
+                    break
+                    
+            start_idx = s_idx
+            end_idx = e_idx
+            
+        if start_idx >= len(t_data['time']) or end_idx >= len(t_data['time']) or start_idx > end_idx:
+            return None, "Invalid telemetry bounds for lap"
+
         # Extract lap telemetry
-        # Assuming t_data is a list of points or a dict with lists
-        if isinstance(t_data, list):
-            lap_telemetry = t_data[start_idx:end_idx+1]
-        else:
-            # Handle other formats if necessary
-            lap_telemetry = []
+        lap_telemetry = {k: v[start_idx:end_idx+1] for k, v in t_data.items() if isinstance(v, list)}
             
         return {
             "lap_info": lap,
@@ -196,13 +233,75 @@ def compare_laps():
             "session_name": s_meta.session_name
         }, None
 
-    lap1_data, err1 = get_lap_telemetry(s1_id, l1_idx)
+    lap1_data, err1 = get_lap_telemetry(s1_id, l1_val)
     if err1: return jsonify({"error": f"Lap 1: {err1}"}), 400
     
-    lap2_data, err2 = get_lap_telemetry(s2_id, l2_idx)
+    lap2_data, err2 = get_lap_telemetry(s2_id, l2_val)
     if err2: return jsonify({"error": f"Lap 2: {err2}"}), 400
     
+    # Process them into aligned data arrays for the UI compare viz
+    t1 = lap1_data["telemetry"].get("time", [])
+    t2 = lap2_data["telemetry"].get("time", [])
+    
+    length = min(len(t1), len(t2))
+    
+    dist_array = []
+    lat_array = []
+    lon_array = []
+    ref_time = []
+    tgt_time = []
+    ref_speed = []
+    tgt_speed = []
+    d_time = []
+    d_speed = []
+    
+    cum_dist = 0.0
+    
+    # Pre-fetch arrays to avoid repeated lookups
+    t1_s = lap1_data["telemetry"].get("speed", [0]*length)
+    t2_s = lap2_data["telemetry"].get("speed", [0]*length)
+    t1_lat = lap1_data["telemetry"].get("lat", [0]*length)
+    t1_lon = lap1_data["telemetry"].get("lon", [0]*length)
+    
+    if length > 0:
+        base_t1 = t1[0]
+        base_t2 = t2[0]
+    else:
+        base_t1 = 0
+        base_t2 = 0
+        
+    for i in range(length):
+        dt = (t1[i] - t1[i-1]) if i > 0 else 0
+        speed_ms = t1_s[i] / 3.6
+        cum_dist += speed_ms * dt
+        
+        rt = t1[i] - base_t1
+        tt = t2[i] - base_t2
+        
+        dist_array.append(cum_dist)
+        lat_array.append(t1_lat[i])
+        lon_array.append(t1_lon[i])
+        
+        ref_time.append(rt)
+        tgt_time.append(tt)
+        
+        ref_speed.append(t1_s[i])
+        tgt_speed.append(t2_s[i])
+        
+        d_speed.append(t2_s[i] - t1_s[i])
+        d_time.append(tt - rt)
+    
     return jsonify({
+        "distance": dist_array,
+        "lat": lat_array,
+        "lon": lon_array,
+        "ref_time": ref_time,
+        "target_time": tgt_time,
+        "ref_speed": ref_speed,
+        "target_speed": tgt_speed,
+        "delta_speed": d_speed,
+        "delta_time": d_time,
+        # Still return raw for any fallback usage:
         "lap1": lap1_data,
         "lap2": lap2_data
     })
