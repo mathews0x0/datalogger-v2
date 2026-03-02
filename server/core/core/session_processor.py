@@ -29,7 +29,7 @@ class SessionProcessor:
         self.tm = TrackManager(tracks_dir=tracks_dir)
         self.gen = TrackGenerator(tracks_dir=tracks_dir)
         self.tbl_mgr = TBLManager(tracks_dir=tracks_dir)
-        self.exporter = SessionExporter(output_dir=output_dir)
+        self.exporter = SessionExporter(output_dir=output_dir, tracks_dir=tracks_dir)
 
     def process_session(self, file_path: str, force_track_id: str = None) -> bool:
         """

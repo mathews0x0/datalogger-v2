@@ -13,8 +13,9 @@ class SessionExporter:
     This JSON is consumed by UI/Apps (Phase 5).
     """
 
-    def __init__(self, output_dir: str = None):
+    def __init__(self, output_dir: str = None, tracks_dir: str = None):
         self.output_dir = output_dir if output_dir else config.SESSIONS_DIR
+        self.tracks_dir = tracks_dir if tracks_dir else config.TRACKS_DIR
         if not os.path.exists(self.output_dir):
             try:
                 os.makedirs(self.output_dir)
@@ -116,7 +117,8 @@ class SessionExporter:
         
         # Get folder name from registry
         from src.analysis.core.registry_manager import RegistryManager
-        registry = RegistryManager()
+        # Use provided tracks_dir to find individual user's registry
+        registry = RegistryManager(registry_path=self.tracks_dir)
         folder_name = registry.get_folder_name(track_id) or f"track_{track_id}"
         
         filename = self._generate_session_filename(st_ts, folder_name)

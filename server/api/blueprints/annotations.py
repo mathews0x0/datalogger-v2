@@ -12,10 +12,14 @@ def add_annotation(session_id):
     """Add annotation to a session"""
     user_id = int(get_jwt_identity())
     
-    # Check access to session
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    # Access check: owner, coach/owner of owner's team, or public
+    # MUST find the session that belongs to this user or they have access to
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
     if not s_meta:
-        return jsonify({"error": "Session not found"}), 404
+        # Check team access fallback if session owner is different
+        s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+        if not s_meta:
+            return jsonify({"error": "Session not found"}), 404
         
     # Access check: owner, coach/owner of owner's team, or public
     has_access = False
@@ -35,7 +39,7 @@ def add_annotation(session_id):
         
     data = request.get_json()
     annotation = Annotation(
-        session_id=session_id,
+        session_id=s_meta.id, # Link to the UNIQUE primary key ID, not the session_id string
         author_id=user_id,
         lap_number=data.get('lap_number'),
         sector_number=data.get('sector_number'),
@@ -60,10 +64,18 @@ def get_annotations(session_id):
         pass
     user_id = get_jwt_identity()
     
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    # Look for session - prioritize own
+    s_meta = None
+    if user_id:
+        s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
+    
+    # Fallback to any session for public/team check
+    if not s_meta:
+        s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+        
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
-        
+    
     # Check access (same logic as get_session)
     has_access = False
     if s_meta.is_public:
@@ -74,6 +86,7 @@ def get_annotations(session_id):
             has_access = True
         else:
             # Team check
+            from api.models import TeamMember
             owner_teams = TeamMember.query.filter_by(user_id=s_meta.user_id).all()
             for ot in owner_teams:
                 caller_membership = TeamMember.query.filter_by(team_id=ot.team_id, user_id=user_id).first()
@@ -84,7 +97,7 @@ def get_annotations(session_id):
     if not has_access:
         return jsonify({"error": "Access denied"}), 403
         
-    annotations = Annotation.query.filter_by(session_id=session_id).order_by(Annotation.created_at.asc()).all()
+    annotations = Annotation.query.filter_by(session_id=s_meta.id).order_by(Annotation.created_at.asc()).all()
     
     result = []
     for a in annotations:

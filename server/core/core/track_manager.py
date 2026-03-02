@@ -120,8 +120,7 @@ class TrackManager:
         track_id = track_data['id']
         
         # New Folder Structure
-        import src.config as config
-        track_dir = os.path.join(config.TRACKS_DIR, track_id)
+        track_dir = os.path.join(self.tracks_dir, str(track_id))
         os.makedirs(track_dir, exist_ok=True)
         
         out_path = os.path.join(track_dir, "track.json")

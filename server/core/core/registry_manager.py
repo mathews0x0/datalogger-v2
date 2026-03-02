@@ -35,7 +35,12 @@ class RegistryManager:
     
     def __init__(self, registry_path: str = None):
         import src.config as config
-        self.registry_path = registry_path or config.REGISTRY_FILE
+        if registry_path and os.path.isdir(registry_path):
+             # If a directory is provided, assume registry.json is inside it
+             self.registry_path = os.path.join(registry_path, "registry.json")
+        else:
+             self.registry_path = registry_path or config.REGISTRY_FILE
+             
         self.registry = self._load()
     
     def _load(self) -> Dict:

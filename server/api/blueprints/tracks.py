@@ -126,10 +126,20 @@ def get_track_map(track_id):
 def rename_track(track_id):
     """Rename a track"""
     current_user_id = int(get_jwt_identity())
-    track = TrackMeta.query.filter_by(track_id=track_id).first()
+    current_user = User.query.get(current_user_id)
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Try to find the user's own track first
+    track = TrackMeta.query.filter_by(track_id=track_id, user_id=current_user_id).first()
+    
+    # If not found but user is admin, allow looking up any record
+    if not track and current_user.is_admin:
+        track = TrackMeta.query.filter_by(track_id=track_id).first()
+
     if not track:
         return jsonify({"error": "Track not found"}), 404
-    current_user = User.query.get(current_user_id)
+    
     if int(track.user_id) != current_user_id and not current_user.is_admin:
         return jsonify({"error": "Access denied"}), 403
 
@@ -178,14 +188,22 @@ def get_track_geometry(track_id):
 @tracks_bp.route('/api/tracks/<int:track_id>', methods=['DELETE'])
 @jwt_required()
 def delete_track_endpoint(track_id):
-    """Delete a track, its folder, and all associated sessions."""
-    track_meta = TrackMeta.query.filter_by(track_id=track_id).first()
-    if not track_meta:
-        return jsonify({"error": "Track not found"}), 404
-
     # Ownership check
     current_user_id = int(get_jwt_identity())
     current_user = User.query.get(current_user_id)
+    if not current_user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Try specific user track first
+    track_meta = TrackMeta.query.filter_by(track_id=track_id, user_id=current_user_id).first()
+    
+    # Admin fallback
+    if not track_meta and current_user.is_admin:
+        track_meta = TrackMeta.query.filter_by(track_id=track_id).first()
+
+    if not track_meta:
+        return jsonify({"error": "Track not found or access denied"}), 404
+
     if int(track_meta.user_id) != current_user_id and not current_user.is_admin:
         return jsonify({"error": "Access denied — you can only delete your own tracks"}), 403
 
