@@ -2037,3 +2037,27 @@ To systematically resolve these issues, 7 explicit execution prompts were genera
    - **Issue 3:** The refactored `compare` backend endpoint crashed with an `Index Error` if lap arrays were incomplete or `optimal` was chosen. Furthermore, it stripped out the interpolated distance/time matrices required by the frontend SVG simulation.
    - **Fix 3:** Rebuilt `compare_laps` in `leaderboards.py` to correctly seek by `lap_number` and re-injected the synchronous array parsing loop necessary to map the Delta Curves and side-by-side Ghost positions.
    - **Impact:** Restored total interactivity and analytical parity to the Session dashboards.
+
+---
+
+## 39. Phase 8.4 — Subscription Tier Refinement (2026-03-03)
+
+**Objective:** Restrict Team creation to the "Team" subscription tier to better align with the professional coaching and organizational nature of the feature.
+
+### Completed Actions:
+
+1. **Backend Permission Hardening**
+    - **Change:** Updated the `create_team` endpoint in `server/api/blueprints/teams.py`.
+    - **Logic:** Changed `@require_tier('pro')` to `@require_tier('team')`. 
+    - **Impact:** Only users explicitly on the 'team' tier can now successfully POST to the team creation API.
+
+2. **Frontend UI Consistency**
+    - **Change:** Modified `loadTeams` and `showCreateTeamModal` in `server/ui/app.js`.
+    - **Logic:** Updated visibility checks and upgrade prompts to point to the 'team' tier instead of 'pro' for team creation.
+    - **Impact:** Users are now correctly informed that a "Team" tier subscription is required to create a new organization, preventing confusion at the API boundary.
+
+3. **Documentation Alignment**
+    - **Update:** Reflected the tier changes in `docs/project_ramp_up_guide.md`.
+    - **Context:** Clarified the three-tier hierarchy (Free, Pro, Team) and explicitly called out the Team tier requirement for the Teams feature.
+
+**Status:** ✅ **Complete.** Feature access is now properly gated according to the project's commercial and organizational model.

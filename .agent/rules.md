@@ -22,7 +22,7 @@ These rules are MANDATORY for all agents working on the RaceSense (Datalogger V2
     - [`docs/tech_stack.md`](file:///Users/mj/Documents/datalogger-v2/docs/tech_stack.md)
 4.  **Documentation Continuity**: 
     - Maintain the existing style of [`docs/pm_diary.md`](file:///Users/mj/Documents/datalogger-v2/docs/pm_diary.md).
-    - Update all core `docs/*.md` files when features are added or modified.
+    - Update all core `docs/*.md` files when features are added or modified. keep it short unless the changes are major
 5.  **Analyzed Planning**: For major requests, generate a detailed implementation plan and wait for USER validation before proceeding.
 6.  **Continuous Learning**: Update [`.agent/memory.md`](file:///Users/mj/Documents/datalogger-v2/.agent/memory.md) after key interactions to capture new preferences. Call out these updates explicitly to the user.
 7.  **PM-Led Design**: Think like a Product Manager. Evaluate trade-offs and propose multiple solutions for complex features.

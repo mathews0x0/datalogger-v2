@@ -1105,7 +1105,7 @@ async function loadTeams() {
         const teamsData = await apiCall('/api/teams');
 
         if (!teamsData || teamsData.length === 0) {
-            const canCreate = currentUser && currentUser.subscription_tier === 'team';
+            const canCreate = currentUser && (currentUser.subscription_tier === 'team');
             container.innerHTML = renderEmptyState(
                 '👥',
                 'No teams yet',
@@ -2032,6 +2032,7 @@ async function viewTrack(trackId) {
 
 function viewTrackSessions(trackId) {
     showView('sessions');
+    switchSessionTab('sessions');
     loadSessions(trackId);
 }
 

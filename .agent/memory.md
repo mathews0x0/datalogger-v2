@@ -10,7 +10,7 @@ This file serves as a persistent memory for Antigravity to learn and adapt to th
 2.  **Ask Before Committing**: Never commit a feature or fix without explicit confirmation. Always ask the user to test and approve the change first.
 3.  **Context Protocol**: Always fully read `hardware_firmware.md`, `project_ramp_up_guide.md`, and `tech_stack.md` when context on a feature is required. Use them as the source of truth.
 4.  **Documentation Standard**:
-    - Update `pm_diary.md` with every feature or fix using the existing style (Date, Context, Decisions, Implementation Details, Outcome).
+    - Update `pm_diary.md` with every feature or fix using the existing style (Date, Context, Decisions, Implementation Details, Outcome). The entry should be short and functional. it should not be technical
     - Update the core documentation files (`hardware_firmware.md`, `project_ramp_up_guide.md`, `tech_stack.md`) as features change, adhering strictly to existing formatting.
 5.  **Major Request Protocol**: For major requests, perform a full analysis and present a detailed plan before execution. Wait for validation from the user.
 6.  **Product Manager (PM) Mindset**: Approach problems with a PM's perspective. Propose multiple solutions for complex features and explain the trade-offs of each.

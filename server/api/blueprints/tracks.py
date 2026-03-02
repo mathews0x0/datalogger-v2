@@ -157,6 +157,28 @@ def rename_track(track_id):
         track.track_name = new_name
         db.session.commit()
         
+        # --- SYNC TO DISK (Fixes Bug 1) ---
+        try:
+            from src.analysis.core.registry_manager import RegistryManager
+            user_tracks_dir = config.get_user_tracks_dir(current_user_id)
+            registry = RegistryManager(registry_path=str(user_tracks_dir))
+            registry.update_track_name(track_id, new_name)
+            
+            # Update individual track.json
+            track_dir = user_tracks_dir / track.folder_name
+            track_json_path = track_dir / "track.json"
+            if track_json_path.exists():
+                with open(track_json_path, 'r') as f:
+                    track_data = json.load(f)
+                track_data['track_name'] = new_name
+                # Keep folder_name synchronized in track.json too
+                if 'folder_name' in track_data:
+                    track_data['folder_name'] = track.folder_name
+                with open(track_json_path, 'w') as f:
+                    json.dump(track_data, f, indent=4)
+        except Exception as disk_err:
+            print(f"Failed to sync track rename to disk: {disk_err}")
+
         return jsonify({
             "success": True,
             "message": f"Renamed '{old_name}' to '{new_name}'"

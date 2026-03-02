@@ -82,7 +82,14 @@ def get_session(session_id):
     user_id = get_jwt_identity()
     
     # Check if session belongs to user or is public
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    # Look for session - prioritize own
+    s_meta = None
+    if user_id:
+        s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
+    
+    # Fallback to any session for public/shared check
+    if not s_meta:
+        s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
         
@@ -300,7 +307,15 @@ def get_public_sessions():
 @jwt_required()
 def delete_session_endpoint(session_id):
     """Delete a processed session"""
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    # Ownership check - ensure we find the CURRENT user's session if IDs collide
+    current_user_id = int(get_jwt_identity())
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=current_user_id).first()
+    
+    # Optional: If not found, and user is admin, allow a global search
+    if not s_meta:
+        current_user = User.query.get(current_user_id)
+        if current_user and current_user.is_admin:
+            s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
 
@@ -329,9 +344,15 @@ def delete_session_endpoint(session_id):
 @jwt_required()
 def rename_session(session_id):
     """Rename a session (updates meta.session_name)"""
-    # Ownership check
+    # Ownership check - ensure we find the CURRENT user's session if IDs collide
     current_user_id = int(get_jwt_identity())
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=current_user_id).first()
+    
+    # Optional: If not found, and user is admin, allow a global search
+    if not s_meta:
+        current_user = User.query.get(current_user_id)
+        if current_user and current_user.is_admin:
+            s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
     current_user = User.query.get(current_user_id)
@@ -370,8 +391,14 @@ def rename_session(session_id):
 @jwt_required()
 def update_session_notes(session_id):
     """Update session notes"""
+    # Ownership check
     current_user_id = int(get_jwt_identity())
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=current_user_id).first()
+    
+    if not s_meta:
+        current_user = User.query.get(current_user_id)
+        if current_user and current_user.is_admin:
+            s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
     current_user = User.query.get(current_user_id)
@@ -415,8 +442,13 @@ def export_session(session_id):
     import zipfile
     import io
     
-    # 1. Locate Files
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    current_user_id = int(get_jwt_identity())
+    # 1. Locate Files - prioritize user's own session
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=current_user_id).first()
+    
+    if not s_meta:
+        # Fallback to public/shared check for export
+        s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
         

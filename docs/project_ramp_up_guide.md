@@ -40,7 +40,7 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 | **Registration** | New user sign-up. Requires **Admin Approval** (`is_approved=False`). | `server/ui/app.js` (submitRegister) | `server/api/blueprints/auth.py` | `User` |
 | **Login** | Secure JWT-based login using cookies (`HttpOnly`, `SameSite=Lax`). | `server/ui/app.js` (submitLogin) | `server/api/blueprints/auth.py` | `User` |
 | **Profile Photo** | Upload profile picture. Resized/Cropped to **256x256 square** via Pillow. | `server/ui/app.js` (uploadProfilePhoto) | `server/api/blueprints/auth.py` | `User.profile_photo`|
-| **User Tiers** | **Free (5 Session Limit)**, **Pro (Unlimited)**. | `server/ui/app.js` (tierBadge) | `server/api/blueprints/admin.py` | `User.subscription_tier` |
+| **User Tiers** | **Free (5 Session Limit)**, **Pro (Unlimited)**, **Team (Organization/Coaching)**. | `server/ui/app.js` (tierBadge) | `server/api/blueprints/admin.py` | `User.subscription_tier` |
 | **Security** | Change password with 8+ char requirement (Digit/Uppercase check). | `server/ui/app.js` (changePassword) | `server/api/blueprints/auth.py` | `User.password_hash`|
 
 ### ⚙️ Admin Tools
@@ -87,7 +87,7 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 | :--- | :--- | :--- | :--- | :--- |
 | **Public Feed** | Explore shared sessions. Following/Follower system. | `server/ui/app.js` (loadFollowingFeed)| `server/api/blueprints/social.py` | `Follow` |
 | **Leaderboards** | Track rankings filtered by `all`, `month`, `week`. One entry per user. | `server/ui/app.js` (loadLeaderboard) | `server/api/blueprints/leaderboards.py`| `SessionMeta` |
-| **Teams** | Roles: `owner`, `coach`, `rider`. Coaching access to member data. | `server/ui/app.js` (teamsView) | `server/api/blueprints/teams.py` | `Team` |
+| **Teams** | Roles: `owner`, `coach`, `rider`. Coaching access to member data. **Team creation requires Team tier.** | `server/ui/app.js` (teamsView) | `server/api/blueprints/teams.py` | `Team` |
 | **Team Invites** | UUID-based invitation links with 7-day expiration. | `server/ui/app.js` (generateInvite) | `server/api/blueprints/teams.py` | `TeamInvite` |
 
 ### 🔄 Data Management
