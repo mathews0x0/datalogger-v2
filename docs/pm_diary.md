@@ -2061,3 +2061,22 @@ To systematically resolve these issues, 7 explicit execution prompts were genera
     - **Context:** Clarified the three-tier hierarchy (Free, Pro, Team) and explicitly called out the Team tier requirement for the Teams feature.
 
 **Status:** ✅ **Complete.** Feature access is now properly gated according to the project's commercial and organizational model.
+
+---
+
+## 40. Infrastructure: SSH Identity Split (2026-03-03)
+
+**Objective:** Isolate GitHub authentication from Production Server access to eliminate passphrase fatigue and improve security hygiene.
+
+### Completed Actions:
+
+1. **SSH Key Generation**
+    - **Action:** Generated a new ED25519 key specifically for GitHub (`~/.ssh/id_ed25519_github`).
+    - **Configuration:** Created without a passphrase for frictionless Git operations.
+
+2. **SSH Config Refactoring**
+    - **File:** `~/.ssh/config`
+    - **Change:** Explicitly mapped `github.com` to the new key and `rs` (Production) to the original passphrase-locked key.
+    - **Impact:** `git push/fetch` operations are now transparent (no prompts), while Production access remains secured by a mandatory passphrase.
+
+**Status:** ✅ **Complete.** Development velocity increased; Production security maintained.
