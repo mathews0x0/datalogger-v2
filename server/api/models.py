@@ -188,9 +188,9 @@ class DeviceToken(db.Model):
             "token": self.token,
             "device_name": self.device_name,
             "revoked": self.revoked,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "last_sync": self.last_sync.isoformat() if self.last_sync else None,
-            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "last_sync": self.last_sync.isoformat() + 'Z' if self.last_sync else None,
+            "expires_at": self.expires_at.isoformat() + 'Z' if self.expires_at else None,
         }
 
 class Job(db.Model):

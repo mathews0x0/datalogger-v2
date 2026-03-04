@@ -54,7 +54,7 @@ def create_app(config_overrides=None):
         raise RuntimeError('JWT_SECRET_KEY environment variable must be set in production!')
         
     app.config['JWT_SECRET_KEY'] = _jwt_secret or 'racesense-v2-development-secret-key'
-    app.config['JWT_TOKEN_LOCATION'] = ['cookies']
+    app.config['JWT_TOKEN_LOCATION'] = ['cookies', 'headers']
     app.config['JWT_COOKIE_CSRF_PROTECT'] = IS_PRODUCTION
     app.config['JWT_ACCESS_COOKIE_PATH'] = '/api/'
     app.config['JWT_REFRESH_COOKIE_PATH'] = '/api/auth/refresh'

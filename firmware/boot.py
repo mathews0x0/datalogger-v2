@@ -11,4 +11,4 @@ for _ in range(3):
     time.sleep(0.1)
     led.value(0)
     time.sleep(0.1)
-led.value(1) # Keep on during main boot
+# Leave OFF, main.py / led_manager will take over

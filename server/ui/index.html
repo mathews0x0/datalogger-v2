@@ -476,10 +476,10 @@
       <div class="view" id="processView">
         <div
           style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.25rem;">
-          <h2 style="margin: 0;">Sync Data <span class="info-tooltip" tabindex="0"><i class="fas fa-info-circle"
+          <h2 style="margin: 0;">Analyze Data <span class="info-tooltip" tabindex="0"><i class="fas fa-info-circle"
                 style="font-size: 0.75rem; color: var(--text-muted); cursor: help;"></i><span
-                class="info-tooltip-text">Upload CSV files from your RS-Core or sync directly from your device, then
-                analyze your ride data.</span></span></h2>
+                class="info-tooltip-text">Files uploaded directly from your RS-Core will appear here. You can also
+                upload CSV files manually.</span></span></h2>
           <div style="display: flex; gap: 0.5rem; align-items: center;">
             <label class="archive-toggle-label">
               <span>Archives</span>
@@ -493,8 +493,9 @@
             </button>
             <input type="file" id="manualCsvUpload" style="display: none;" multiple accept=".csv"
               onchange="handleManualUpload(event)">
-            <button class="btn btn-primary btn-sm" onclick="syncFromDevice()" title="Pull sessions from your RS-Core">
-              <i class="fas fa-wifi"></i> Sync from Device
+            <button class="btn btn-primary btn-sm" onclick="loadLearningFiles()"
+              title="Check for newly uploaded files from your RS-Core">
+              <i class="fas fa-sync-alt"></i> Refresh
             </button>
           </div>
         </div>
@@ -617,12 +618,15 @@
               <p style="font-size: 0.75rem; color: var(--success); font-weight: 600; margin-bottom: 0.5rem;">
                 <i class="fas fa-check-circle"></i> Copy this token now — it won't be shown again!
               </p>
-              <div style="display: flex; gap: 0.5rem;">
+              <div style="display: flex; gap: 0.5rem; flex-direction: column;">
                 <input type="text" id="newTokenValue" class="form-input" readonly
-                  style="flex: 1; font-family: monospace; background: var(--bg-secondary); font-size: 0.8rem;">
-                <button class="btn btn-sm" onclick="copyDeviceToken()">
-                  <i class="fas fa-copy"></i> Copy
-                </button>
+                  style="width: 100%; font-family: monospace; background: var(--bg-secondary); font-size: 0.8rem; text-align: center;">
+                <div id="tokenActionBtns" style="display: flex; gap: 0.5rem; width: 100%;">
+                  <!-- Populated by JS -->
+                  <button class="btn btn-sm" onclick="copyDeviceToken()" style="flex: 1;">
+                    <i class="fas fa-copy"></i> Copy
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -1421,7 +1425,68 @@
     </div>
   </div>
 
-  <script src="app.js?v=14"></script>
+  <!-- ==================== HOTSPOT SETUP MODAL (Magic Link) ==================== -->
+  <div class="modal" id="hotspotSetupModal">
+    <div class="modal-content" style="max-width: 450px; border: 2px solid var(--primary);">
+      <span class="modal-close" onclick="closeHotspotSetup()">&times;</span>
+      <h3 style="margin-bottom: 0.5rem; color: var(--primary); text-transform: uppercase; letter-spacing: 1px;">
+        <i class="fas fa-magic"></i> Auto-Setup Device
+      </h3>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem;">
+        Provision your RS-Core via your phone's hotspot in 30 seconds.
+      </p>
+
+      <!-- Step 1: Prep -->
+      <div id="hotspotPrepSection">
+        <label style="font-size: 0.7rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">1. Your
+          Hotspot Credentials</label>
+        <div class="input-group" style="margin-top: 0.5rem;">
+          <input type="text" id="setupSsid" class="form-input" placeholder="Hotspot Name (SSID)">
+        </div>
+        <div class="input-group" style="margin-top: 0.5rem;">
+          <input type="password" id="setupPass" class="form-input" placeholder="Hotspot Password">
+        </div>
+        <input type="hidden" id="setupToken">
+
+        <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(255,102,0,0.05); border-radius: 8px;">
+          <p style="font-size: 0.8rem; color: var(--primary); margin: 0;">
+            <i class="fas fa-info-circle"></i> We'll send these to your module so it can connect to your phone.
+          </p>
+        </div>
+
+        <button class="btn btn-primary" onclick="generateMagicLink()" style="width: 100%; margin-top: 1.5rem;">
+          Next: Connect to Device →
+        </button>
+      </div>
+
+      <!-- Step 2: Switch & Link -->
+      <div id="hotspotLinkSection" style="display: none; text-align: center;">
+        <div style="padding: 1.5rem; background: var(--bg-secondary); border-radius: 12px; margin-bottom: 1.5rem;">
+          <div style="font-size: 2rem; margin-bottom: 1rem;">📱 &harr; 🏎️</div>
+          <p style="font-weight: 700; margin-bottom: 0.5rem;">SWITCH NOW</p>
+          <p style="font-size: 0.85rem; color: var(--text-muted);">
+            Open your phone's <strong>WiFi Settings</strong> and join the network named:<br>
+            <span style="color: var(--primary); font-family: monospace; font-size: 1rem;">RS-Core-XXXX</span>
+          </p>
+        </div>
+
+        <p style="font-size: 0.8rem; margin-bottom: 1rem; color: var(--text-muted);">
+          After joining the WiFi, click the button below:
+        </p>
+
+        <a id="magicLinkBtn" href="#" class="btn btn-primary btn-lg" target="_blank"
+          style="display: block; width: 100%; text-decoration: none; margin-bottom: 1rem;">
+          <i class="fas fa-sync"></i> Sync to Device
+        </a>
+
+        <button class="btn-link" onclick="resetProvisioningUI()" style="color: var(--text-muted); font-size: 0.75rem;">
+          ← Go Back / Change Settings
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=48"></script>
 
 </body>
 

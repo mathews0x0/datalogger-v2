@@ -14,11 +14,15 @@ class LEDManager:
     3. Track Found (3s White Flash)
     4. Normal Logging/Search animations
     """
-    def __init__(self, pin=4, count=8):
+    def __init__(self, pin=4, count=8, onboard_pin=2):
         self.pin = Pin(pin, Pin.OUT)
         self.np = neopixel.NeoPixel(self.pin, count)
         self.count = count
         self._last_tick = time.ticks_ms()
+        
+        # Onboard LED (GPIO 2)
+        self.onboard_led = Pin(onboard_pin, Pin.OUT)
+        self._onboard_state = "OFF"
         
         # Event state
         self._event_active = False
@@ -217,12 +221,34 @@ class LEDManager:
                 
         elif self._event_type == "STORAGE_CRITICAL":
             self.set_color(255, 0, 0)  # Solid red
-    
-    def is_event_active(self):
-        """Check if an event animation is currently playing."""
-        if not self._event_active:
-            return False
-        if time.ticks_diff(time.ticks_ms(), self._event_end_time) >= 0:
-            self._event_active = False
-            return False
-        return True
+
+    def update_onboard_led(self, state):
+        """
+        Handle GPIO 2 blinking patterns:
+        - PAIRING: 3Hz blink for 2s, then 1s OFF
+        - CONNECTING: 2Hz continuous blink
+        - CONNECTED: Steady ON
+        """
+        now = time.ticks_ms()
+        self._onboard_state = state
+
+        if state == "CONNECTED":
+            self.onboard_led.value(1)
+        
+        elif state == "CONNECTING":
+            # 2Hz continuous: 250ms ON, 250ms OFF
+            on = (now % 500 < 250)
+            self.onboard_led.value(1 if on else 0)
+            
+        elif state == "PAIRING":
+            # 3Hz for 2s (2000ms), 1s OFF (1000ms) = 3000ms cycle
+            cycle_ms = now % 3000
+            if cycle_ms < 2000:
+                # 3Hz: 333ms cycle -> 166ms ON, 166ms OFF
+                on = (cycle_ms % 333 < 166)
+                self.onboard_led.value(1 if on else 0)
+            else:
+                self.onboard_led.value(0)
+        
+        else:
+            self.onboard_led.value(0)

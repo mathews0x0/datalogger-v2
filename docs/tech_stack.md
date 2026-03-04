@@ -10,20 +10,26 @@ This document provides a deep dive into the technology stack, deployment process
 *   **Framework**: [Flask](https://flask.palletsprojects.com/) (Application Factory pattern).
 *   **Database**: **SQLite** with [SQLAlchemy](https://www.sqlalchemy.org/) ORM.
 *   **Migrations**: [Flask-Migrate](https://flask-migrate.readthedocs.io/) (Alembic).
-*   **Authentication**: [Flask-JWT-Extended](https://flask-jwt-extended.readthedocs.io/) (Secure HttpOnly Cookie storage).
+*   **Authentication**: **Dual-Auth System**.
+    *   **Users**: [Flask-JWT-Extended](https://flask-jwt-extended.readthedocs.io/) via Secure HttpOnly Cookies.
+    *   **Devices**: Secure **Bearer Tokens** (`rsk_...`) passed in the `Authorization` header.
 *   **WSGI Server**: [Gunicorn](https://gunicorn.org/) (Production) / Flask Dev Server (Local).
 *   **Worker**: Custom `worker.py` script for asynchronous session analysis.
 
 ### **Frontend (Modern Vanilla JS)**
 *   **UI**: Standard HTML5, CSS3 (Custom variables, Flexbox/Grid).
+*   **Architecture**: **Direct-to-Cloud (IoT)**.
+    *   The UI polls the Cloud API (`/api/devices`) for heartbeats.
+    *   Local network discovery/IP scanning has been decommissioned.
 *   **Maps**: [Leaflet.js](https://leafletjs.com/) for track visualization.
 *   **Charts**: Custom SVG-based telemetry traces and [Chart.js](https://www.chartjs.org/) for interactive plots.
 *   **Mobile**: [Capacitor](https://capacitorjs.com/) bridge for iOS/Android builds.
-*   **State Management**: Vanilla JS objects with `LocalStorage` persistence for UI preferences.
 
 ### **Infrastructure**
 *   **Host**: Utho Cloud (VPS - Ubuntu 22.04 LTS).
-*   **Reverse Proxy**: **Nginx** (SSL termination via Certbot).
+*   **Reverse Proxy**: **Nginx**.
+    *   **Secured**: SSL termination via Certbot.
+    *   **IoT Ready**: Explicitly proxies the `Authorization` header to the backend to support device tokens.
 *   **Process Manager**: **Systemd** (managing `racesense.service` and `racesense-worker.service`).
 
 ### **Hardware & Firmware (RS-Core)**

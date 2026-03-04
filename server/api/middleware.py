@@ -31,7 +31,9 @@ def protect_api():
             '/api/auth/login',
             '/api/auth/register',
             '/api/public/sessions',
-            '/api/upload'
+            '/api/upload',
+            '/api/device/ping',
+            '/api/devices/token'
         ]
         if request.path in public_paths:
             return

@@ -37,13 +37,8 @@ let isDeviceConnected = false; // True only when device is confirmed reachable
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Datalogger Companion App loaded');
 
-    // Auto-detect device IP on startup
-    autoDetectDeviceIP().then(ip => {
-        if (ip) {
-            console.log('[Init] Auto-detected device IP:', ip);
-            checkDeviceConnection();
-        }
-    });
+    // Start cloud heartbeat polling
+    pollCloudHeartbeat();
 
     // Set up navigation
     setupNavigation();
@@ -573,6 +568,20 @@ async function generateDeviceToken() {
             const tokenInput = document.getElementById('newTokenValue');
             display.style.display = 'block';
             tokenInput.value = result.token;
+
+            // Add "Provision" button to token display
+            const provisionContainer = document.getElementById('tokenActionBtns');
+            if (provisionContainer) {
+                provisionContainer.innerHTML = `
+                    <button class="btn btn-primary" onclick="openHotspotSetup('${result.token}')" style="flex: 1;">
+                        <i class="fas fa-magic"></i> Auto-Setup Device
+                    </button>
+                    <button class="btn secondary" onclick="copyDeviceToken()" style="flex: 1;">
+                        <i class="fas fa-copy"></i> Copy Token
+                    </button>
+                `;
+            }
+
             nameInput.value = '';
             showToast('Device token generated!', 'success');
             loadDeviceTokens();
@@ -599,6 +608,63 @@ async function revokeDeviceToken(tokenId) {
     } catch (e) {
         showToast('Failed to revoke: ' + e.message, 'error');
     }
+}
+
+// ============================================================================
+// MAGIC LINK PROVISIONING (Zero-Typing Setup)
+// ============================================================================
+
+function openHotspotSetup(token) {
+    const modal = document.getElementById('hotspotSetupModal');
+    if (!modal) return;
+
+    // Pre-fill from localStorage if available
+    const savedSsid = localStorage.getItem('provision_ssid') || '';
+    const savedPass = localStorage.getItem('provision_pass') || '';
+
+    document.getElementById('setupToken').value = token;
+    document.getElementById('setupSsid').value = savedSsid;
+    document.getElementById('setupPass').value = savedPass;
+
+    modal.classList.add('active');
+}
+
+function closeHotspotSetup() {
+    document.getElementById('hotspotSetupModal').classList.remove('active');
+}
+
+function generateMagicLink() {
+    const ssid = document.getElementById('setupSsid').value.trim();
+    const pass = document.getElementById('setupPass').value.trim();
+    const token = document.getElementById('setupToken').value.trim();
+
+    if (!ssid || !token) {
+        showToast('SSID and Token are required', 'warning');
+        return;
+    }
+
+    // Save for next time
+    localStorage.setItem('provision_ssid', ssid);
+    localStorage.setItem('provision_pass', pass);
+
+    // Build Magic Link (using DNS setup.racesense as discussed)
+    // IMPORTANT: We must explicitly pass the api_url so the device knows how to reach this specific production environment
+    const targetApiUrl = API_BASE + '/api/upload';
+    const magicUrl = `http://setup.racesense/setup?ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}&token=${encodeURIComponent(token)}&api_url=${encodeURIComponent(targetApiUrl)}`;
+
+    // Update UI to show instructions
+    document.getElementById('hotspotPrepSection').style.display = 'none';
+    document.getElementById('hotspotLinkSection').style.display = 'block';
+
+    const linkBtn = document.getElementById('magicLinkBtn');
+    linkBtn.href = magicUrl;
+
+    console.log('[Provisioning] Magic Link generated:', magicUrl);
+}
+
+function resetProvisioningUI() {
+    document.getElementById('hotspotPrepSection').style.display = 'block';
+    document.getElementById('hotspotLinkSection').style.display = 'none';
 }
 
 function showAuthModal(mode) {
@@ -6243,223 +6309,53 @@ async function uploadOneFile(file) {
 }
 
 
-async function syncFromDevice() {
-    const ip = await autoDetectDeviceIP();
-    if (!ip) {
-        showToast('Device not found on network. Make sure RS-Core is powered on and connected to your WiFi.', 'warning');
-        return;
-    }
-    await triggerBrowserSync(ip);
-}
+async function pollCloudHeartbeat() {
+    // Re-schedule first to ensure persistence
+    setTimeout(pollCloudHeartbeat, 15000);
 
-/**
- * Browser-Based Sync: Fetch files from ESP32 miniserver → upload to cloud API
- */
-async function triggerBrowserSync(deviceIP) {
-    const ip = deviceIP || localStorage.getItem('lastDeviceIP');
-    if (!ip) {
-        showToast('No device detected. Power on your RS-Core and connect to the same network.', 'warning');
-        return;
-    }
-
-    const btn = document.getElementById('btnBrowserSync');
-    if (btn) {
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-        btn.disabled = true;
-    }
+    if (!currentUser) return;
 
     try {
-        const syncRes = await apiCall('/api/sync/device', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip: ip })
-        });
+        const res = await apiCall('/api/devices', { displayError: false });
+        if (res && res.length > 0) {
+            const now = new Date();
+            let isOnline = false;
 
-        if (syncRes && syncRes.success) {
-            const uploaded = syncRes.synced ? syncRes.synced.length : 0;
-            if (uploaded > 0) {
-                showToast(`🏁 ${uploaded} session${uploaded > 1 ? 's' : ''} synced!`, 'success');
-                localStorage.setItem('lastSyncTime', new Date().toISOString());
-                updateLastSyncDisplay();
-                loadLearningFiles();
-            } else {
-                showToast('No new files on device', 'info');
-            }
-        } else {
-            showToast('Sync failed on backend', 'error');
-        }
-    } catch (e) {
-        showToast('Sync failed: ' + e.message, 'error');
-    } finally {
-        if (btn) {
-            btn.innerHTML = '<i class="fas fa-cloud-upload-alt"></i> Sync Now';
-            btn.disabled = false;
-        }
-    }
-}
+            for (const device of res) {
+                if (device.last_sync) {
+                    // Modern ISO format from backend (with T and Z) is parsed reliably
+                    const lastSyncTime = new Date(device.last_sync);
 
-// Helper: Load saved IP into config box on load
-document.addEventListener('DOMContentLoaded', () => {
-    const savedIP = localStorage.getItem('lastDeviceIP');
-    if (savedIP && document.getElementById('devConfigIP')) {
-        document.getElementById('devConfigIP').value = savedIP;
-    }
-    // Fast initial check with direct fetch
-    fastConnectCheck();
-    // Background polling every 30s
-    setInterval(checkDeviceConnection, 30000);
-});
-
-// Fast connect - tries direct fetch to last known IP first
-async function fastConnectCheck() {
-    const ip = localStorage.getItem('lastDeviceIP');
-    const badge = document.getElementById('connectionStatus');
-    const text = document.getElementById('connText');
-
-    if (!badge || !text) return;
-
-    if (!ip) {
-        badge.className = 'status-badge offline';
-        text.textContent = 'No Device';
-        return;
-    }
-
-
-    badge.className = 'status-badge checking';
-    text.textContent = 'Checking...';
-
-    try {
-        const response = await fetch(`http://${ip}/status`, {
-            mode: 'cors',
-            signal: AbortSignal.timeout(2000)
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            badge.className = 'status-badge online';
-            text.textContent = 'RS-Core Online';
-            isDeviceConnected = true;
-            updateStorageIndicator(data);
-            console.log('[FastCheck] Direct connection success:', ip);
-            return;
-        }
-    } catch (e) {
-        console.log('[FastCheck] Direct fetch failed, trying backend...');
-    }
-
-    checkDeviceConnection();
-}
-
-/**
- * Auto-detects the device IP using BLE (if connected) or network scan.
- * Stores the found IP in localStorage.
- * @returns {Promise<string|null>} Found IP or null
- */
-async function autoDetectDeviceIP() {
-    // 1. Check BLE if connected
-    if (bleConnector && bleConnector.isConnected()) {
-        try {
-            const status = await bleConnector.getWifiStatus();
-            if (status.connected && status.ip && status.ip !== '0.0.0.0') {
-                console.log('[AutoDetect] Found IP via BLE:', status.ip);
-                localStorage.setItem('lastDeviceIP', status.ip);
-                return status.ip;
-            }
-        } catch (e) {
-            console.warn('[AutoDetect] Failed to get IP via BLE', e);
-        }
-    }
-
-    // 2. Check localStorage
-    const savedIP = localStorage.getItem('lastDeviceIP');
-    if (savedIP) return savedIP;
-
-    // 3. Fallback to network scan
-    try {
-        console.log('[AutoDetect] Falling back to network scan...');
-        const res = await apiCall('/api/device/scan', { displayError: false });
-        if (res.devices && res.devices.length > 0) {
-            const ip = res.devices[0].ip;
-            console.log('[AutoDetect] Found IP via scan:', ip);
-            localStorage.setItem('lastDeviceIP', ip);
-            return ip;
-        }
-    } catch (e) {
-        console.warn('[AutoDetect] Network scan failed', e);
-    }
-
-    return null;
-}
-
-async function checkDeviceConnection() {
-    const ip = localStorage.getItem('lastDeviceIP');
-    const badge = document.getElementById('connectionStatus');
-    const text = document.getElementById('connText');
-
-    if (!badge || !text) return; // Elements not ready yet
-
-    if (!ip) {
-        badge.className = 'status-badge offline';
-        text.textContent = 'No Device';
-        isDeviceConnected = false;
-        updateDeviceStatus(false, null);
-        return;
-    }
-
-    try {
-        const res = await apiCall(`/api/device/check?ip=${ip}`);
-        if (res && res.reachable) {
-            badge.className = 'status-badge online';
-            text.textContent = 'RS-Core Online';
-            isDeviceConnected = true;
-
-            updateDeviceStatus(true, ip);
-
-            console.log('[Status] Device connected:', ip);
-
-            // Check compatibility
-            const warningBadge = document.getElementById('versionWarning');
-            if (warningBadge) {
-                if (res.compatible === false) {
-                    warningBadge.style.display = 'inline-block';
-                    warningBadge.title = `Firmware Mismatch: Device has v${res.info.version}, server requires v${res.min_required}`;
-                    warningBadge.onclick = () => {
-                        showView('settings');
-                        showToast(`Firmware v${res.info.version} is outdated. Update to v${res.min_required} in settings.`, 'warning');
-                    };
-                } else {
-                    warningBadge.style.display = 'none';
+                    // If device synced within last 60 seconds, it's online
+                    // We use Math.abs to handle clock skew in either direction
+                    if (Math.abs(now - lastSyncTime) < 60000) {
+                        isOnline = true;
+                        break;
+                    }
                 }
             }
 
-            // Use storage info from backend response
-            if (res.info) {
-                updateStorageIndicator(res.info);
+            const badge = document.getElementById('connectionStatus');
+            const text = document.getElementById('connText');
+
+            if (badge && text) {
+                if (isOnline) {
+                    badge.className = 'status-badge online';
+                    text.textContent = 'RS-Core Connected';
+                    isDeviceConnected = true;
+                } else {
+                    badge.className = 'status-badge offline';
+                    text.textContent = 'Device Offline';
+                    isDeviceConnected = false;
+                }
             }
-        } else {
-            badge.className = 'status-badge offline';
-            text.textContent = 'Module Offline';
-            isDeviceConnected = false;
-
-            updateDeviceStatus(false, ip);
-
-            console.log('[Status] Device offline:', ip);
-            updateStorageIndicator({});  // Hide indicator
         }
-    } catch (err) {
-        badge.className = 'status-badge offline';
-        text.textContent = 'Module Offline';
-        isDeviceConnected = false;
-
-        updateDeviceStatus(false, null);
-
-        console.error('[Status] Check failed:', err);
-
-        // Hide storage indicator when offline
-        const storageEl = document.getElementById('storageIndicator');
-        if (storageEl) storageEl.style.display = 'none';
+    } catch (e) {
+        console.warn('[Heartbeat] Failed to fetch device status', e);
     }
 }
+
+// Local device connection logic has been removed in favor of Direct-To-Cloud architecture.
 
 // Update storage indicator
 function updateStorageIndicator(data) {

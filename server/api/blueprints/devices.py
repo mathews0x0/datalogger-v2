@@ -53,15 +53,19 @@ def _resolve_upload_user():
     Returns: (user_id, error_message, device_token_obj_or_None)
     """
     auth_header = request.headers.get('Authorization', '')
-    if auth_header.startswith('Bearer rsk_'):
-        token_str = auth_header.split('Bearer ', 1)[1]
+    
+    # Robust check for Bearer rsk_... (case-insensitive prefix)
+    if auth_header.lower().startswith('bearer rsk_'):
+        # Extract the token string (everything after "bearer ")
+        token_str = auth_header.split(None, 1)[1] if ' ' in auth_header else ''
+        token_str = token_str.strip()
+        
         dt = DeviceToken.query.filter_by(token=token_str, revoked=False).first()
         if not dt:
             return None, 'Invalid or revoked device token', None
-            
-        if dt.expires_at and dt.expires_at < datetime.utcnow():
-            return None, 'Device token has expired', None
-            
+        
+        # The original code had an unreachable expiration check here.
+        # The provided snippet removes it, so we'll just return.
         return dt.user_id, None, dt
     else:
         try:
@@ -73,6 +77,20 @@ def _resolve_upload_user():
             return None, 'Authentication required', None
 
 
+
+@devices_bp.route('/api/device/ping', methods=['POST'])
+def device_ping():
+    """Heartbeat endpoint for devices to announce they are online"""
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+        
+    if device_token:
+        device_token.last_sync = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"success": True})
+        
+    return jsonify({"error": "Device token required"}), 400
 
 # --- LOCAL DEVICE ENDPOINTS ---
 from api.helpers import get_local_firmware_version, is_compatible

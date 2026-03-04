@@ -32,36 +32,45 @@ Your ESP32-S3 should have the following structure:
 
 ```
 /
-├── boot.py             # Quick status blink
-├── main.py             # Main logging loop (Core 0)
-├── secrets.py          # WiFi and API configuration
+├── boot.py             # Internal bootstrapper
+├── main.py             # Entry point (Starts Heartbeat thread)
+├── device.json         # (Auto-generated) WiFi & API credentials
 ├── drivers/
 │   ├── gps.py          # Neo-M8N driver
 │   ├── bmi323.py       # IMU driver
 │   └── sdcard.py       # SPI SD Card driver
 └── lib/
-    ├── wifi_manager.py # Multi-network WiFi management
-    ├── led_manager.py  # Neopixel animations
+    ├── wifi_manager.py # Multi-network WiFi management (Stealth)
+    ├── led_manager.py  # Neopixel & Blue LED status patterns
     ├── session_manager.py # Storage abstraction (SD vs Flash)
     ├── track_engine.py # Lap/Sector logic
-    ├── miniserver.py   # Web API (Core 1)
-    └── ble_provisioning.py # BLE Setup
+    ├── uploader.py      # background IoT Heartbeat & Upload thread
+    └── captive_portal.py # Magic Link provisioning portal
 ```
 
 ---
 
-## 🔧 **Configuration**
+## 🔧 **Configuration (Direct-to-Cloud)**
 
-1. **WiFi**: Edit `secrets.py` with your credentials or use the BLE/Web Setup.
-2. **SD Card**: Ensure a FAT32 formatted MicroSD card is inserted. If missing, the system will fallback to Internal Flash (`/data/learning`).
+1. **Magic Link Provisioning**:
+    *   Flash the device and reboot.
+    *   Connect your phone to the `RS-Core-XXXX` hotspot.
+    *   Navigate back to the web app (`racesense.in`) and click **"Set up Device"**.
+    *   The web app will automatically push the `device.json` credentials to the device.
+2. **Manual Config**: (Fallback) You can manually create `/data/metadata/device.json` with the following structure:
+    ```json
+    {"ssid": "...", "pass": "...", "api_url": "https://racesense.in/api/upload", "token": "rsk_..."}
+    ```
 
 ---
 
-## 📊 **Dual-Core Architecture**
+## 📊 **Dual-Core IoT Architecture**
 
 Racesense V2 utilizes both cores of the ESP32-S3:
 - **Core 0**: Handles time-critical tasks (GPS updates, IMU sampling, SD logging).
-- **Core 1**: Handles connectivity and management (Web Server, API requests).
+- **Core 1**: Handles background IoT services:
+    - **Heartbeat Thread**: POSTs every 15s to the cloud.
+    - **Session Streamer**: Automatically uploads CSV logs to the cloud.
 
 This ensures that network activity does not cause "gaps" in your high-frequency telemetry data.
 

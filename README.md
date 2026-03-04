@@ -38,11 +38,15 @@ cd firmware
 ./deploy.sh --sync
 ```
 
-## ESP32 Endpoints
+## Cloud IoT API (Direct-to-Cloud)
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/status` | GET | Device status, storage, active track |
-| `/list` | GET | List logged sessions |
-| `/download/<file>` | GET | Download session CSV |
-| `/track/set` | POST | Push track metadata |
-| `/track/status` | GET | Current track state |
+| `/api/device/ping` | POST | Heartbeat endpoint (15s interval). Validates device activity. |
+| `/api/upload` | POST | Streamed CSV upload for logging data. |
+| `/api/devices` | GET | (Frontend) Pulls latest device heartbeats to show "Connected" status. |
+
+## Feature Status
+- [x] **Stealth Provisioning**: Pair without disconnecting mobile data.
+- [x] **Background Heartbeat**: 15s interval asynchronous health checks.
+- [x] **Auto-Upload**: Automatic session streaming to cloud.
+- [x] **Cloud Decoupling**: Frontend polling is purely cloud-based.

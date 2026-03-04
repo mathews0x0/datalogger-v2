@@ -3,6 +3,7 @@ import machine
 import time
 import os
 import gc
+import network
 import _thread
 
 # --- SAFE BOOT WINDOW ---
@@ -20,7 +21,6 @@ from lib.session_manager import SessionManager
 from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
 from lib.wifi_manager import connect_or_ap
-from lib.miniserver import MiniServer
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_LED_STATUS = 4   # Neopixel LED_DATA
@@ -39,10 +39,9 @@ PIN_DEBUG_LED = 2    # Blue Debug LED
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
     
-    # 1. LED Manager and Onboard Debug LED
+    # 1. LED Manager
     led = LEDManager(PIN_LED_STATUS, count=16) # 16 LED Matrix
     led.animation_boot(500) 
-    onboard_led = machine.Pin(PIN_DEBUG_LED, machine.Pin.OUT)
     
     # 2. Power Stability Delay
     print("Stabilizing power...")
@@ -93,33 +92,28 @@ def setup():
 
     # 9. WiFi (STA or AP)
     print("Starting WiFi Radio...")
-    mode, ip = connect_or_ap()
+    mode, ip = connect_or_ap(led)
     print(f"WiFi Status: {mode}, IP: {ip}")
 
     if mode == 'AP':
         # No saved WiFi config — launch captive portal for setup
         print("[System] No WiFi config. Starting Captive Portal...")
         from lib.captive_portal import start_captive_portal
-        start_captive_portal()  # Blocks until user submits, then reboots
+        start_captive_portal(led)  # Blocks until user submits, then reboots
         # Will never reach here — machine.reset() is called in portal
 
     # 10. Auto-Upload in background (STA mode only)
     try:
-        from lib.uploader import upload_all
-        _thread.start_new_thread(upload_all, (sm, onboard_led))
-        print("[Upload] Background upload started")
+        from lib.uploader import background_task
+        _thread.start_new_thread(background_task, (sm, None)) # LED handled by LEDManager
+        print("[Upload] Background task started")
     except Exception as e:
         print(f"[Upload] Skip: {e}")
 
-    # 11. Start MiniServer (Second Core)
-    server = MiniServer(sm, led=onboard_led, gps_state=gps, track_engine=track_eng)
-    _thread.start_new_thread(server.start, ())
-    print("Server: Listening in background (Core 1)")
-
-    return led, onboard_led, gps, imu, sm, track_eng, mode, vbat_adc
+    return led, gps, imu, sm, track_eng, mode, vbat_adc
 
 def main_loop():
-    led, onboard_led, gps, imu, sm, track_eng, wifi_mode, vbat_adc = setup()
+    led, gps, imu, sm, track_eng, wifi_mode, vbat_adc = setup()
     
     # Debug LED for AP Mode / Status
     led_timer = 0
@@ -250,19 +244,13 @@ def main_loop():
             # 9. Status LED Blink Patterns (GPIO 2)
             led_timer += 1
             if wifi_mode == "AP":
-                # AP Mode: Fast blink (5Hz)
-                onboard_led.value(1 if led_timer % 2 == 0 else 0)
-            elif base_state == "SEARCHING":
-                # Searching for GPS: Slow blink (1Hz)
-                onboard_led.value(1 if led_timer % 10 < 5 else 0)
-            elif base_state == "LOGGING":
-                # Logging: Solid On
-                onboard_led.value(1)
-            elif base_state == "PAUSED":
-                # Paused in Pits: Very slow breath-like blink (0.5Hz)
-                onboard_led.value(1 if led_timer % 20 < 10 else 0)
+                led.update_onboard_led("PAIRING")
             else:
-                onboard_led.value(0)
+                # Real-time STA status
+                if network.WLAN(network.STA_IF).isconnected():
+                    led.update_onboard_led("CONNECTED")
+                else:
+                    led.update_onboard_led("CONNECTING") # 2Hz pattern
                 
             if led_timer % 10 == 0:
                 print(f"[Loop Heartbeat] Wifi: {wifi_mode} | State: {base_state} | Timer: {led_timer} | Valid: {fix.get('valid')}")

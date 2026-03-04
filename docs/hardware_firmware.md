@@ -18,10 +18,13 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 *   **Battery**: ADC IO8 for voltage monitoring (VBAT-SENSE). supports 1S/2S LiPo.
 *   **Indicators**: 
     *   16x LED Neopixel Matrix (Main status & lap feedback).
-    *   Blue Debug LED (GPIO 2).
+    *   **Blue Debug LED (GPIO 2)**:
+        *   **Pairing Mode**: 3Hz blink (2s) + 1s OFF.
+        *   **Connecting**: 2Hz continuous blink.
+        *   **Connected**: Steady ON (Heartbeat active).
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
-    *   2.4GHz WiFi (Configuration & Auto-Sync).
+    *   2.4GHz WiFi with **Stealth Provisioning** (OS probe suppression for Success/204).
 
 ---
 
@@ -32,29 +35,30 @@ The firmware is written in **MicroPython (v1.22+)** and utilizes both ESP32 core
 ### **Dual-Core Task Split**
 1.  **Core 0 (Telemetry Loop)**:
     *   10Hz target loop frequency.
-    *   GPS updates & NMEA parsing.
+    *   GPS updates & NMEA parsing (with `ntptime` synchronization).
     *   IMU sampling (Accel/Gyro).
     *   Track crossing detection (Lap/Sectors).
     *   Syncing to SD Card (Streaming write + `flush` every 1s).
 2.  **Core 1 (Support Services)**:
-    *   `MiniServer`: Web API for local status checks and configuration.
-    *   `WiFiManager`: Auto-connect to known networks or launch Captive Portal.
-    *   `Uploader`: Background thread that pushes files to the cloud when WiFi is connected.
+    *   **IoT Background Thread**: Continuous loop (`uploader.py`) that sends a **Heartbeat Ping** every 15s to the cloud.
+    *   **Asynchronous Uploader**: Automatically sweeps `data/session_logs/` and POSTs CSVs directly to `/api/upload` via `rsk_` bearer tokens.
+    *   **Stealth Portal**: Captive portal logic that suppresses iOS/Android connectivity popups to maintain background pairing.
 
 ---
 
 ## 📊 Data Logging Logic
 
-### **The State Machine**
-*   **SEARCHING**: GPS is looking for a lock. Blue LED blinks slowly (1Hz).
+### **The State Machine (Main Loop)**
+*   **SEARCHING**: GPS is looking for a lock.
 *   **PAUSED**: Fixed position but velocity < 5km/h (Usually in the pits).
 *   **LOGGING**: Speed > 10km/h and GPS fix is valid. Recording active.
 *   **CALIBRATING**: Stationary and upright for >10s. Calibrates IMU offsets.
-*   **STORAGE_CRITICAL**: Storage usage > 95%. LED Matrix blinks RED.
+*   **STORAGE_CRITICAL**: Storage usage > 95%.
 
 ### **CSV Log Format**
 Logs are saved in the `/sd/learning/` or `/data/learning/` directory.
 Header: `time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,vbat`
+Timestamp format: Unix Epoch (synchronized via **NTP** on boot).
 
 ---
 

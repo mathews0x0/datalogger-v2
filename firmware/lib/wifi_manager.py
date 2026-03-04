@@ -3,6 +3,7 @@ import network
 import time
 import json
 import ubinascii
+import ntptime
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
 
@@ -23,7 +24,7 @@ def load_device_config():
         return {}
 
 
-def connect_or_ap():
+def connect_or_ap(led=None):
     """
     Try to connect to saved WiFi. If no config or connection fails,
     fall back to AP mode with a unique SSID for captive portal setup.
@@ -39,45 +40,66 @@ def connect_or_ap():
     if ssid:
         # Try STA mode
         print(f'[WiFi] Connecting to: {ssid}')
+        if led: led.update_onboard_led("CONNECTING")
+        
         sta = network.WLAN(network.STA_IF)
         sta.active(True)
         sta.connect(ssid, password)
         
-        # Wait up to 15 seconds
-        for i in range(30):
+        # Wait up to 30 seconds (300 * 0.1s)
+        for i in range(300):
+            if led: led.update_onboard_led("CONNECTING") # Keep blinking
             if sta.isconnected():
                 ip = sta.ifconfig()[0]
                 print(f'[WiFi] Connected! IP: {ip}')
+                if led: led.update_onboard_led("CONNECTED")
+                
+                # Sync time for HTTPS certificates
+                try:
+                    print('[WiFi] Syncing time via NTP...')
+                    ntptime.settime()
+                    print(f'[WiFi] Time synced: {time.gmtime()}')
+                except Exception as e:
+                    print(f'[WiFi] NTP Sync failed: {e}')
+
                 # Disable AP if it was on
                 ap = network.WLAN(network.AP_IF)
                 ap.active(False)
                 return ('STA', ip)
-            time.sleep(0.5)
+            time.sleep(0.1)
         
         print('[WiFi] STA connection failed, falling back to AP mode')
         sta.active(False)
     
     # AP Mode fallback
-    return start_ap_mode()
+    if led: led.update_onboard_led("PAIRING")
+    return start_ap_mode(led)
 
 
-def start_ap_mode():
+def start_ap_mode(led=None):
     """Start Access Point with unique name derived from MAC."""
-    # Disable STA
+    # Reset radio for clean state
     sta = network.WLAN(network.STA_IF)
     sta.active(False)
+    ap = network.WLAN(network.AP_IF)
+    ap.active(False)
+    time.sleep(0.1)
     
     ap_name = _get_unique_ap_name()
-    ap = network.WLAN(network.AP_IF)
     ap.active(True)
-    ap.config(essid=ap_name, password='racesense', authmode=3)  # WPA2
     
-    # Wait for AP to be active
-    for _ in range(10):
+    # Explicit config for better visibility/compatibility
+    # authmode 3 is WPA2-PSK
+    ap.config(essid=ap_name, password='racesense', authmode=3)
+    
+    # Wait for AP to be active with high-freq LED updates
+    print(f'[WiFi] Starting AP: {ap_name}...')
+    for _ in range(50): # 5 seconds
+        if led: led.update_onboard_led("PAIRING")
         if ap.active():
             break
-        time.sleep(0.5)
+        time.sleep(0.1)
     
     ip = ap.ifconfig()[0]
-    print(f'[WiFi] AP Mode: {ap_name} | IP: {ip} | Password: racesense')
+    print(f'[WiFi] AP Mode Active: {ap_name} | IP: {ip}')
     return ('AP', ip)

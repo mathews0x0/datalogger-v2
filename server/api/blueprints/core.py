@@ -7,6 +7,10 @@ from datetime import datetime
 from api.models import db, User, Job
 from api.blueprints.devices import _resolve_upload_user
 import api.config as config
+import subprocess
+import sys
+from api.helpers import register_new_sessions
+import traceback
 
 core_bp = Blueprint('core_bp', __name__)
 
@@ -78,30 +82,15 @@ def upload_file():
         with open(save_path, 'w') as f:
             f.write(content)
 
-        skip_analysis = data.get('skip_analysis', False)
-        
-        if not skip_analysis:
-            # Queue analysis job
-            try:
-                job = Job(
-                    user_id=user_id,
-                    type='analysis',
-                    input_data=json.dumps({"csv_path": str(save_path)})
-                )
-                db.session.add(job)
-                db.session.commit()
-                print(f"[Upload] Queued analysis job {job.id} for user {user_id}")
-            except Exception as ae:
-                print(f"[Upload] Failed to queue analysis job: {ae}")
-        else:
-            print(f"[Upload] Saved {safe_name} to learning folder for user {user_id} (skip_analysis=True)")
+        # Phase 2: Save the file for manual processing on the 'Analyze' tab.
+        print(f"[Upload] Saved {safe_name} to learning folder for user {user_id}")
 
         # Update last_sync on device token
         if device_token:
             device_token.last_sync = datetime.utcnow()
             db.session.commit()
 
-        return jsonify({"success": True, "filename": safe_name, "auto_analysis": True})
+        return jsonify({"success": True, "filename": safe_name})
 
     except Exception as e:
         print(f"Upload Error: {e}")

@@ -2080,3 +2080,113 @@ To systematically resolve these issues, 7 explicit execution prompts were genera
     - **Impact:** `git push/fetch` operations are now transparent (no prompts), while Production access remains secured by a mandatory passphrase.
 
 **Status:** ✅ **Complete.** Development velocity increased; Production security maintained.
+
+---
+
+## 41. Infrastructure: Universal Stealth Provisioning & LED Status Indicators (2026-03-04)
+
+**Objective:** Achieve a zero-friction "Magic Link" provisioning experience and provide clear device state feedback via the onboard GPIO 2 LED.
+
+### Key Implementation Details:
+
+1.  **Stealth Provisioning (Captive Portal):**
+    *   **Universal Probe Suppression:** Implemented handlers for Apple, Android, and Windows to return success/204 codes. This prevents intrusive captive portal popups while keeping the mobile device connected to the RS-Core AP.
+    *   **Magic Link Parsing:** Portal extracts `ssid`, `pass`, and `token` from URL parameters for one-click setup.
+
+2.  **LED Status Manager (GPIO 2):**
+    *   **Prioritized Logic:** Integrated GPIO 2 patterns into the `LEDManager` class.
+    *   **Patterns:** Pairing (2s of 3Hz pulsing / 1s OFF), Connecting (2Hz blink), Connected (Steady ON).
+    *   **Resolution Fix:** Increased polling frequency to **10Hz** across all modules for smooth pulses.
+
+3.  **WiFi Connection Logic:**
+    *   **30-Second Window:** Increased connection attempt timeout to 30s.
+    *   **Radio Reset:** Implemented a full STA/AP teardown before starting the Hotspot to ensure visibility.
+
+### Planned Provisioning Flow:
+
+1.  **Stealth Connection**: Mobile device joins `RS-Core-XXXX`. OS probes are suppressed (Success/204), preventing popups while maintaining the data connection.
+2.  **Magic Link Submission**: User clicks "Set up Device" in the web app. Browser sends `ssid`, `pass`, and `token` to the device portal via query parameters.
+3.  **Data Persistence**: Device writes credentials to `/data/metadata/device.json` and syncs to flash.
+4.  **Grace Period (15s)**: Device displays a success page and pauses for 15 seconds. This allows the user to manually toggle their mobile hotspot **ON**.
+5.  **Reboot & Transition**: Device performs a hardware reset.
+6.  **Connection Attempt (30s)**: Device tries to join the configured hotspot for 30s.
+    *   **Success**: Onboard LED = Steady ON. Device remains in STA mode.
+    *   **Failure**: Falls back to AP mode (Pairing). Onboard LED = 3Hz Pulse + 1s OFF.
+
+### Current Status: ✅ **Complete**
+
+**Resolution (2026-03-05):** 
+The credential save failure was identified as a MicroPython limitation: `os.makedirs(..., exist_ok=True)` is not supported on this port. This caused a silent exception during the Magic Link submission, skipping the JSON write. The logic was refactored to use nested `try/except os.mkdir()` calls. 
+
+**Verification:** The device now successfully parses the Magic Link, writes `/data/metadata/device.json`, waits 15s while pulsing the LED, reboots, and transitions from **2Hz Pulsing (Connecting)** to **Steady ON (Connected)** against a mobile hotspot. The Stealth Provisioning feature is fully operational.
+
+---
+
+## 42. Phase 9: IoT Architecture Refit — Direct-to-Cloud Pivot (2026-03-05)
+
+**Objective:** Transition the entire RS-Core hardware ecosystem from a brittle "Local Intranet Polling" model to a robust, asynchronous **"Direct-to-Cloud" (IoT) Architecture**. This redesign aims to completely eliminate local network discovery issues (especially AP isolation on mobile hotspots) and enable true remote monitoring.
+
+### Architecture Summary
+
+1. **Decommissioned Local MiniServer:**
+    *   Completely purged the blocking `miniserver.py` from the device firmware.
+    *   The RS-Core no longer hosts a local web server for the frontend to poll.
+2. **Cloud Heartbeat System:**
+    *   Introduced a continuous background thread in `uploader.py`.
+    *   The device now actively POSTs a heartbeat ping every 15 seconds to `/api/device/ping` using a secure Bearer token (`rsk_...`).
+    *   The server saves the `last_sync` timestamp in the newly deployed `device_tokens` database table.
+3. **Frontend decoupling:**
+    *   Ripped out thousands of lines of complex local IP scanning, subnet brute-forcing, and periodic pinging from `app.js`.
+    *   The web app now polls the *cloud* (`/api/devices`) every 15 seconds. If the cloud reports the device synced within the last 60 seconds, the UI lights up as "Connected".
+4. **Asynchronous Data Uploads:**
+    *   During active sessions, CSV logs are created and queued on the device flash.
+    *   The background thread automatically sweeps the `data/session_logs/` directory and POSTs the raw CSVs directly to `/api/upload`.
+    *   The backend strips out the legacy blocking auto-analysis logic and safely drops the raw CSVs into the user's `data/learning/usr_<id>` directory for asynchronous, manual human review via the 'Analyze' tab.
+
+### User Flow & Functional Overview
+
+*   **Setup:** The user bonds the device to their account via the offline "Magic Link" portal, saving their credentials and unique `rsk_` token onto the device.
+*   **Active Monitoring (Zero Config):** The rider turns on their mobile hotspot and rides. The device connects and starts pumping heartbeats to the cloud.
+*   **Remote Visibility:** A mechanic or friend logging into `racesense.in` from anywhere in the world will immediately see the "RS-Core Connected" badge because the UI queries the cloud DB, bypassing the rider's local network firewalls entirely.
+*   **Data Acquisition:** When a session ends, the device streams the log to the cloud. The remote mechanic clicks "Refresh" in the Analyze tab, sees the new CSV instantly appear in the cloud directory, and clicks manually process it.
+
+**Status:** ✅ **Complete.** The system is now a true IoT telemetry logger. The frontend and hardware are structurally decoupled and communicate exclusively via the secure web API.
+
+---
+
+## 43. IoT Cloud Architecture: Bug Identification & Resolution (2026-03-05)
+
+**Objective:** Diagnose and resolve the initial failure of heartbeats to appear in the frontend despite the device being online.
+
+### 1. Backend Authentication Blockade
+*   **Problem:** The server was returning `401 Unauthorized` for heartbeats.
+*   **Cause 1 (Middleware):** The `/api/device/ping` endpoint was not in the `public_paths` whitelist, causing the global JWT middleware to reject requests before the device token logic could run.
+*   **Cause 2 (JWT Configuration):** `flask-jwt-extended` was configured to only look for tokens in `cookies`. Device `Authorization: Bearer` headers were being ignored.
+*   **Cause 3 (Nginx Stripping):** The Nginx reverse proxy was not explicitly passing the `Authorization` header to the Gunicorn backend.
+*   **Resolution:** 
+    *   Whitelisted `/api/device/ping` in `middleware.py`.
+    *   Updated `api/__init__.py` to allow `JWT_TOKEN_LOCATION = ['cookies', 'headers']`.
+    *   Configured Nginx (`racesense_nginx.conf`) to `proxy_set_header Authorization $http_authorization`.
+
+### 2. Frontend Lifecycle & Parsing Issues
+*   **Problem:** The UI still showed "Device Offline" even after the 401s were fixed.
+*   **Cause 1 (Date Parsing):** SQLite's `datetime('now')` and Python's `isoformat()` produced space-separated strings (e.g., `2026-03-05 02:25:43`). Browsers like Safari require a strict ISO 8601 `T` separator for reliable `new Date()` parsing.
+*   **Cause 2 (Clock Skew):** Simple `now - lastSyncTime` logic failed if the client clock was slightly ahead of the server clock (resulting in negative numbers).
+*   **Cause 3 (Polling Termination):** The `pollCloudHeartbeat` loop would silently terminate if the `currentUser` was null (e.g., during logout or slow initialization).
+*   **Resolution:**
+    *   Standardized backend output to strict ISO 8601 with `T` and `Z` (UTC) in `models.py`.
+    *   Refactored `app.js` to use `Math.abs(now - lastSyncTime)` to handle skew.
+    *   Moved `setTimeout` to the top of the polling function so the loop restarts regardless of auth state.
+
+---
+
+## 44. Deployment Completion: UI Connectivity Confirmed (2026-03-05)
+
+**Status:** ✅ **VERIFIED IN PRODUCTION**
+
+The "Direct-to-Cloud" transition is officially operational.
+*   **Latency:** UI reacts to device status within 15s (polling interval).
+*   **Offline detection:** UI accurately reflects "Device Offline" after 60s of missed heartbeats.
+*   **Persistence:** Polling survives browser sessions and login/logout transitions.
+
+The system is now robust against local network isolation and mobile hotspot quirks.
