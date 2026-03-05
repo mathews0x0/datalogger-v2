@@ -45,26 +45,36 @@ class BMI323:
         self.i2c.writeto(self.address, data)
 
     def _init_sensor(self):
-        # 1. Soft Reset (Skipped for stability)
-        # 2. Dummy read (Skipped)
-        time.sleep(0.1)
+        # 1. Soft Reset
+        try:
+            self._write_word(self.REG_CMD, 0xDEAF)
+            time.sleep(0.1)
+        except:
+            pass
+            
+        # 2. Dummy read to wake serial interface
+        self._read_words(self.REG_CHIP_ID, 1)
         
         # 3. Check Chip ID
         cid = self._read_words(self.REG_CHIP_ID, 1)[0]
         if (cid & 0xFF) != self.CHIP_ID:
-            print("Warning: Unexpected Chip ID " + hex(cid))
+            print(f"Warning: Unexpected Chip ID {hex(cid)}")
             
-        # 4. Enable Accel, Gyro, Temp (Disable adv_power_save which blocks Gyro)
-        # Bit 3: temp_en=1 | Bit 2: gyr_en=1 | Bit 1: acc_en=1 | Bit 0: adv_power_save=0 -> 0x000E
-        self._write_word(self.REG_PWR_CTRL, 0x000E)
-        time.sleep(0.05)
+        # 4. Check for Errors
+        err = self._read_words(self.REG_ERR, 1)[0]
+        if err != 0:
+            print(f"IMU: Sensor Error Register: {hex(err)}")
+            
+        # 5. Enable Accel, Gyro, Temp (0x000F: All on, adv_power_save off)
+        self._write_word(self.REG_PWR_CTRL, 0x000F)
+        time.sleep(0.1)  # Settling delay for PLL
         
-        # 5. Configure Accel (100Hz, +/- 2g, Normal Mode)
+        # 6. Configure Accel (100Hz, +/- 2g, Normal Mode)
         self._write_word(self.REG_ACC_CONF, 0x2107) 
         
-        # 6. Configure Gyro (100Hz, +/- 2000dps, Normal Mode)
+        # 7. Configure Gyro (100Hz, +/- 2000dps, Normal Mode)
         self._write_word(self.REG_GYR_CONF, 0x2107)
-        time.sleep(0.05)
+        time.sleep(0.1)
 
     def get_accel(self):
         return self._read_words(self.REG_ACC_DATA_X, 3)

@@ -6,6 +6,8 @@ import gc
 import time
 import machine
 
+_dns_running = False  # Module-level flag for DNS thread shutdown
+
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
 
 # --- PREMIUM RACESENSE UI ---
@@ -140,13 +142,23 @@ def start_captive_portal(led=None, ap_ip='192.168.4.1'):
     s.listen(2)
     s.settimeout(0.1) # Shorter timeout for smoother LED blinking
     
+    start_time = time.ticks_ms()
+    timeout_ms = 60000 # 1 minute default
+    
     print('[Portal] Universal Magic Portal listening on port 80')
     
     while True:
+        # Safety Timeout: Kill portal if no connection within X minutes
+        if time.ticks_diff(time.ticks_ms(), start_time) > timeout_ms:
+            print('[Portal] Safety timeout reached. Shutting down WiFi.')
+            break
+
         if led: led.update_onboard_led("PAIRING")
         
         try:
             cl, addr = s.accept()
+            # Reset timeout if someone actually connects
+            start_time = time.ticks_ms() 
         except OSError: 
             # Timeout - loop back to update LED
             continue
@@ -239,23 +251,47 @@ def start_captive_portal(led=None, ap_ip='192.168.4.1'):
             )
             _send_response(cl, '200 OK', html)
             cl.close()
-            gc.collect()
-            
         except Exception as e:
+            print(f'[Portal] Request error: {e}')
             try: cl.close()
             except: pass
+    gc.collect()
+    # Signal DNS thread to stop
+    global _dns_running
+    _dns_running = False
+    time.sleep(1.5)  # Give DNS thread time to exit
+    # Ensure WiFi is off on exit
+    try: s.close()
+    except: pass
+    from lib.wifi_manager import stop_wifi
+    stop_wifi()
 
 def _dns_server(ip):
-    """Simple DNS hijack: all queries -> AP IP."""
+    """Simple DNS hijack: all queries -> AP IP. Exits when _dns_running is False."""
+    global _dns_running
+    _dns_running = True
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(('0.0.0.0', 53))
+    s.settimeout(1.0)  # Non-blocking so we can check the shutdown flag
     ip_bytes = bytes([int(x) for x in ip.split('.')])
-    while True:
+    while _dns_running:
         try:
             data, addr = s.recvfrom(512)
             if len(data) < 12: continue
             resp = data[:2] + b'\x81\x80' + data[4:6] + data[4:6] + b'\x00\x00\x00\x00' + data[12:]
             resp += b'\xc0\x0c\x00\x01\x00\x01\x00\x00\x00\x3c\x00\x04' + ip_bytes
             s.sendto(resp, addr)
-        except: pass
+        except OSError:
+            pass  # Timeout — check flag and loop
+        except:
+            pass
+    try: s.close()
+    except: pass
+    print('[DNS] Thread exiting cleanly')
+
+def start_background_portal(led=None):
+    """Wrapper that starts AP mode and then the portal loop."""
+    from lib.wifi_manager import start_ap_mode
+    start_ap_mode(led)
+    start_captive_portal(led)

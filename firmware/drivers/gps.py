@@ -7,9 +7,12 @@ class GPS:
         self.last_fix = {
             'lat': None,
             'lon': None,
+            'altitude': 0.0,
             'speed_kmh': 0.0,
             'satellites': 0,
             'timestamp': None,
+            'date': None,
+            'gps_timestamp': '',
             'valid': False
         }
         
@@ -121,17 +124,30 @@ class GPS:
                     self.last_fix['speed_kmh'] = knots * 1.852
                 except:
                     pass
+            
+            # Parse date (field 9: ddmmyy)
+            if len(parts) > 9 and parts[9]:
+                self.last_fix['date'] = parts[9]
+            
+            # Build combined GPS timestamp string for CSV
+            if self.last_fix['timestamp'] and self.last_fix['date']:
+                # parts[1] is the HHMMSS.SS string. Keep decimals for 10Hz precision.
+                self.last_fix['gps_timestamp'] = f"{self.last_fix['date']}_{parts[1]}"
 
         # GGA: Fix Data (Satellites, Altitude)
         elif msg_id == 'GGA':
             # $GNGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
             # Index: 6=FixType, 7=Sats
-            if len(parts) < 8: return
-            
-            try:
-                self.last_fix['satellites'] = int(parts[7] or 0)
-            except:
-                pass
+            if len(parts) > 9:
+                try:
+                    self.last_fix['satellites'] = int(parts[7] or 0)
+                except:
+                    pass
+                # Parse altitude (field 9)
+                try:
+                    self.last_fix['altitude'] = float(parts[9] or 0)
+                except:
+                    pass
 
     def _dm_to_dd(self, val, hemi):
         """Convert DegMin (ddmm.mmmm) to Decimal Degrees"""

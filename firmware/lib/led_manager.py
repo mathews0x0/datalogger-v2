@@ -14,7 +14,7 @@ class LEDManager:
     3. Track Found (3s White Flash)
     4. Normal Logging/Search animations
     """
-    def __init__(self, pin=4, count=8, onboard_pin=2):
+    def __init__(self, pin=4, count=16, onboard_pin=2):
         self.pin = Pin(pin, Pin.OUT)
         self.np = neopixel.NeoPixel(self.pin, count)
         self.count = count

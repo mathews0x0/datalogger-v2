@@ -1,10 +1,11 @@
-# session_manager.py - Manages onboard flash storage only
 import os
 import time
+import _thread
 
 class SessionManager:
     def __init__(self, sd_mounted=False):
         """Initialize session storage on ESP32 or SD Card"""
+        self.lock = _thread.allocate_lock()
         self.sd_mounted = sd_mounted
         
         # Paths
@@ -78,19 +79,33 @@ class SessionManager:
             pass
 
     def get_log_file(self):
-        """Returns file path for new session on internal flash"""
-        # Generate filename based on timestamp
-        # ESP32 time() starts from boot, but GPS will update it
-        fname = f"sess_{time.time()}.csv"
-        return f"{self.active_dir}/{fname}"
+        """Returns file path for new session using incrementing counter.
+        Scans existing files to find the next available number.
+        """
+        with self.lock:
+            max_num = 0
+            try:
+                for f in os.listdir(self.active_dir):
+                    if f.startswith('sess_') and f.endswith('.csv'):
+                        try:
+                            num = int(f[5:-4])  # sess_NNN.csv -> NNN
+                            if num > max_num:
+                                max_num = num
+                        except ValueError:
+                            pass
+            except OSError:
+                pass
+            fname = f"sess_{max_num + 1:03d}.csv"
+            return f"{self.active_dir}/{fname}"
 
     def list_sessions(self):
         """List all session files stored on active storage"""
-        try:
-            files = os.listdir(self.active_dir)
-            return [f for f in files if f.endswith('.csv')]
-        except OSError:
-            return []
+        with self.lock:
+            try:
+                files = os.listdir(self.active_dir)
+                return [f for f in files if f.endswith('.csv')]
+            except OSError:
+                return []
     
     def get_session_data(self, filename):
         """Read session file content for cloud upload"""
@@ -105,13 +120,14 @@ class SessionManager:
     def delete_session(self, filename):
         """Delete session after successful cloud sync"""
         fpath = f"{self.active_dir}/{filename}"
-        try:
-            os.remove(fpath)
-            print(f"Deleted synced session: {filename}")
-            return True
-        except Exception as e:
-            print(f"Error deleting {filename}: {e}")
-            return False
+        with self.lock:
+            try:
+                os.remove(fpath)
+                print(f"Deleted synced session: {filename}")
+                return True
+            except Exception as e:
+                print(f"Error deleting {filename}: {e}")
+                return False
     
     def get_storage_info(self):
         """Get storage statistics for flash and SD card"""
@@ -146,3 +162,16 @@ class SessionManager:
                 pass
                 
         return info
+
+    def get_active_storage_info(self):
+        """Get storage stats for the active medium as a flat dict.
+        Returns: {'total_kb': N, 'used_kb': N, 'free_kb': N} or None
+        """
+        try:
+            mount = '/sd' if self.sd_mounted else '/'
+            stat = os.statvfs(mount)
+            total = stat[2] * stat[0] // 1024
+            free = stat[3] * stat[0] // 1024
+            return {'total_kb': total, 'used_kb': total - free, 'free_kb': free}
+        except:
+            return None

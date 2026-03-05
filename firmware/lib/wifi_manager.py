@@ -103,3 +103,13 @@ def start_ap_mode(led=None):
     ip = ap.ifconfig()[0]
     print(f'[WiFi] AP Mode Active: {ap_name} | IP: {ip}')
     return ('AP', ip)
+
+
+def stop_wifi():
+    """Safely disable both STA and AP interfaces."""
+    try:
+        network.WLAN(network.STA_IF).active(False)
+        network.WLAN(network.AP_IF).active(False)
+        print('[WiFi] Radio disabled (Silent Mode)')
+    except:
+        pass

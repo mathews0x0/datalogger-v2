@@ -82,15 +82,39 @@ def upload_file():
         with open(save_path, 'w') as f:
             f.write(content)
 
+        # Server-side rename: extract first GPS timestamp from CSV data
+        # Device sends simple counter names (sess_001.csv), server renames
+        # to sess_<unix_timestamp>.csv using the first GPS timestamp
+        final_name = safe_name
+        try:
+            lines = content.strip().split('\n')
+            if len(lines) >= 2:
+                first_data = lines[1].split(',')
+                gps_ts = first_data[0]  # e.g., "070226_123519" (ddmmyy_HHMMSS)
+                if '_' in gps_ts and len(gps_ts) >= 13:
+                    dd, mm, yy = int(gps_ts[0:2]), int(gps_ts[2:4]), int(gps_ts[4:6])
+                    hh, mi, ss = int(gps_ts[7:9]), int(gps_ts[9:11]), int(gps_ts[11:13])
+                    year = 2000 + yy
+                    dt = datetime(year, mm, dd, hh, mi, ss)
+                    unix_ts = int(dt.timestamp())
+                    new_name = f"sess_{unix_ts}.csv"
+                    new_path = config.get_user_learning_dir(user_id) / new_name
+                    if not new_path.exists():
+                        os.rename(str(save_path), str(new_path))
+                        final_name = new_name
+                        print(f"[Upload] Renamed {safe_name} -> {new_name}")
+        except Exception as rename_err:
+            print(f"[Upload] Rename skipped: {rename_err}")
+
         # Phase 2: Save the file for manual processing on the 'Analyze' tab.
-        print(f"[Upload] Saved {safe_name} to learning folder for user {user_id}")
+        print(f"[Upload] Saved {final_name} to learning folder for user {user_id}")
 
         # Update last_sync on device token
         if device_token:
             device_token.last_sync = datetime.utcnow()
             db.session.commit()
 
-        return jsonify({"success": True, "filename": safe_name})
+        return jsonify({"success": True, "filename": final_name})
 
     except Exception as e:
         print(f"Upload Error: {e}")

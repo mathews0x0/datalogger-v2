@@ -164,7 +164,14 @@ class TrackEngine:
             return "SECTOR_SLOW"  # Red
     
     def _haversine_m(self, lat1, lon1, lat2, lon2):
-        """Calculate distance in meters between two GPS points."""
+        """Calculate distance in meters between two GPS points.
+        Uses a fast rectangular pre-filter to skip expensive trig when clearly far away.
+        """
+        # Fast rectangular pre-filter: ~0.001° ≈ 111m at equator
+        # If delta is > 0.002° (~220m) in either axis, skip full haversine
+        if abs(lat2 - lat1) > 0.002 or abs(lon2 - lon1) > 0.002:
+            return 99999.0  # Clearly far away
+        
         R = 6371000  # Earth radius in meters
         
         lat1_r = math.radians(lat1)
