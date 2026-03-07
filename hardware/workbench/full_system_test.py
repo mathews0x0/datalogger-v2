@@ -1,214 +1,405 @@
 import machine, os, sys, time
 import gc
-
-# Add driver path
-sys.path.append('/firmware/drivers')
-from bmi323 import BMI323
-from gps import GPS
-
+import neopixel
 import math
 
-# --- CONFIGURATION ---
-# GPS: UART1, IO17 (TX), IO18 (RX)
-# IMU: I2C0, IO21 (SDA), IO39 (SCL)
-# SD:  Slot 2 (SCK=12, MOSI=11, MISO=13, CS=10)
-# LED: IO2 (Smart PWM Feedback)
+# ==========================================
+# STANDALONE PERIPHERAL DRIVERS
+# ==========================================
 
+class BMI270:
+    REG_CHIP_ID = 0x00
+    REG_ERR = 0x02
+    REG_STATUS = 0x03
+    REG_ACC_DATA_X = 0x0C
+    REG_GYR_DATA_X = 0x12
+    REG_INTERNAL_STATUS = 0x21
+    REG_ACC_CONF = 0x40
+    REG_ACC_RANGE = 0x41
+    REG_GYR_CONF = 0x42
+    REG_GYR_RANGE = 0x43
+    REG_INIT_CTRL = 0x59
+    REG_INIT_ADDR_0 = 0x5B
+    REG_INIT_DATA = 0x5E
+    REG_PWR_CONF = 0x7C
+    REG_PWR_CTRL = 0x7D
+    REG_CMD = 0x7E
+    CHIP_ID = 0x24
+    
+    def __init__(self, i2c, address=0x69):
+        self.i2c = i2c
+        self.address = address
+        self._init_sensor()
+
+    def _read_mem(self, reg, count):
+        return self.i2c.readfrom_mem(self.address, reg, count)
+
+    def _write_mem(self, reg, data):
+        if isinstance(data, int): data = bytes([data])
+        self.i2c.writeto_mem(self.address, reg, data)
+
+    def _signed(self, val):
+        return val if val < 32768 else val - 65536
+
+    def _init_sensor(self):
+        self._write_mem(self.REG_CMD, 0xB6)
+        time.sleep(0.3)
+        cid = self._read_mem(self.REG_CHIP_ID, 1)[0]
+        if cid != self.CHIP_ID:
+            print(f"Warning: BMI270 Chip ID mismatch: {hex(cid)}")
+        self._write_mem(self.REG_PWR_CONF, 0x00)
+        time.sleep(0.01)
+        # Load config file (mandatory for BMI270)
+        status = self._read_mem(self.REG_INTERNAL_STATUS, 1)[0] & 0x0F
+        if status != 0x01:
+            from micropython_bmi270.config_file import bmi270_config_file as cfg
+            self._write_mem(self.REG_INIT_CTRL, 0x00)
+            for page in range(256):
+                self._write_mem(0x5B, 0x00)
+                self._write_mem(0x5C, page)
+                time.sleep(0.03)
+                self.i2c.writeto_mem(self.address, 0x5E, bytes(cfg[page*32:(page+1)*32]))
+                time.sleep(0.00002)
+            self._write_mem(self.REG_INIT_CTRL, 0x01)
+            time.sleep(0.02)
+        self._write_mem(self.REG_PWR_CTRL, 0x0E)
+        time.sleep(0.01)
+        self._write_mem(self.REG_ACC_CONF, 0xA8)
+        self._write_mem(self.REG_ACC_RANGE, 0x01)
+        self._write_mem(self.REG_GYR_CONF, 0xA8)
+        self._write_mem(self.REG_GYR_RANGE, 0x00)
+        time.sleep(0.05)
+
+    def get_values(self):
+        raw_a = self._read_mem(self.REG_ACC_DATA_X, 6)
+        raw_g = self._read_mem(self.REG_GYR_DATA_X, 6)
+        return {
+            "acc": {
+                "x": self._signed(raw_a[0] | (raw_a[1] << 8)),
+                "y": self._signed(raw_a[2] | (raw_a[3] << 8)),
+                "z": self._signed(raw_a[4] | (raw_a[5] << 8))
+            },
+            "gyro": {
+                "x": self._signed(raw_g[0] | (raw_g[1] << 8)),
+                "y": self._signed(raw_g[2] | (raw_g[3] << 8)),
+                "z": self._signed(raw_g[4] | (raw_g[5] << 8))
+            }
+        }
+
+class GPS:
+    def __init__(self, uart):
+        self.uart = uart
+        self.last_fix = {
+            'lat': None, 'lon': None, 'altitude': 0.0,
+            'speed_kmh': 0.0, 'satellites': 0, 'timestamp': None,
+            'date': None, 'gps_timestamp': '', 'valid': False
+        }
+        
+    def send_ubx(self, msg_class, msg_id, payload):
+        header = b'\xb5\x62'
+        length = len(payload).to_bytes(2, 'little')
+        msg = bytes([msg_class, msg_id]) + length + payload
+        ck_a, ck_b = 0, 0
+        for b in msg:
+            ck_a = (ck_a + b) & 0xFF
+            ck_b = (ck_b + ck_a) & 0xFF
+        self.uart.write(header + msg + bytes([ck_a, ck_b]))
+
+    def set_baudrate(self, baud):
+        if baud == 115200:
+            payload = b'\x01\x00\x00\x00\xd0\x08\x00\x00\x00\xc2\x01\x00\x07\x00\x03\x00\x00\x00\x00\x00'
+        else:
+            payload = b'\x01\x00\x00\x00\xd0\x08\x00\x00' + baud.to_bytes(4, 'little') + b'\x07\x00\x03\x00\x00\x00\x00\x00'
+        self.send_ubx(0x06, 0x00, payload)
+
+    def set_rate(self, hz):
+        interval = int(1000 / hz)
+        self.send_ubx(0x06, 0x08, interval.to_bytes(2, 'little') + b'\x01\x00\x01\x00')
+        for msg in [b'\xf0\x03\x00', b'\xf0\x01\x00', b'\xf0\x05\x00', b'\xf0\x02\x00']:
+            self.send_ubx(0x06, 0x01, msg)
+
+    def update(self):
+        while self.uart.any():
+            try:
+                line = self.uart.readline()
+                if not line: break
+                line_str = line.decode('utf-8').strip()
+                if line_str.startswith('$'): self._parse_nmea(line_str)
+            except: pass
+        
+        # Construct full timestamp: DDMMYY_HHMMSS.SS
+        if self.last_fix.get('date') and self.last_fix.get('timestamp'):
+            self.last_fix['gps_timestamp'] = f"{self.last_fix['date']}_{self.last_fix['timestamp']}"
+        else:
+            self.last_fix['gps_timestamp'] = self.last_fix.get('timestamp', '0')
+            
+        return self.last_fix
+
+    def _chk(self, line):
+        try:
+            pt = line.split('*')
+            if len(pt) != 2: return False
+            content, checksum_received = pt[0][1:], int(pt[1], 16)
+            calc = 0
+            for char in content: calc ^= ord(char)
+            return calc == checksum_received
+        except: return False
+
+    def _parse_nmea(self, line):
+        if not self._chk(line): return 
+        parts = line.split(',')
+        msg_id = parts[0][3:]
+        if msg_id == 'RMC':
+            if len(parts) < 10: return
+            if parts[1]: self.last_fix['timestamp'] = parts[1]
+            valid = parts[2] == 'A'
+            self.last_fix['valid'] = valid
+            if valid:
+                self.last_fix['lat'] = self._dm_to_dd(parts[3], parts[4])
+                self.last_fix['lon'] = self._dm_to_dd(parts[5], parts[6])
+                try: self.last_fix['speed_kmh'] = float(parts[7] or 0) * 1.852
+                except: pass
+            if len(parts) > 9 and parts[9]: self.last_fix['date'] = parts[9]
+        elif msg_id == 'GGA':
+            if len(parts) > 9:
+                try: self.last_fix['satellites'] = int(parts[7] or 0)
+                except: pass
+                try: self.last_fix['altitude'] = float(parts[9] or 0)
+                except: pass
+
+    def _dm_to_dd(self, val, hemi):
+        if not val or not hemi: return None
+        try:
+            dot = val.find('.')
+            degrees, minutes = float(val[:dot-2]), float(val[dot-2:])
+            calc = degrees + (minutes / 60.0)
+            return -calc if hemi in ['S', 'W'] else calc
+        except: return None
+
+# ==========================================
+# MAIN TEST SCRIPT
+# ==========================================
+
+# --- CONFIGURATION ---
 PIN_LED = 2
 PIN_CS = 10
 PIN_SCK = 12
 PIN_MOSI = 11
 PIN_MISO = 13
+PIN_NEOPIXEL = 4
+NUM_PIXELS = 16
 
 print("="*50)
-print(" NATIVE FULL SYSTEM INTEGRATION TEST")
+print(" NATIVE FULL SYSTEM INTEGRATION TEST (STANDALONE)")
 print("="*50)
 
-# 1. Initialize LED (PWM for brightness control)
-led_pin = machine.Pin(PIN_LED, machine.Pin.OUT)
-led = machine.PWM(led_pin, freq=1000, duty=0)
+# 0. Initialize NeoPixel & Boot Animation
+np = neopixel.NeoPixel(machine.Pin(PIN_NEOPIXEL), NUM_PIXELS)
+print("[0] Booting Animation...")
+for i in range(NUM_PIXELS):
+    np[i] = (0, 0, 50)
+    np.write()
+    time.sleep_ms(30)
+for i in range(NUM_PIXELS):
+    np[i] = (0, 0, 0)
+    np.write()
+    time.sleep_ms(30)
+np.fill((0, 0, 50))
+np.write()
 
-# 2. Initialize SD Card (Native)
+# 1. Initialize LED
+led = machine.Pin(PIN_LED, machine.Pin.OUT)
+
+# 2. Initialize SD Card
 print("[1] Initializing Native SDCard...")
 sd = None
+sd_ok = False
 try:
-    sd = machine.SDCard(slot=2, width=1,
-                        sck=machine.Pin(PIN_SCK),
-                        mosi=machine.Pin(PIN_MOSI),
-                        miso=machine.Pin(PIN_MISO),
-                        cs=machine.Pin(PIN_CS))
+    sd = machine.SDCard(slot=2, width=1, sck=machine.Pin(PIN_SCK), mosi=machine.Pin(PIN_MOSI), miso=machine.Pin(PIN_MISO), cs=machine.Pin(PIN_CS))
     os.mount(sd, '/sd')
     print("    SD Card mounted at /sd")
+    sd_ok = True
 except Exception as e:
-    print(f"    CRITICAL: SD Native mount failed: {e}")
-    sys.exit(1)
+    print(f"    WARNING: SD Native mount failed: {e}")
 
-# 3. Initialize IMU (BMI323)
+# 2.5 SD Status Animation (5 Seconds)
+print("[1.5] SD Status Animation...")
+sd_color = (0, 50, 0) if sd_ok else (50, 0, 0)
+# Pulse both ends toward center for ~5 seconds
+for loop in range(10): 
+    for i in range(NUM_PIXELS // 2):
+        np[i] = sd_color
+        np[NUM_PIXELS - 1 - i] = sd_color
+        np.write()
+        time.sleep_ms(50)
+    for i in range(NUM_PIXELS // 2 - 1, -1, -1):
+        np[i] = (0, 0, 0)
+        np[NUM_PIXELS - 1 - i] = (0, 0, 0)
+        np.write()
+        time.sleep_ms(50)
+
+# 3. Initialize IMU (BMI270)
 imu = None
-print("[2] Initializing BMI323 IMU (I2C0)...")
+imu_ok = False
+print("[2] Initializing BMI270 IMU (I2C0)...")
 for i in range(5):
     try:
-        # Use 100kHz for stability on workbench jumpers
-        i2c0 = machine.I2C(0, sda=machine.Pin(21), scl=machine.Pin(39), freq=100000)
-        imu = BMI323(i2c0, address=0x69)
+        # Use 400kHz for full speed as per main.py
+        i2c0 = machine.I2C(0, sda=machine.Pin(21), scl=machine.Pin(39), freq=400000)
+        imu = BMI270(i2c0, address=0x69)
         print("    IMU Ready.")
+        imu_ok = True
         break
     except Exception as e:
         print(f"    IMU Init Attempt {i+1} failed: {e}")
-        time.sleep(0.2)
-else:
-    print("    CRITICAL: IMU could not be initialized after 5 attempts.")
-    try:
-        print("    Final Scan results:", [hex(a) for a in i2c0.scan()])
-    except:
-        pass
-    print("    Check hardware wiring/power!")
+        time.sleep(0.5)
 
-# 4. Initialize GPS (UART1)
+# 4. Initialize GPS
 print("[3] Initializing GPS (UART1)...")
 gps = None
 try:
-    # 1. Start at default 9600 to send config commands
     uart1 = machine.UART(1, baudrate=9600, tx=17, rx=18)
     gps = GPS(uart1)
-    
-    # 2. Shift to 115200 baud for 10Hz bandwidth
     print("    Shifting GPS to 115200 baud...")
     gps.set_baudrate(115200)
     time.sleep(0.1)
     uart1.init(baudrate=115200)
-    
-    # 3. Set update rate to 10Hz
     print("    Setting GPS rate to 10Hz...")
     gps.set_rate(10)
-    
-    print("    GPS Ready (115200 baud, 10Hz).")
+    print("    GPS Ready.")
 except Exception as e:
     print(f"    GPS Error: {e}")
 
 # 5. Setup CSV File
-def get_next_log_file():
-    base_name = "log_"
-    ext = ".csv"
-    idx = 1
+log_file = None
+if sd_ok:
+    def get_next_log_file():
+        idx = 1
+        existing = os.listdir('/sd')
+        while True:
+            fn = f"log_{idx:03d}.csv"
+            if fn not in existing: return f"/sd/{fn}"
+            idx += 1
+    log_file = get_next_log_file()
+    header = "gps_unix_time,lat,lon,sats,speed_kmh,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z\n"
+    print(f"[4] Preparing Log: {log_file}")
     try:
-        existing_files = os.listdir('/sd')
+        with open(log_file, "a") as f:
+            if os.stat(log_file)[6] == 0: f.write(header)
     except:
-        existing_files = []
-        
-    while True:
-        filename = f"{base_name}{idx:03d}{ext}"
-        if filename not in existing_files:
-            return f"/sd/{filename}"
-        idx += 1
-
-log_file = get_next_log_file()
-header = "timestamp,lat,lon,sats,speed_kmh,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z\n"
-
-print(f"[4] Preparing Log: {log_file}")
-try:
-    with open(log_file, "a") as f:
-        # If file is empty, write header
-        if os.stat(log_file)[6] == 0:
-            f.write(header)
-except:
-    with open(log_file, "w") as f:
-        f.write(header)
+        with open(log_file, "w") as f: f.write(header)
+else:
+    print("[4] Skipping Log Preparation (No SD Card).")
 
 # 6. Main Loop
 print("\n[LOGGING STARTED] Waiting for GPS Fix. Ctrl+C to stop.\n")
-
-# State variables for feedback
-led_breathe_step = 0
-prev_acc = {"x": 0, "y": 0, "z": 0}
-blink_state = False
-
-# Sync state
+anim_tick = 0
 last_sync_ms = time.ticks_ms()
 SYNC_INTERVAL_MS = 5000
+rtc_synced = False
 
 try:
-    # Open file once to avoid filesystem overhead on every loop
-    f = open(log_file, "a")
-    
+    f = open(log_file, "a") if sd_ok else None
     while True:
         start_ms = time.ticks_ms()
-        
-        # A. Update GPS
+        anim_tick += 1
         fix = gps.update() if gps else {}
         has_fix = fix.get('valid', False)
         
-        # B. Read IMU
-        try:
+        try: 
             imu_vals = imu.get_values() if imu else None
-        except Exception as e:
+            if imu_vals:
+                # Basic sanity check: if values are stuck at -32768 or 0, flag error
+                if imu_vals["gyro"]["z"] == -32768 or (imu_vals["acc"]["z"] == 0 and imu_vals["acc"]["x"] == 0):
+                    imu_ok = False
+                else:
+                    imu_ok = True
+            else: imu_ok = False
+        except: 
             imu_vals = None
+            imu_ok = False
 
-        if imu_vals:
-            acc = imu_vals["acc"]
-            gyr = imu_vals["gyro"]
-        else:
-            acc = {"x":0,"y":0,"z":0}
-            gyr = {"x":0,"y":0,"z":0}
-            
-        # C. LED Feedback Logic
-        if not has_fix:
-            # Mode: No Fix -> Slow Breathing (Sine Wave)
-            led_breathe_step = (led_breathe_step + 0.15) % (2 * math.pi)
-            brightness = int((math.sin(led_breathe_step) + 1) / 2 * 1023)
-            led.duty(brightness)
-        else:
-            # Mode: Fixed -> Fast Blink, Reactive to IMU
-            delta_x = abs(acc["x"] - prev_acc["x"])
-            delta_y = abs(acc["y"] - prev_acc["y"])
-            delta_z = abs(acc["z"] - prev_acc["z"])
-            total_delta = delta_x + delta_y + delta_z
-            
-            prev_acc = acc.copy()
-            blink_state = not blink_state
-            
-            if blink_state:
-                reactive_brightness = min(1023, 20 + int(total_delta / 10))
-                led.duty(reactive_brightness)
-            else:
-                led.duty(0)
+        acc = imu_vals["acc"] if imu_vals else {"x":0,"y":0,"z":0}
+        gyr = imu_vals["gyro"] if imu_vals else {"x":0,"y":0,"z":0}
 
-        # D. SD Logging Logic (Only if Fix is valid)
-        if has_fix:
+        # Status LED Heartbeat
+        led.value(1 if anim_tick % 2 == 0 else 0)
+
+        # ------------------------------------------
+        # REACTIVE NEOPIXEL ANIMATION
+        # ------------------------------------------
+        # 1. Base Color from System Health
+        if not has_fix: color = (30, 30, 0) # Searching: Dim Yellow
+        elif not imu_ok: color = (40, 0, 0) # IMU Error: Red
+        elif not sd_ok: color = (0, 0, 40) # SD Error: Blue
+        else: color = (0, 40, 0) # All Good: Green
+        
+        # 2. Shake Detection (Flash)
+        gyro_mag = math.sqrt(gyr["x"]**2 + gyr["y"]**2 + gyr["z"]**2)
+        is_shaking = gyro_mag > 5000 # Threshold for shaking
+        
+        # 3. Tilt Offset for Scanner
+        # Acc X/Y usually range +/- 16384 for 1g. 
+        # Normalize to +/- 4 pixels for offset
+        tilt_x = int((acc["x"] / 4000))
+        scanner_base = (anim_tick) % NUM_PIXELS
+        scanner_idx = (scanner_base + tilt_x) % NUM_PIXELS
+        
+        np.fill((0, 0, 0))
+        if is_shaking:
+            np.fill((50, 50, 50)) # Flash White on shake
+        else:
+            # Draw Scanner with 3-pixel tail
+            np[scanner_idx] = color
+            np[(scanner_idx - 1) % NUM_PIXELS] = [int(c * 0.4) for c in color]
+            np[(scanner_idx - 2) % NUM_PIXELS] = [int(c * 0.1) for c in color]
+        np.write()
+
+        if has_fix and sd_ok and f:
+            # Sync RTC once for high-res timestamps
+            if not rtc_synced:
+                try:
+                    d, t = fix['date'], fix['timestamp']
+                    year, month, day = 2000+int(d[4:6]), int(d[2:4]), int(d[0:2])
+                    hour, min, sec = int(t[0:2]), int(t[2:4]), int(t[4:6])
+                    machine.RTC().datetime((year, month, day, 0, hour, min, sec, 0))
+                    rtc_synced = True
+                except: pass
+            
+            # Form accurate Unix timestamp
+            t_now = time.time() + 946684800
+            ms = time.ticks_ms() % 1000
+            gps_ts = f"{t_now}.{ms:03d}"
+
             row = "{},{},{},{},{:.2f},{},{},{},{},{},{}\n".format(
-                fix.get('timestamp', '0'),
-                fix.get('lat', '0'),
-                fix.get('lon', '0'),
-                fix.get('satellites', '0'),
-                fix.get('speed_kmh', 0.0),
-                acc["x"], acc["y"], acc["z"],
-                gyr["x"], gyr["y"], gyr["z"]
+                gps_ts, fix.get('lat', '0'), fix.get('lon', '0'),
+                fix.get('satellites', '0'), fix.get('speed_kmh', 0.0),
+                acc["x"], acc["y"], acc["z"], gyr["x"], gyr["y"], gyr["z"]
             )
             try:
                 f.write(row)
-                
-                # Periodic Flush/Sync to protect against sudden power loss
                 if time.ticks_diff(time.ticks_ms(), last_sync_ms) > SYNC_INTERVAL_MS:
                     f.flush()
                     os.sync()
                     last_sync_ms = time.ticks_ms()
-            except Exception as e:
-                pass
-        
-        # E. Screen Update
+            except: pass
+
+        # Screen Output
         status_msg = "LOGGING" if has_fix else "WAITING FOR FIX"
-        print(f"[{status_msg}] TS: {fix.get('timestamp','-')} | Sats: {fix.get('satellites',0)} | AccZ: {acc.get('z', 0)}   ", end="\r")
-        
-        # F. Loop Timing (~10Hz)
-        elapsed = time.ticks_diff(time.ticks_ms(), start_ms)
-        sleep_time = max(0, 100 - elapsed)
-        time.sleep_ms(sleep_time)
+        # Display simplified timestamp for screen clarity
+        scr_ts = fix.get('timestamp', '-')
+        print(f"[{status_msg}] GPS: {scr_ts} | AccZ: {acc.get('z', 0)} | GyroX: {gyr.get('x',0)}   ", end="\r")
+
+        time.sleep_ms(max(0, 100 - time.ticks_diff(time.ticks_ms(), start_ms)))
 
 except KeyboardInterrupt:
     print("\n[STOPPING] Cleaning up...")
 finally:
-    led.duty(0)
-    try: f.close()
+    led.value(0)
+    np.fill((0, 0, 0))
+    np.write()
+    try:
+        if f: f.close()
     except: pass
     try: os.umount('/sd')
     except: pass

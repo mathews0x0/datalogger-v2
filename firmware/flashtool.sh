@@ -17,6 +17,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 RED='\033[0;31m'
+MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # --- 1. Find Tools ---
@@ -120,6 +121,12 @@ do_sync_source() {
         $MPREMOTE_CMD connect "$PORT" cp -r drivers :
     fi
     echo -e "${GREEN}Source Sync Complete!${NC}"
+    
+    # Install BMI270 config file library (required for IMU initialization)
+    echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
+    $MPREMOTE_CMD connect "$PORT" mkdir /lib/micropython_bmi270 2>/dev/null
+    $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/micropython_bmi270
+    echo -e "${GREEN}BMI270 Library Installed!${NC}"
 }
 
 do_sync_drivers_only() {
@@ -153,6 +160,13 @@ do_deploy_test() {
     $MPREMOTE_CMD connect "$PORT" cp "$src_file" :main.py
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Successfully deployed main.py!${NC}"
+        # Install BMI270 config file library if deploying full system test
+        if [[ "$src_file" == *"full_system_test"* ]]; then
+            echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
+            $MPREMOTE_CMD connect "$PORT" mkdir /lib/micropython_bmi270 2>/dev/null
+            $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/micropython_bmi270
+            echo -e "${GREEN}BMI270 Library Installed!${NC}"
+        fi
         echo -e "${CYAN}Rebooting device...${NC}"
         $MPREMOTE_CMD connect "$PORT" reset
     else

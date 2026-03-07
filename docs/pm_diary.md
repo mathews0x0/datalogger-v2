@@ -2190,3 +2190,28 @@ The "Direct-to-Cloud" transition is officially operational.
 *   **Persistence:** Polling survives browser sessions and login/logout transitions.
 
 The system is now robust against local network isolation and mobile hotspot quirks.
+
+---
+
+## 45. IMU Hardware Swap: BMI323 → BMI270 (2026-03-07)
+
+**Context:** During hardware integration testing, the BMI323 gyroscope was stuck at -32768 on all three axes. Accelerometer worked fine.
+
+### Diagnosis
+
+Ran 8 software recovery strategies on the live device including soft resets, power cycling, I2C pin drain, adv_power_save toggling, and low-power configs. All failed.
+
+**Root cause:** The BMI323's `INTERNAL_STATUS` register was permanently stuck at `NOT_INIT` (0x0000) — the sensor's internal boot firmware never loaded. Error Register `0x00A1` confirmed a fatal gyro PLL fault. This persisted even after full USB power cycles. The BMI323 module's gyroscope MEMS is hardware-dead.
+
+### Resolution
+
+Swapped to a **BMI270** module on the same I2C bus (address 0x69). Key difference: the BMI270 requires a mandatory ~8KB firmware config blob uploaded after every power-on.
+
+### Firmware Changes
+1. **`firmware/drivers/bmi270.py`** — Rewrote with config file upload using the community `micropython_bmi270` library's config blob. Same `get_values()` API as BMI323 for drop-in compatibility.
+2. **`firmware/main.py`** — Switched import, sensitivity constants (BMI270 at ±4g = 8192 LSB/g), and init call.
+3. **`hardware/workbench/full_system_test.py`** — Replaced inline BMI323 class with BMI270 equivalent.
+
+BMI323 driver files preserved (not deleted).
+
+**Status:** ✅ **Complete.** BMI270 producing valid accelerometer and gyroscope data on the live device.

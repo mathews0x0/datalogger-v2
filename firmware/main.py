@@ -16,7 +16,7 @@ print("=== BOOTING ===")
 
 # Drivers
 from drivers.gps import GPS
-from drivers.bmi323 import BMI323
+from drivers.bmi270 import BMI270
 from lib.session_manager import SessionManager
 from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
@@ -35,9 +35,9 @@ PIN_SD_CD = 3        # Card Detect
 PIN_BATTERY_ADC = 8  # VBAT-SENSE (Updated for S3 ADC1)
 PIN_DEBUG_LED = 2    # Blue Debug LED
 
-# --- IMU SENSITIVITY CONSTANTS (BMI323 at ±2g / ±2000dps) ---
-ACC_SENSITIVITY = 16384.0  # LSB/g (2^15 / 2)
-GYR_SENSITIVITY = 16.384   # LSB/dps (2^15 / 2000)
+# --- IMU SENSITIVITY CONSTANTS (BMI270 at ±4g / ±2000dps) ---
+ACC_SENSITIVITY = 8192.0   # LSB/g (2^15 / 4)
+GYR_SENSITIVITY = 16.4     # LSB/dps (2^15 / 2000)
 
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
@@ -77,8 +77,8 @@ def setup():
     imu = None
     try:
         i2c = machine.I2C(0, sda=machine.Pin(PIN_I2C_SDA), scl=machine.Pin(PIN_I2C_SCL), freq=400000)
-        imu = BMI323(i2c, address=0x69)
-        print("IMU: BMI323 Initialized Success")
+        imu = BMI270(i2c, address=0x69)
+        print("IMU: BMI270 Initialized Success")
     except Exception as e:
         print(f"IMU: Failed to initialize ({e})")
 
