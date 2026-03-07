@@ -298,6 +298,19 @@ last_sync_ms = time.ticks_ms()
 SYNC_INTERVAL_MS = 5000
 rtc_synced = False
 
+# --- New Animation State ---
+colors = [
+    (50, 0, 0),   # Red
+    (0, 50, 0),   # Green
+    (0, 0, 50),   # Blue
+    (40, 0, 40),  # Purple
+    (0, 40, 40),  # Cyan
+    (50, 20, 0)   # Orange
+]
+color_idx = 1 # Start with Green
+flash_ticks = 0
+last_shake_ms = 0
+
 try:
     f = open(log_file, "a") if sd_ok else None
     while True:
@@ -309,7 +322,6 @@ try:
         try: 
             imu_vals = imu.get_values() if imu else None
             if imu_vals:
-                # Basic sanity check: if values are stuck at -32768 or 0, flag error
                 if imu_vals["gyro"]["z"] == -32768 or (imu_vals["acc"]["z"] == 0 and imu_vals["acc"]["x"] == 0):
                     imu_ok = False
                 else:
@@ -326,33 +338,53 @@ try:
         led.value(1 if anim_tick % 2 == 0 else 0)
 
         # ------------------------------------------
-        # REACTIVE NEOPIXEL ANIMATION
+        # REACTIVE 4x4 NEOPIXEL ANIMATION
         # ------------------------------------------
-        # 1. Base Color from System Health
-        if not has_fix: color = (30, 30, 0) # Searching: Dim Yellow
-        elif not imu_ok: color = (40, 0, 0) # IMU Error: Red
-        elif not sd_ok: color = (0, 0, 40) # SD Error: Blue
-        else: color = (0, 40, 0) # All Good: Green
-        
-        # 2. Shake Detection (Flash)
+        # 1. Shake Detection & Color Cycling
         gyro_mag = math.sqrt(gyr["x"]**2 + gyr["y"]**2 + gyr["z"]**2)
-        is_shaking = gyro_mag > 5000 # Threshold for shaking
+        if gyro_mag > 8000 and time.ticks_diff(time.ticks_ms(), last_shake_ms) > 500:
+            color_idx = (color_idx + 1) % len(colors)
+            flash_ticks = 3 # Flash white for 3 ticks
+            last_shake_ms = time.ticks_ms()
         
-        # 3. Tilt Offset for Scanner
-        # Acc X/Y usually range +/- 16384 for 1g. 
-        # Normalize to +/- 4 pixels for offset
-        tilt_x = int((acc["x"] / 4000))
-        scanner_base = (anim_tick) % NUM_PIXELS
-        scanner_idx = (scanner_base + tilt_x) % NUM_PIXELS
+        # 2. Base Color & Tilt Logic
+        # Normal state color from list
+        current_color = colors[color_idx]
         
+        # If IMU Error or Searching, override logic for awareness
+        if not imu_ok: current_color = (40, 0, 0) # Force Red for error
+        
+        # Tilt offset (Normalized to +/- 1.5 range to keep 2-px center constrained)
+        # Acc range +/- 16384. Sensible tilt is around +/- 8000
+        offset_x = int(max(-1, min(1, acc["y"] / 5000))) # Tilt side-to-side
+        offset_y = int(max(-1, min(1, acc["x"] / 5000))) # Tilt front-to-back
+        
+        # Base center LEDs for 4x4 (row-major: 0..15)
+        # Center points are (1,1) and (2,1)
+        # Map to indexes: y*4 + x
+        p1_x, p1_y = 1 + offset_x, 1 + offset_y
+        p2_x, p2_y = 2 + offset_x, 1 + offset_y
+        
+        idx1 = (p1_y * 4) + p1_x
+        idx2 = (p2_y * 4) + p2_x
+
         np.fill((0, 0, 0))
-        if is_shaking:
-            np.fill((50, 50, 50)) # Flash White on shake
+        if flash_ticks > 0:
+            np.fill((50, 50, 50)) # Flash White 
+            flash_ticks -= 1
         else:
-            # Draw Scanner with 3-pixel tail
-            np[scanner_idx] = color
-            np[(scanner_idx - 1) % NUM_PIXELS] = [int(c * 0.4) for c in color]
-            np[(scanner_idx - 2) % NUM_PIXELS] = [int(c * 0.1) for c in color]
+            # Draw the 2 center LEDs
+            if 0 <= idx1 < 16: np[idx1] = current_color
+            if 0 <= idx2 < 16: np[idx2] = current_color
+            
+            # Subtle dim tail or search pulsing if no GPS fix
+            if not has_fix:
+                pulse = int(10 * math.sin(anim_tick / 2) + 10)
+                # Keep center visible but dim background
+                bg = (pulse, pulse, 0)
+                for i in range(16):
+                    if i != idx1 and i != idx2: 
+                        np[i] = bg
         np.write()
 
         if has_fix and sd_ok and f:
@@ -361,8 +393,8 @@ try:
                 try:
                     d, t = fix['date'], fix['timestamp']
                     year, month, day = 2000+int(d[4:6]), int(d[2:4]), int(d[0:2])
-                    hour, min, sec = int(t[0:2]), int(t[2:4]), int(t[4:6])
-                    machine.RTC().datetime((year, month, day, 0, hour, min, sec, 0))
+                    hour, minute, sec = int(t[0:2]), int(t[2:4]), int(t[4:6])
+                    machine.RTC().datetime((year, month, day, 0, hour, minute, sec, 0))
                     rtc_synced = True
                 except: pass
             

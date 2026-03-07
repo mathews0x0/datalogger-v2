@@ -41,6 +41,14 @@ if [[ "$ESPTOOL_CMD" == *"esptool"* && ! -x "$ESPTOOL_CMD" ]]; then
     ESPTOOL_CMD=$(find_tool esptool.py)
 fi
 
+# Robust mpremote selection (avoid broken versions)
+if [[ "$MPREMOTE_CMD" == *"mpremote"* ]]; then
+    # Prefer Python 3.9 version if it exists, as 3.14 seems broken in this environment
+    if [ -f "/Users/mj/Library/Python/3.9/bin/mpremote" ]; then
+        MPREMOTE_CMD="/Users/mj/Library/Python/3.9/bin/mpremote"
+    fi
+fi
+
 # --- 2. Port Management ---
 detect_port() {
     echo -ne "${CYAN}Detecting Port... ${NC}"
@@ -97,6 +105,7 @@ do_sync_source() {
     echo -e "${YELLOW}Syncing Firmware Source Files...${NC}"
     
     # Create necessary filesystem structure
+    $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data/metadata 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /sd 2>/dev/null
@@ -124,8 +133,8 @@ do_sync_source() {
     
     # Install BMI270 config file library (required for IMU initialization)
     echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
-    $MPREMOTE_CMD connect "$PORT" mkdir /lib/micropython_bmi270 2>/dev/null
-    $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/micropython_bmi270
+    $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
+    $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/
     echo -e "${GREEN}BMI270 Library Installed!${NC}"
 }
 
@@ -163,8 +172,8 @@ do_deploy_test() {
         # Install BMI270 config file library if deploying full system test
         if [[ "$src_file" == *"full_system_test"* ]]; then
             echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
-            $MPREMOTE_CMD connect "$PORT" mkdir /lib/micropython_bmi270 2>/dev/null
-            $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/micropython_bmi270
+            $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
+            $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/
             echo -e "${GREEN}BMI270 Library Installed!${NC}"
         fi
         echo -e "${CYAN}Rebooting device...${NC}"
