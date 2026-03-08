@@ -388,7 +388,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
 if __name__ == "__main__":
     try:
         main()
-    except Exception as e:
+    except Exception as e: 
         import sys
         print(f"CRITICAL SYSTEM ERROR: {e}")
         try:
