@@ -104,21 +104,27 @@ do_flash_os() {
 do_sync_source() {
     echo -e "${YELLOW}Syncing Firmware Source Files...${NC}"
     
-    # Step 1: Delete ALL existing user files on device (preserves MicroPython OS + device config)
-    echo -e "${YELLOW}Wiping all user files on device (keeping device.json)...${NC}"
+    # Step 1: Delete firmware code only (preserves /data/ user data: sessions, tracks, device config)
+    echo -e "${YELLOW}Wiping firmware code (keeping user data in /data/)...${NC}"
     $MPREMOTE_CMD connect "$PORT" exec "import os
 try:
-    def rm(d):
+    # Remove Python files in root (firmware code)
+    for f in os.listdir('/'):
+        if f.endswith('.py'):
+            try: os.remove('/' + f)
+            except: pass
+    # Remove lib/ and drivers/ directories (firmware code)
+    def rmtree(d):
         try:
-            if d.endswith('/device.json') or d == 'device.json': return
             if os.stat(d)[0] & 0x4000:
-                for f in os.listdir(d): rm(d+'/'+f)
-                if not d.endswith('/data/metadata') and not d.endswith('/data') and d != 'data/metadata' and d != 'data':
-                    os.rmdir(d)
+                for f in os.listdir(d): rmtree(d+'/'+f)
+                os.rmdir(d)
             else:
                 os.remove(d)
         except: pass
-    for f in os.listdir(): rm(f)
+    for d in ['/lib', '/drivers']:
+        try: rmtree(d)
+        except: pass
 except: pass"
     sleep 1
     
@@ -319,7 +325,7 @@ show_menu() {
     echo -e "${GREEN}==========================================${NC}"
     echo "1) First Setup (Wipe + OS + Flash Blink script)"
     echo "2) Hardware Test (Wipe + OS + Flash Full System Test)"
-    echo "3) Clean Sync (Delete all firmware on device & sync latest)"
+    echo "3) Clean Sync (Replace firmware code, keep user data)"
     echo "4) Nuke Sync (Full Wipe + Install OS + Sync latest)"
     echo "5) Deploy Full System Test (No OS Wipe)"
     echo "6) File Explorer (Browse device filesystem)"

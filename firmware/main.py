@@ -77,10 +77,15 @@ def setup():
     except Exception as e:
         print(f"IMU: Failed to initialize ({e})")
 
-    # 7. GPS (2KB RX buffer to prevent overflows during flash writes)
-    gps_uart = machine.UART(1, baudrate=115200, tx=machine.Pin(PIN_GPS_TX), rx=machine.Pin(PIN_GPS_RX), timeout=0, rxbuf=2048)
+    # 7. GPS — Must start at 9600 (module default on power-up), then shift to 115200
+    gps_uart = machine.UART(1, baudrate=9600, tx=machine.Pin(PIN_GPS_TX), rx=machine.Pin(PIN_GPS_RX), timeout=0, rxbuf=2048)
     gps = GPS(gps_uart)
-    print("GPS: Neo-M8N Initialized at 115200 baud (2KB Buffer)")
+    print("GPS: Neo-M8N — Shifting from 9600 → 115200 baud...")
+    gps.set_baudrate(115200)
+    time.sleep_ms(100)
+    gps_uart.init(baudrate=115200, tx=machine.Pin(PIN_GPS_TX), rx=machine.Pin(PIN_GPS_RX), timeout=0, rxbuf=2048)
+    gps.set_rate(10)
+    print("GPS: Neo-M8N Ready at 115200 baud / 10Hz (2KB Buffer)")
 
     # 8. Track Engine
     track_eng = TrackEngine()
@@ -286,13 +291,6 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
     log_file = sm.get_log_file()
     print(f"[System] Session file: {log_file}")
     
-    # State Machine Variables
-    current_state = "LOGGING"
-    calib_wait_start = 0
-    calib_samples = []
-    session_offset = {"x": 0.0, "y": 0.0, "z": 0.0}
-    gravity_axis = "z"
-    
     # RTC sync flag
     rtc_synced = False
     
@@ -337,58 +335,8 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                 }
             except:
                 pass
-        
-        # 4. State Machine
-        in_pit = False
-        if fix['valid']:
-            in_pit = track_eng.is_in_pit(fix['lat'], fix['lon'])
-        
-        if current_state == "LOGGING":
-            if in_pit:
-                current_state = "PAUSED"
-                print("[System] Entering Pit — PAUSED")
-        
-        elif current_state == "PAUSED":
-            if not in_pit:
-                current_state = "LOGGING"
-                print("[System] Exiting Pit — LOGGING")
-            
-            # Calibration Trigger — stationary, upright, in pit
-            upright = abs(acc['z']) > 0.8 and abs(acc['x']) < 0.3 and abs(acc['y']) < 0.3
-            if fix['valid'] and fix['speed_kmh'] < 2.0 and upright:
-                if calib_wait_start == 0:
-                    calib_wait_start = time.ticks_ms()
-                elif time.ticks_diff(time.ticks_ms(), calib_wait_start) > 10000:
-                    current_state = "CALIBRATING"
-                    calib_samples = []
-                    print("[System] Starting IMU Calibration...")
-            else:
-                calib_wait_start = 0
-        
-        elif current_state == "CALIBRATING":
-            calib_samples.append((acc['x'], acc['y'], acc['z']))
-            if len(calib_samples) >= 30:  # 3s at 10Hz
-                avg_x = sum(s[0] for s in calib_samples) / 30
-                avg_y = sum(s[1] for s in calib_samples) / 30
-                avg_z = sum(s[2] for s in calib_samples) / 30
-                
-                m = {"x": abs(avg_x), "y": abs(avg_y), "z": abs(avg_z)}
-                gravity_axis = max(m, key=m.get)
-                
-                session_offset = {"x": avg_x, "y": avg_y, "z": avg_z}
-                if avg_z > 0.8: session_offset["z"] -= 1.0
-                elif avg_z < -0.8: session_offset["z"] += 1.0
-                elif avg_x > 0.8: session_offset["x"] -= 1.0
-                elif avg_x < -0.8: session_offset["x"] += 1.0
-                elif avg_y > 0.8: session_offset["y"] -= 1.0
-                elif avg_y < -0.8: session_offset["y"] += 1.0
-                
-                current_state = "PAUSED"
-                calib_wait_start = 0
-                led.show_calibrated()
-                print(f"[System] Calibrated ({gravity_axis}-axis gravity)! Offset: {session_offset}")
 
-        # 5. Sync RTC to GPS once
+        # 4. Sync RTC to GPS once
         if not rtc_synced and fix.get('valid'):
             try:
                 d = fix['date']
@@ -405,19 +353,21 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
             except:
                 pass
 
-        # 6. Write to Log (apply calibration offset)
-        if f and fix['valid'] and current_state == "LOGGING":
+        # 5. Write to Log
+        # DEBUG: Print state every 10 loops
+        if loop_count % 10 == 0:
+            print(f"[DBG] valid={fix['valid']} lat={fix['lat']} lon={fix['lon']} sats={fix['satellites']} f={'OK' if f else 'NONE'}")
+        
+        if f and fix['valid']:
             t_now = time.time() + 946684800
             ms = time.ticks_ms() % 1000
             gps_ts = f"{t_now}.{ms:03d}00"
             
-            cal_ax = acc['x'] - session_offset['x']
-            cal_ay = acc['y'] - session_offset['y']
-            cal_az = acc['z'] - session_offset['z']
-            
-            log_line = f"{gps_ts},{fix['lat']},{fix['lon']},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{cal_ax:.4f},{cal_ay:.4f},{cal_az:.4f},{gyr['x']:.2f},{gyr['y']:.2f},{gyr['z']:.2f},{vbat:.2f}\n"
+            log_line = f"{gps_ts},{fix['lat']},{fix['lon']},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{acc['x']:.4f},{acc['y']:.4f},{acc['z']:.4f},{gyr['x']:.2f},{gyr['y']:.2f},{gyr['z']:.2f},{vbat:.2f}\n"
             f.write(log_line)
             f.flush()
+            if loop_count % 50 == 0:
+                print(f"[DBG] WROTE ROW: {log_line[:60]}...")
             
             # Track Engine
             try:
@@ -429,7 +379,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                 print(f"TrackEng Error: {e}")
 
         # 7. NeoPixel LED Update
-        base_state = current_state if fix['valid'] else "SEARCHING"
+        base_state = "LOGGING" if fix['valid'] else "SEARCHING"
         
         # Storage Check (every ~10s)
         if loop_count % 100 == 0:

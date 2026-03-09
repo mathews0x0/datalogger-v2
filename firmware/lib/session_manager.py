@@ -118,15 +118,18 @@ class SessionManager:
             return None
     
     def delete_session(self, filename):
-        """Delete session after successful cloud sync"""
+        """Archive session to uploaded/ folder after successful cloud sync"""
         fpath = f"{self.active_dir}/{filename}"
+        archive_dir = f"{self.active_dir}/uploaded"
         with self.lock:
             try:
-                os.remove(fpath)
-                print(f"Deleted synced session: {filename}")
+                try: os.mkdir(archive_dir)
+                except OSError: pass  # Already exists
+                os.rename(fpath, f"{archive_dir}/{filename}")
+                print(f"Archived synced session: {filename}")
                 return True
             except Exception as e:
-                print(f"Error deleting {filename}: {e}")
+                print(f"Error archiving {filename}: {e}")
                 return False
     
     def get_storage_info(self):
