@@ -104,13 +104,31 @@ do_flash_os() {
 do_sync_source() {
     echo -e "${YELLOW}Syncing Firmware Source Files...${NC}"
     
-    # Create necessary filesystem structure
+    # Step 1: Delete ALL existing user files on device (preserves MicroPython OS + device config)
+    echo -e "${YELLOW}Wiping all user files on device (keeping device.json)...${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "import os
+try:
+    def rm(d):
+        try:
+            if d.endswith('/device.json') or d == 'device.json': return
+            if os.stat(d)[0] & 0x4000:
+                for f in os.listdir(d): rm(d+'/'+f)
+                if not d.endswith('/data/metadata') and not d.endswith('/data') and d != 'data/metadata' and d != 'data':
+                    os.rmdir(d)
+            else:
+                os.remove(d)
+        except: pass
+    for f in os.listdir(): rm(f)
+except: pass"
+    sleep 1
+    
+    # Step 2: Create necessary filesystem structure
     $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data/metadata 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /sd 2>/dev/null
 
-    # Sync root files
+    # Step 3: Push all files fresh
     echo -e "${CYAN}Copying Python root files...${NC}"
     for f in *.py; do
         if [[ "$f" != "reset.py" && "$f" != "secrets.py" ]]; then
@@ -129,13 +147,22 @@ do_sync_source() {
         echo -e "${CYAN}Syncing drivers/...${NC}"
         $MPREMOTE_CMD connect "$PORT" cp -r drivers :
     fi
-    echo -e "${GREEN}Source Sync Complete!${NC}"
     
-    # Install BMI270 config file library (required for IMU initialization)
-    echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
+    # BMI270 config library (required for IMU initialization)
+    echo -e "${MAGENTA}Installing BMI270 config library...${NC}"
     $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/
-    echo -e "${GREEN}BMI270 Library Installed!${NC}"
+    
+    # Show saved device config (WiFi creds + token)
+    echo -e "${CYAN}Device Config:${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "
+try:
+    f=open('/data/metadata/device.json','r');print(f.read());f.close()
+except:
+    print('  (no device.json found — first-time setup needed)')
+"
+    
+    echo -e "${GREEN}Source Sync Complete!${NC}"
 }
 
 do_sync_drivers_only() {
@@ -206,7 +233,85 @@ except: pass"
 }
 
 
-# --- 4. Interactive Menu ---
+# --- 4. File Explorer ---
+do_file_explorer() {
+    echo -e "${CYAN}Connecting to device filesystem...${NC}"
+    local current_path="/"
+    
+    while true; do
+        echo ""
+        echo -e "${GREEN}===========================================${NC}"
+        echo -e "${GREEN} 📂 $current_path${NC}"
+        echo -e "${GREEN}===========================================${NC}"
+        
+        # Get listing via mpremote — outputs name, type, size
+        local listing
+        local py_script="import os; path=\"${current_path}\"; path='' if path=='/' else path; items=sorted(os.listdir(path if path else '/'))"
+        py_script="${py_script}; "
+        py_script="${py_script}[print(('D|'+n) if (os.stat((path+'/'+n) if path else ('/'+n))[0]&0x4000) else ('F|'+n+'|'+str(os.stat((path+'/'+n) if path else ('/'+n))[6]))) for n in items]"
+        listing=$($MPREMOTE_CMD connect "$PORT" exec "$py_script" 2>/dev/null)
+
+        if echo "$listing" | grep -q "^ERROR:"; then
+            echo -e "${RED}Error reading directory: $listing${NC}"
+            return
+        fi
+
+        # Parse and display
+        local dir_count=0
+        local dirs=()
+        
+        # Show parent navigation
+        if [ "$current_path" != "/" ]; then
+            echo -e "  ${YELLOW}[0]${NC}  📁 .."
+        fi
+        
+        # Process entries
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local type=$(echo "$line" | cut -d'|' -f1)
+            local name=$(echo "$line" | cut -d'|' -f2)
+            
+            if [ "$type" == "D" ]; then
+                dir_count=$((dir_count + 1))
+                dirs+=("$name")
+                echo -e "  ${YELLOW}[$dir_count]${NC}  📁 ${CYAN}${name}/${NC}"
+            else
+                local size=$(echo "$line" | cut -d'|' -f3)
+                # Human-readable size
+                if [ "$size" != "?" ] && [ "$size" -gt 1024 ] 2>/dev/null; then
+                    local kb=$((size / 1024))
+                    echo -e "       📄 ${name}  ${MAGENTA}(${kb} KB)${NC}"
+                else
+                    echo -e "       📄 ${name}  ${MAGENTA}(${size} B)${NC}"
+                fi
+            fi
+        done <<< "$listing"
+        
+        echo -e "${GREEN}===========================================${NC}"
+        echo -ne "Enter directory number (or ${YELLOW}q${NC} to quit): "
+        read nav
+        
+        if [ "$nav" == "q" ] || [ "$nav" == "Q" ]; then
+            break
+        elif [ "$nav" == "0" ] && [ "$current_path" != "/" ]; then
+            # Go up
+            current_path=$(dirname "$current_path")
+        elif [[ "$nav" =~ ^[0-9]+$ ]] && [ "$nav" -ge 1 ] && [ "$nav" -le "$dir_count" ]; then
+            local target_dir="${dirs[$((nav - 1))]}"
+            if [ "$current_path" == "/" ]; then
+                current_path="/$target_dir"
+            else
+                current_path="$current_path/$target_dir"
+            fi
+        else
+            echo -e "${RED}Invalid input.${NC}"
+            sleep 0.5
+        fi
+    done
+}
+
+
+# --- 5. Interactive Menu ---
 show_menu() {
     clear
     echo -e "${GREEN}==========================================${NC}"
@@ -217,83 +322,67 @@ show_menu() {
     echo "3) Clean Sync (Delete all firmware on device & sync latest)"
     echo "4) Nuke Sync (Full Wipe + Install OS + Sync latest)"
     echo "5) Deploy Full System Test (No OS Wipe)"
-    echo "6) Exit"
+    echo "6) File Explorer (Browse device filesystem)"
+    echo "7) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-6]: "
+    echo -ne "Select an option [1-7]: "
 }
 
 main() {
-    while true; do
-        show_menu
-        read choice
-        
-        # We need port for all options except 6
-        if [[ "$choice" != "6" ]]; then
-            echo ""
-            detect_port
-            free_port
-            # Try to force bootloader state if OS or Wipe selected
-            if [[ "$choice" == "1" || "$choice" == "2" || "$choice" == "4" ]]; then
-                echo -e "${YELLOW}Triggering Bootloader...${NC}"
-                $MPREMOTE_CMD connect "$PORT" exec "import machine; machine.bootloader()" 2>/dev/null
-                sleep 2
-            fi
+    show_menu
+    read choice
+    
+    # We need port for all options except 7
+    if [[ "$choice" != "7" ]]; then
+        echo ""
+        detect_port
+        free_port
+        # Try to force bootloader state if OS or Wipe selected
+        if [[ "$choice" == "1" || "$choice" == "2" || "$choice" == "4" ]]; then
+            echo -e "${YELLOW}Triggering Bootloader...${NC}"
+            $MPREMOTE_CMD connect "$PORT" exec "import machine; machine.bootloader()" 2>/dev/null
+            sleep 2
         fi
+    fi
 
-        case $choice in
-            1)
-                do_wipe
-                do_flash_os
-                do_deploy_test "$BLINK_SRC" "Blink"
-                echo -e "${GREEN}First Setup Complete!${NC}"
-                read -p "Press enter to return to menu..."
-                ;;
-            2)
-                do_wipe
-                do_flash_os
-                do_deploy_test "$FULL_TEST_SRC" "Full System Test"
-                echo -e "${GREEN}Hardware Test Setup Complete!${NC}"
-                read -p "Press enter to return to menu..."
-                ;;
-            3)
-                # For a clean sync, we wipe the python files using mpremote instead of erasing the whole OS partition
-                echo -e "${YELLOW}Deleting existing firmware files...${NC}"
-                $MPREMOTE_CMD connect "$PORT" exec "import os; 
-try:
-    def rm(d):
-        try:
-            if os.stat(d)[0] & 0x4000:
-                for f in os.listdir(d): rm(d+'/'+f)
-                os.rmdir(d)
-            else:
-                os.remove(d)
-        except: pass
-    for f in os.listdir(): rm(f)
-except: pass"
-                do_sync_source
-                read -p "Press enter to return to menu..."
-                ;;
-            4)
-                do_wipe
-                do_flash_os
-                do_sync_source
-                echo -e "${GREEN}Nuke Sync Complete!${NC}"
-                read -p "Press enter to return to menu..."
-                ;;
-            5)
-                do_deploy_test "$FULL_TEST_SRC" "Full System Test"
-                read -p "Press enter to return to menu..."
-                ;;
-            6)
-                echo "Exiting."
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}Invalid option.${NC}"
-                sleep 1
-                ;;
-        esac
-    done
+    case $choice in
+        1)
+            do_wipe
+            do_flash_os
+            do_deploy_test "$BLINK_SRC" "Blink"
+            echo -e "${GREEN}First Setup Complete!${NC}"
+            ;;
+        2)
+            do_wipe
+            do_flash_os
+            do_deploy_test "$FULL_TEST_SRC" "Full System Test"
+            echo -e "${GREEN}Hardware Test Setup Complete!${NC}"
+            ;;
+        3)
+            # Clean sync: do_sync_source wipes all user files then pushes fresh
+            do_sync_source
+            echo -e "${GREEN}Clean Sync Complete!${NC}"
+            ;;
+        4)
+            do_wipe
+            do_flash_os
+            do_sync_source
+            echo -e "${GREEN}Nuke Sync Complete!${NC}"
+            ;;
+        5)
+            do_deploy_test "$FULL_TEST_SRC" "Full System Test"
+            ;;
+        6)
+            do_file_explorer
+            ;;
+        7)
+            echo "Exiting."
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Invalid option.${NC}"
+            ;;
+    esac
 }
 
 # Run the menu

@@ -2206,3 +2206,42 @@ The system is now robust against local network isolation and mobile hotspot quir
 2.  **Deployment**: Executed the new option to successfully deploy the full system test script to `/dev/cu.usbmodem1234561`.
 
 **Status:** ✅ **Complete.** Test script is running on the device.
+
+---
+
+## 47. Firmware Refactor: Hardware Button Mode Selection + Dual NeoPixel (2026-03-10)
+
+**Context:** The existing firmware used a 30-second WiFi/speed-based decision window to auto-detect whether the device should Upload, Log, or Pair. This was fragile and unpredictable in the field. A new physical Sync Button (IO5) was added to the hardware, along with a second "Onboard" NeoPixel on IO6.
+
+### Decisions
+
+1.  **Hardware Button (IO5) as sole mode arbiter.** Replaced all speed-based, time-based, and WiFi-availability-based role detection with a simple 10-second button check at boot.
+2.  **Two Exclusive Modes:**
+    -   **LOGGING MODE** (default, no button press): All radios killed. Pure 10Hz telemetry capture + track feedback via NeoPixels. No WiFi, no uploader, no captive portal.
+    -   **SYNC MODE** (button pressed): No logging. WiFi enabled for upload. Long press (>3s) enters Pairing mode. Device stays in Sync Mode indefinitely (no auto-reboot).
+3.  **Dual NeoPixel:** Onboard NeoPixel (IO6, 1 LED) mirrors the first pixel of the Feedback NeoPixel (IO4, 16 LEDs) at all times.
+4.  **Simplified Animations:** Removed all complex patterns (KITT scanners, rainbow wheels, sweeps). All feedback is now simple solid colors, pulses, and fades. Speed and color communicate state.
+
+### Changes
+
+-   **`firmware/main.py`**: Complete rewrite of boot sequence and mode selection logic.
+-   **`firmware/lib/led_manager.py`**: Rewritten with dual NeoPixel support and simplified animation states.
+-   **`docs/hardware_firmware.md`**: Updated pinout, architecture, and state machine documentation.
+
+### LED Language
+
+| State | Animation | Color |
+|-------|-----------|-------|
+| Boot | 3 pulses | Blue |
+| Decision Window | Fast blink | Green (SD) / Red (no SD) |
+| Logging: Searching GPS | Slow pulse | Red |
+| Logging: Active | Solid | Green |
+| Logging: Paused (Pit) | Slow pulse | Amber |
+| Sync: Searching WiFi | Slow fade | Purple |
+| Sync: Uploading | Fast blink | Green |
+| Sync: Upload OK | Slow fade | Green |
+| Sync: Upload Failed | Slow fade | Red |
+| Pairing | Breathing fade | Blue |
+
+**Status:** ✅ **Complete.** Firmware refactored. Ready for on-device verification.
+

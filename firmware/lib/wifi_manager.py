@@ -88,9 +88,8 @@ def start_ap_mode(led=None):
     ap_name = _get_unique_ap_name()
     ap.active(True)
     
-    # Explicit config for better visibility/compatibility
-    # authmode 3 is WPA2-PSK
-    ap.config(essid=ap_name, password='racesense', authmode=3)
+    # Open AP — no password for frictionless pairing
+    ap.config(essid=ap_name, authmode=0)
     
     # Wait for AP to be active with high-freq LED updates
     print(f'[WiFi] Starting AP: {ap_name}...')
