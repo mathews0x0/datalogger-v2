@@ -162,20 +162,42 @@ do_deploy_test() {
         exit 1
     fi
 
-    # Try Soft Reset to clear buffers
-    $MPREMOTE_CMD connect "$PORT" soft-reset 2>/dev/null
-    sleep 2
-    
+    # Wipe python files like in Clean Sync to cut through busy loops
+    echo -e "${YELLOW}Deleting existing firmware files...${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "import os; 
+try:
+    def rm(d):
+        try:
+            if os.stat(d)[0] & 0x4000:
+                for f in os.listdir(d): rm(d+'/'+f)
+                os.rmdir(d)
+            else:
+                os.remove(d)
+        except: pass
+    for f in os.listdir(): rm(f)
+except: pass"
+
+    sleep 1
+
+    # Copy the test file as main
     $MPREMOTE_CMD connect "$PORT" cp "$src_file" :main.py
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}Successfully deployed main.py!${NC}"
+        
+        sleep 1 # Wait for USB to stabilize after file write
+        
         # Install BMI270 config file library if deploying full system test
         if [[ "$src_file" == *"full_system_test"* ]]; then
             echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
             $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
             $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/
             echo -e "${GREEN}BMI270 Library Installed!${NC}"
+            
+            # Also deploy the neopixel driver just in case the OS wipe killed it
+            echo -e "${MAGENTA}Ensuring neopixel library is present...${NC}"
+            $MPREMOTE_CMD connect "$PORT" cp "neopixel.py" : 2>/dev/null || true
         fi
+        
         echo -e "${CYAN}Rebooting device...${NC}"
         $MPREMOTE_CMD connect "$PORT" reset
     else
@@ -194,9 +216,10 @@ show_menu() {
     echo "2) Hardware Test (Wipe + OS + Flash Full System Test)"
     echo "3) Clean Sync (Delete all firmware on device & sync latest)"
     echo "4) Nuke Sync (Full Wipe + Install OS + Sync latest)"
-    echo "5) Exit"
+    echo "5) Deploy Full System Test (No OS Wipe)"
+    echo "6) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-5]: "
+    echo -ne "Select an option [1-6]: "
 }
 
 main() {
@@ -204,8 +227,8 @@ main() {
         show_menu
         read choice
         
-        # We need port for all options except 5
-        if [[ "$choice" != "5" ]]; then
+        # We need port for all options except 6
+        if [[ "$choice" != "6" ]]; then
             echo ""
             detect_port
             free_port
@@ -258,6 +281,10 @@ except: pass"
                 read -p "Press enter to return to menu..."
                 ;;
             5)
+                do_deploy_test "$FULL_TEST_SRC" "Full System Test"
+                read -p "Press enter to return to menu..."
+                ;;
+            6)
                 echo "Exiting."
                 exit 0
                 ;;

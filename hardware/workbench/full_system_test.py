@@ -187,6 +187,7 @@ PIN_SCK = 12
 PIN_MOSI = 11
 PIN_MISO = 13
 PIN_NEOPIXEL = 4
+PIN_NEOPIXEL_2 = 6
 NUM_PIXELS = 16
 
 print("="*50)
@@ -195,17 +196,24 @@ print("="*50)
 
 # 0. Initialize NeoPixel & Boot Animation
 np = neopixel.NeoPixel(machine.Pin(PIN_NEOPIXEL), NUM_PIXELS)
+np2 = neopixel.NeoPixel(machine.Pin(PIN_NEOPIXEL_2), NUM_PIXELS)
 print("[0] Booting Animation...")
 for i in range(NUM_PIXELS):
     np[i] = (0, 0, 50)
+    np2[i] = (0, 0, 50)
     np.write()
+    np2.write()
     time.sleep_ms(30)
 for i in range(NUM_PIXELS):
     np[i] = (0, 0, 0)
+    np2[i] = (0, 0, 0)
     np.write()
+    np2.write()
     time.sleep_ms(30)
 np.fill((0, 0, 50))
+np2.fill((0, 0, 50))
 np.write()
+np2.write()
 
 # 1. Initialize LED
 led = machine.Pin(PIN_LED, machine.Pin.OUT)
@@ -230,12 +238,18 @@ for loop in range(10):
     for i in range(NUM_PIXELS // 2):
         np[i] = sd_color
         np[NUM_PIXELS - 1 - i] = sd_color
+        np2[i] = sd_color
+        np2[NUM_PIXELS - 1 - i] = sd_color
         np.write()
+        np2.write()
         time.sleep_ms(50)
     for i in range(NUM_PIXELS // 2 - 1, -1, -1):
         np[i] = (0, 0, 0)
         np[NUM_PIXELS - 1 - i] = (0, 0, 0)
+        np2[i] = (0, 0, 0)
+        np2[NUM_PIXELS - 1 - i] = (0, 0, 0)
         np.write()
+        np2.write()
         time.sleep_ms(50)
 
 # 3. Initialize IMU (BMI270)
@@ -360,22 +374,28 @@ try:
         offset_y = int(max(-1, min(1, acc["x"] / 5000))) # Tilt front-to-back
         
         # Base center LEDs for 4x4 (row-major: 0..15)
-        # Center points are (1,1) and (2,1)
+        # Modified to start at (0,0) and (1,0)
         # Map to indexes: y*4 + x
-        p1_x, p1_y = 1 + offset_x, 1 + offset_y
-        p2_x, p2_y = 2 + offset_x, 1 + offset_y
+        p1_x, p1_y = 0 + offset_x, 0 + offset_y
+        p2_x, p2_y = 1 + offset_x, 0 + offset_y
         
         idx1 = (p1_y * 4) + p1_x
         idx2 = (p2_y * 4) + p2_x
 
         np.fill((0, 0, 0))
+        np2.fill((0, 0, 0))
         if flash_ticks > 0:
             np.fill((50, 50, 50)) # Flash White 
+            np2.fill((50, 50, 50))
             flash_ticks -= 1
         else:
             # Draw the 2 center LEDs
-            if 0 <= idx1 < 16: np[idx1] = current_color
-            if 0 <= idx2 < 16: np[idx2] = current_color
+            if 0 <= idx1 < 16: 
+                np[idx1] = current_color
+                np2[idx1] = current_color
+            if 0 <= idx2 < 16: 
+                np[idx2] = current_color
+                np2[idx2] = current_color
             
             # Subtle dim tail or search pulsing if no GPS fix
             if not has_fix:
@@ -385,7 +405,9 @@ try:
                 for i in range(16):
                     if i != idx1 and i != idx2: 
                         np[i] = bg
+                        np2[i] = bg
         np.write()
+        np2.write()
 
         if has_fix and sd_ok and f:
             # Sync RTC once for high-res timestamps
@@ -429,7 +451,9 @@ except KeyboardInterrupt:
 finally:
     led.value(0)
     np.fill((0, 0, 0))
+    np2.fill((0, 0, 0))
     np.write()
+    np2.write()
     try:
         if f: f.close()
     except: pass

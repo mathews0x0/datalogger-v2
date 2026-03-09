@@ -2193,25 +2193,16 @@ The system is now robust against local network isolation and mobile hotspot quir
 
 ---
 
-## 45. IMU Hardware Swap: BMI323 → BMI270 (2026-03-07)
-
-**Context:** During hardware integration testing, the BMI323 gyroscope was stuck at -32768 on all three axes. Accelerometer worked fine.
-
-### Diagnosis
-
-Ran 8 software recovery strategies on the live device including soft resets, power cycling, I2C pin drain, adv_power_save toggling, and low-power configs. All failed.
-
-**Root cause:** The BMI323's `INTERNAL_STATUS` register was permanently stuck at `NOT_INIT` (0x0000) — the sensor's internal boot firmware never loaded. Error Register `0x00A1` confirmed a fatal gyro PLL fault. This persisted even after full USB power cycles. The BMI323 module's gyroscope MEMS is hardware-dead.
-
-### Resolution
-
-Swapped to a **BMI270** module on the same I2C bus (address 0x69). Key difference: the BMI270 requires a mandatory ~8KB firmware config blob uploaded after every power-on.
-
-### Firmware Changes
-1. **`firmware/drivers/bmi270.py`** — Rewrote with config file upload using the community `micropython_bmi270` library's config blob. Same `get_values()` API as BMI323 for drop-in compatibility.
-2. **`firmware/main.py`** — Switched import, sensitivity constants (BMI270 at ±4g = 8192 LSB/g), and init call.
-3. **`hardware/workbench/full_system_test.py`** — Replaced inline BMI323 class with BMI270 equivalent.
-
-BMI323 driver files preserved (not deleted).
-
 **Status:** ✅ **Complete.** BMI270 producing valid accelerometer and gyroscope data on the live device.
+
+---
+
+## 46. Flashtool Enhancement: Rapid Test Deployment (2026-03-10)
+
+**Context:** The user requested a way to push test scripts (specifically `full_system_test.py`) to the device without completely wiping the OS, which is a slow process during rapid iteration.
+
+### Changes
+1.  **Flashtool Update**: Added Option `5) Deploy Full System Test (No OS Wipe)` to `flashtool.sh`. This option performs a soft-reset, copies `full_system_test.py` over as `main.py`, deploys the required BMI270 config blob out of `lib/`, and hard-resets the board.
+2.  **Deployment**: Executed the new option to successfully deploy the full system test script to `/dev/cu.usbmodem1234561`.
+
+**Status:** ✅ **Complete.** Test script is running on the device.
