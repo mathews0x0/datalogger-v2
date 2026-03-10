@@ -211,7 +211,7 @@ def run_sync_mode(led, sm, sync_btn, wdt):
             
             from lib.uploader import sync_all
             wdt.feed()
-            success = sync_all(sm, led)
+            success = sync_all(sm, led, wdt)
             
             if success:
                 print("[Sync] Upload Complete!")

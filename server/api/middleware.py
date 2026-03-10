@@ -32,6 +32,8 @@ def protect_api():
             '/api/auth/register',
             '/api/public/sessions',
             '/api/upload',
+            '/api/upload/chunk',
+            '/api/upload/complete',
             '/api/device/ping',
             '/api/devices/token'
         ]

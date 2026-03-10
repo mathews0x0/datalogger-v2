@@ -123,3 +123,125 @@ def upload_file():
         return jsonify({"error": str(e)}), 500
 
 
+import shutil
+
+@core_bp.route('/api/upload/chunk', methods=['POST'])
+def upload_chunk():
+    """Receive a single chunk of a session file from ESP32.
+    Metadata is passed in headers to avoid JSON overhead on the device.
+    """
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+
+    try:
+        filename = request.headers.get('X-Filename', '')
+        chunk_index = request.headers.get('X-Chunk-Index', '')
+        total_size = request.headers.get('X-Total-Size', '0')
+
+        if not filename or chunk_index == '':
+            return jsonify({"error": "X-Filename and X-Chunk-Index headers required"}), 400
+
+        chunk_index = int(chunk_index)
+        safe_name = os.path.basename(filename)
+
+        # Create temp chunk directory: learning/.chunks/<filename>/
+        chunk_dir = config.get_user_learning_dir(user_id) / '.chunks' / safe_name
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write chunk file (idempotent — re-sending same index overwrites)
+        chunk_path = chunk_dir / f'chunk_{chunk_index:04d}'
+        data = request.get_data()
+
+        with open(chunk_path, 'wb') as f:
+            f.write(data)
+
+        return jsonify({"received": True, "chunk_index": chunk_index, "bytes": len(data)})
+
+    except Exception as e:
+        print(f"Chunk Upload Error: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@core_bp.route('/api/upload/complete', methods=['POST'])
+def upload_complete():
+    """Reassemble chunks into final CSV file.
+    Called by ESP32 after all chunks are sent.
+    """
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+
+    try:
+        data = request.get_json()
+        filename = data.get('filename', '')
+        total_chunks = data.get('total_chunks', 0)
+
+        if not filename or total_chunks <= 0:
+            return jsonify({"error": "filename and total_chunks required"}), 400
+
+        safe_name = os.path.basename(filename)
+        learning_dir = config.get_user_learning_dir(user_id)
+        chunk_dir = learning_dir / '.chunks' / safe_name
+
+        # Validate all chunks exist
+        for i in range(total_chunks):
+            chunk_path = chunk_dir / f'chunk_{i:04d}'
+            if not chunk_path.exists():
+                return jsonify({"error": f"Missing chunk {i}"}), 400
+
+        # Reassemble into final file
+        if not safe_name.lower().endswith('.csv'):
+            safe_name += '.csv'
+
+        save_path = learning_dir / safe_name
+
+        with open(save_path, 'wb') as out_f:
+            for i in range(total_chunks):
+                chunk_path = chunk_dir / f'chunk_{i:04d}'
+                with open(chunk_path, 'rb') as chunk_f:
+                    out_f.write(chunk_f.read())
+
+        # Clean up chunk dir
+        shutil.rmtree(str(chunk_dir), ignore_errors=True)
+
+        # Server-side rename: extract first GPS timestamp from CSV data
+        final_name = safe_name
+        try:
+            with open(save_path, 'r') as f:
+                header_line = f.readline()  # skip header
+                first_data_line = f.readline().strip()
+            if first_data_line:
+                first_data = first_data_line.split(',')
+                gps_ts = first_data[0]  # e.g. "070226_123519"
+                if '_' in gps_ts and len(gps_ts) >= 13:
+                    dd, mm, yy = int(gps_ts[0:2]), int(gps_ts[2:4]), int(gps_ts[4:6])
+                    hh, mi, ss = int(gps_ts[7:9]), int(gps_ts[9:11]), int(gps_ts[11:13])
+                    year = 2000 + yy
+                    dt = datetime(year, mm, dd, hh, mi, ss)
+                    unix_ts = int(dt.timestamp())
+                    new_name = f"sess_{unix_ts}.csv"
+                    new_path = learning_dir / new_name
+                    if not new_path.exists():
+                        os.rename(str(save_path), str(new_path))
+                        final_name = new_name
+                        print(f"[Upload] Renamed {safe_name} -> {new_name}")
+        except Exception as rename_err:
+            print(f"[Upload] Rename skipped: {rename_err}")
+
+        print(f"[Upload] Assembled {final_name} from {total_chunks} chunks for user {user_id}")
+
+        # Update last_sync on device token
+        if device_token:
+            device_token.last_sync = datetime.utcnow()
+            db.session.commit()
+
+        return jsonify({"success": True, "filename": final_name})
+
+    except Exception as e:
+        print(f"Upload Complete Error: {e}")
+        traceback.print_exc()
+        if os.environ.get('FLASK_ENV', 'development') == 'production':
+            return jsonify({"error": "Assembly failed"}), 500
+        return jsonify({"error": str(e)}), 500
