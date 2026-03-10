@@ -363,7 +363,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
             ms = time.ticks_ms() % 1000
             gps_ts = f"{t_now}.{ms:03d}00"
             
-            log_line = f"{gps_ts},{fix['lat']},{fix['lon']},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{acc['x']:.4f},{acc['y']:.4f},{acc['z']:.4f},{gyr['x']:.2f},{gyr['y']:.2f},{gyr['z']:.2f},{vbat:.2f}\n"
+            log_line = f"{gps_ts},{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{acc['x']:.4f},{acc['y']:.4f},{acc['z']:.4f},{gyr['x']:.2f},{gyr['y']:.2f},{gyr['z']:.2f},{vbat:.2f}\n"
             f.write(log_line)
             f.flush()
             if loop_count % 50 == 0:
