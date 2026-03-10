@@ -230,11 +230,27 @@ class TrackGenerator:
         
         import math
         def get_heading(idx):
-             # Simple heading using next point
+             # Improved heading using look-back to handle "stair-step" GPS
+             # Look back up to 20 samples (~2s at 10Hz) to find 5m of movement
+             target_s = samples[idx]
+             for lookback in range(1, min(idx, 20) + 1):
+                 s_prev = samples[idx - lookback]
+                 d_km = haversine_distance(
+                     s_prev.gps.lat, s_prev.gps.lon,
+                     target_s.gps.lat, target_s.gps.lon
+                 )
+                 if d_km * 1000.0 > 5.0:  # Found 5m of movement
+                     # Calc bearing from s_prev to target_s
+                     y = math.sin(math.radians(target_s.gps.lon - s_prev.gps.lon)) * math.cos(math.radians(target_s.gps.lat))
+                     x = math.cos(math.radians(s_prev.gps.lat)) * math.sin(math.radians(target_s.gps.lat)) - \
+                         math.sin(math.radians(s_prev.gps.lat)) * math.cos(math.radians(target_s.gps.lat)) * math.cos(math.radians(target_s.gps.lon - s_prev.gps.lon))
+                     return math.degrees(math.atan2(y, x)) % 360.0
+             
+             # Fallback to immediate next point if no lookback found movement
              if idx >= len(samples) - 1: return 0.0
              s1 = samples[idx]
              s2 = samples[idx+1]
-             # simple bearing calculation
+             if s1.gps.lat == s2.gps.lat and s1.gps.lon == s2.gps.lon: return 0.0
              y = math.sin(math.radians(s2.gps.lon - s1.gps.lon)) * math.cos(math.radians(s2.gps.lat))
              x = math.cos(math.radians(s1.gps.lat)) * math.sin(math.radians(s2.gps.lat)) - \
                  math.sin(math.radians(s1.gps.lat)) * math.cos(math.radians(s2.gps.lat)) * math.cos(math.radians(s2.gps.lon - s1.gps.lon))

@@ -65,15 +65,33 @@ class LapDetector:
                 if not in_zone:
                     in_zone = True
                     
-                    # Calculate heading from previous point
-                    if i > 0:
-                        prev = session.samples[i - 1]
-                        heading = self._calculate_heading(
+                    # Calculate heading using look-back to handle "stair-step" GPS
+                    heading = None
+                    # Look back up to 20 samples (~2s at 10Hz) to find 5m of movement
+                    for lookback in range(1, min(i, 20) + 1):
+                        prev = session.samples[i - lookback]
+                        d_km = haversine_distance(
                             prev.gps.lat, prev.gps.lon,
                             sample.gps.lat, sample.gps.lon
                         )
-                        
-                        # Validate heading
+                        if d_km * 1000.0 > 5.0:  # Found 5m of movement
+                            heading = self._calculate_heading(
+                                prev.gps.lat, prev.gps.lon,
+                                sample.gps.lat, sample.gps.lon
+                            )
+                            break
+                    
+                    if heading is None and i > 0:
+                        # Fallback: if we haven't moved 5m in 2s, just use the immediate previous point if it exists
+                        prev = session.samples[i - 1]
+                        if prev.gps.lat != sample.gps.lat or prev.gps.lon != sample.gps.lon:
+                             heading = self._calculate_heading(
+                                prev.gps.lat, prev.gps.lon,
+                                sample.gps.lat, sample.gps.lon
+                            )
+
+                    # Validate heading
+                    if heading is not None:
                         if not self._heading_is_valid(heading):
                             continue  # Skip wrong-way crossing
                         
@@ -82,10 +100,14 @@ class LapDetector:
                             self._reference_heading = heading
                             if self.start_line.expected_heading is not None:
                                 self._reference_heading = self.start_line.expected_heading
-                    
-                    # Check debounce
-                    if not crossing_indices or (sample.timestamp - session.samples[crossing_indices[-1]].timestamp > self.min_lap_time):
-                        crossing_indices.append(i)
+                        
+                        # Check debounce
+                        if not crossing_indices or (sample.timestamp - session.samples[crossing_indices[-1]].timestamp > self.min_lap_time):
+                            crossing_indices.append(i)
+                    elif self._reference_heading is not None:
+                        # If we can't determine heading but have a reference, we might be too slow.
+                        # For safety, skip if we can't confirm direction.
+                        continue
             else:
                 in_zone = False
                 
