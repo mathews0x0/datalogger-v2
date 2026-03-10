@@ -58,6 +58,8 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None):
             gc.collect()
             if wdt:
                 wdt.feed()
+            if led:
+                led.update_sync("SYNC_UPLOADING")
 
             data = f.read(CHUNK_SIZE)
             if not data:
@@ -69,6 +71,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None):
                 'X-Filename': fname,
                 'X-Chunk-Index': str(chunk_index),
                 'X-Total-Size': str(total_size),
+                'Content-Length': str(len(data)),
             }
 
             # Retry loop for this chunk
@@ -77,6 +80,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None):
                 try:
                     if led:
                         led.update_onboard_led("CONNECTED")
+                        led.update_sync("SYNC_UPLOADING")
 
                     resp = urequests.post(chunk_url, data=data, headers=headers)
                     status = resp.status_code
@@ -109,7 +113,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None):
     return True, chunk_index
 
 
-def _finalize_upload(fname, api_url, token, total_chunks, wdt=None):
+def _finalize_upload(fname, api_url, token, total_chunks, led=None, wdt=None):
     """
     Tell the server all chunks are sent — trigger reassembly.
     Returns True on success.
@@ -117,17 +121,20 @@ def _finalize_upload(fname, api_url, token, total_chunks, wdt=None):
     import urequests
 
     complete_url = api_url.rstrip('/') + '/complete'
+    payload = json.dumps({'filename': fname, 'total_chunks': total_chunks})
     headers = {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + token,
+        'Content-Length': str(len(payload))
     }
-    payload = json.dumps({'filename': fname, 'total_chunks': total_chunks})
 
     if wdt:
         wdt.feed()
 
     for attempt in range(MAX_RETRIES):
         try:
+            if led:
+                led.update_sync("SYNC_UPLOADING")
             resp = urequests.post(complete_url, data=payload, headers=headers)
             status = resp.status_code
             resp.close()
@@ -197,7 +204,7 @@ def sync_all(session_mgr, led=None, wdt=None):
 
             if ok and chunks_sent > 0:
                 # Finalize — tell server to reassemble
-                if _finalize_upload(fname, api_url, token, chunks_sent, wdt):
+                if _finalize_upload(fname, api_url, token, chunks_sent, led, wdt):
                     print(f'[Sync] Done: {fname}')
                     session_mgr.delete_session(fname)
                     success_count += 1

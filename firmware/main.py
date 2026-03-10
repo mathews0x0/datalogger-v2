@@ -369,7 +369,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
             
             # Write GPS row if we have a fresh valid fix
             if f and fix['valid'] and gps.new_fix:
-                write_buf.append(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},"
+                write_buf.append(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f}," +
                                  f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f}\n")
                 
                 # Track Engine (only on GPS rows)

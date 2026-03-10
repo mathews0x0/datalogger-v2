@@ -2245,3 +2245,19 @@ The system is now robust against local network isolation and mobile hotspot quir
 
 **Status:** ✅ **Complete.** Firmware refactored. Ready for on-device verification.
 
+---
+
+## 48. Firmware Bugfix: Chunked Upload Crash and Feedback (2026-03-11)
+
+**Context:** The device was crashing and rebooting when attempting to upload session files chunk by chunk to the server. The user also requested that the LED feedback continuously signal rapid green blinking while chunked uploads are ongoing, and stay a slow green pulse after everything is uploaded.
+
+### Decisions
+
+1.  **Fixed memory leak in uploader**: Discovered that the `uploader.py` script was sending HTTP POST chunks without providing a `Content-Length` header. This caused the Nginx reverse proxy to reject the connection immediately, triggering an `OSError` in the MicroPython `urequests` library which subsequently leaked SSL context memory. Added `Content-Length` headers mapping precisely to chunk sizes.
+2.  **Continuous LED Ticks**: Added `led.update_sync("SYNC_UPLOADING")` logic directly inside the blocking upload chunk and retry loops. Since LED animations rely on `time.ticks_ms()` evaluations per loop, calling this prevents the LED from appearing "stuck" or frozen during blocking network activities.
+
+### Changes
+
+-   **`firmware/lib/uploader.py`**: Added `Content-Length` header to chunk upload requests and finalization payloads. Passed `led` instance correctly so the LED stays animated.
+
+**Status:** ✅ **Complete.** Fixes applied. Ready for on-device test and deployment.
