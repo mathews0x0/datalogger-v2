@@ -4,6 +4,7 @@
 class GPS:
     def __init__(self, uart):
         self.uart = uart
+        self.new_fix = False  # True when update() parsed a new RMC sentence
         self.last_fix = {
             'lat': None,
             'lon': None,
@@ -61,6 +62,7 @@ class GPS:
 
     def update(self):
         """Read all available data from UART and parse. Don't block."""
+        self.new_fix = False
         while self.uart.any():
             try:
                 line = self.uart.readline()
@@ -108,7 +110,9 @@ class GPS:
             # Index: 1=Time, 2=Status(A=OK), 3=Lat, 4=N, 5=Lon, 6=E, 7=Speed(Knots)
             if len(parts) < 10: return
             
-            # Update timestamp regardless of fix validy (shows UART is working)
+            self.new_fix = True  # Mark that we got a fresh RMC sentence
+            
+            # Update timestamp regardless of fix validity (shows UART is working)
             if parts[1]:
                 self.last_fix['timestamp'] = parts[1]
             

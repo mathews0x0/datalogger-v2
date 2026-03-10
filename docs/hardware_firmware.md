@@ -42,8 +42,9 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 
 ### **LOGGING MODE (Default — No Radio)**
 *   All WiFi radios are killed immediately.
-*   **Core 0 runs exclusive 10Hz telemetry loop**: GPS, IMU, battery, CSV logging.
-*   **Track Engine** provides lap/sector crossing events for NeoPixel feedback.
+*   **Core 0 runs exclusive 100Hz telemetry loop**: IMU every tick (100Hz), GPS every 10th tick (10Hz).
+*   **Buffered writes**: Rows are batched in memory (~20 rows) and flushed to SD card ~5 times/sec for efficiency.
+*   **Track Engine** provides lap/sector crossing events for NeoPixel feedback (fires on GPS ticks only).
 *   No uploader, no captive portal, no WiFi threads.
 
 ### **SYNC MODE (Button Press — No Logging)**
@@ -82,10 +83,17 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 | Sync: Upload Failed | Slow fade | Red |
 | Pairing Mode | Breathing fade | Blue |
 
-### **CSV Log Format**
+### **CSV Log Format (Dual-Rate V2)**
 Logs are saved in the `/sd/learning/` or `/data/learning/` directory.
-Header: `gps_time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,vbat`
-Timestamp format: Unix Epoch (synchronized via **GPS-to-RTC** on first valid fix).
+Header: `tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat`
+
+| Row Type | Rate | Fields Populated |
+|----------|------|-----------------|
+| `I` (IMU) | 100 Hz | `tick_ms`, accel, gyro |
+| `G` (GPS) | 10 Hz | `tick_ms`, accel, gyro, lat, lon, alt, speed, sats, vbat |
+
+**`tick_ms`**: ESP32 monotonic clock (milliseconds). Used as the master timestamp for sensor fusion alignment.
+**Buffered writes**: ~20 rows accumulated before single SD write+flush (~200ms max data loss on power failure).
 
 ---
 

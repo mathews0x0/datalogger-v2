@@ -284,19 +284,35 @@ def run_sync_mode(led, sm, sync_btn, wdt):
 # ==================================================================
 
 def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
+    """
+    Dual-rate logging loop:
+      - IMU sampled at 100 Hz (every tick)
+      - GPS sampled at  10 Hz (every 10th tick)
+      - Buffered writes flushed every 20 rows (~200ms)
+    """
     
-    loop_count = 1
+    loop_count = 0
+    FLUSH_INTERVAL = 20  # rows before flushing to SD
     
-    print("\n[System] Logging Active — All radios OFF, NeoPixels active")
+    print("\n[System] Logging Active — 100Hz IMU / 10Hz GPS — All radios OFF")
     log_file = sm.get_log_file()
     print(f"[System] Session file: {log_file}")
     
     # RTC sync flag
     rtc_synced = False
     
+    # Write buffer for batched SD writes
+    write_buf = []
+    
+    # Cached values
+    vbat = 0.0
+    fix = {'valid': False, 'lat': None, 'lon': None, 'altitude': 0.0,
+           'speed_kmh': 0.0, 'satellites': 0, 'timestamp': None, 'date': None}
+    base_state = "SEARCHING"
+    
     try:
         f = open(log_file, 'w')
-        f.write("gps_time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,vbat\n")
+        f.write("tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat\n")
         f.flush()
         print(f"[System] Log file opened: {log_file}")
     except Exception as e:
@@ -305,84 +321,90 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
     
     while True:
         tick_start = time.ticks_ms()
+        tick_ms = tick_start
+        loop_count += 1
+        
+        # Feed watchdog every tick
         wdt.feed()
         
-        # 1. Update GPS
-        fix = gps.update()
-        
-        # 2. Battery Monitoring
-        try:
-            raw_v = vbat_adc.read()
-            vbat = (raw_v / 4095.0) * 3.3 * 2.0
-        except:
-            vbat = 0.0
-        
-        # 3. Read IMU — scale to physical units
-        acc = {"x": 0.0, "y": 0.0, "z": 0.0}
-        gyr = {"x": 0.0, "y": 0.0, "z": 0.0}
+        # ── 1. IMU READ (every tick = 100 Hz) ──
+        acc_x, acc_y, acc_z = 0.0, 0.0, 0.0
+        gyr_x, gyr_y, gyr_z = 0.0, 0.0, 0.0
         if imu:
             try:
                 data = imu.get_values()
-                acc = {
-                    "x": data["acc"]["x"] / ACC_SENSITIVITY,
-                    "y": data["acc"]["y"] / ACC_SENSITIVITY,
-                    "z": data["acc"]["z"] / ACC_SENSITIVITY
-                }
-                gyr = {
-                    "x": data["gyro"]["x"] / GYR_SENSITIVITY,
-                    "y": data["gyro"]["y"] / GYR_SENSITIVITY,
-                    "z": data["gyro"]["z"] / GYR_SENSITIVITY
-                }
+                acc_x = data["acc"]["x"] / ACC_SENSITIVITY
+                acc_y = data["acc"]["y"] / ACC_SENSITIVITY
+                acc_z = data["acc"]["z"] / ACC_SENSITIVITY
+                gyr_x = data["gyro"]["x"] / GYR_SENSITIVITY
+                gyr_y = data["gyro"]["y"] / GYR_SENSITIVITY
+                gyr_z = data["gyro"]["z"] / GYR_SENSITIVITY
             except:
                 pass
-
-        # 4. Sync RTC to GPS once
-        if not rtc_synced and fix.get('valid'):
-            try:
-                d = fix['date']
-                t = fix['timestamp']
-                year = 2000 + int(d[4:6])
-                month = int(d[2:4])
-                day = int(d[0:2])
-                hour = int(t[0:2])
-                minute = int(t[2:4])
-                second = int(t[4:6])
-                machine.RTC().datetime((year, month, day, 0, hour, minute, second, 0))
-                rtc_synced = True
-                print(f"[System] RTC Synced to GPS: {year}-{month}-{day} {hour}:{minute}:{second}")
-            except:
-                pass
-
-        # 5. Write to Log
-        # DEBUG: Print state every 10 loops
+        
+        # Write IMU row (row_type = I, GPS fields empty)
+        if f:
+            write_buf.append(f"{tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,\n")
+        
+        # ── 2. GPS READ (every 10th tick = 10 Hz) ──
         if loop_count % 10 == 0:
-            print(f"[DBG] valid={fix['valid']} lat={fix['lat']} lon={fix['lon']} sats={fix['satellites']} f={'OK' if f else 'NONE'}")
-        
-        if f and fix['valid']:
-            t_now = time.time() + 946684800
-            ms = time.ticks_ms() % 1000
-            gps_ts = f"{t_now}.{ms:03d}00"
+            fix = gps.update()
             
-            log_line = f"{gps_ts},{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{acc['x']:.4f},{acc['y']:.4f},{acc['z']:.4f},{gyr['x']:.2f},{gyr['y']:.2f},{gyr['z']:.2f},{vbat:.2f}\n"
-            f.write(log_line)
+            # Sync RTC to GPS once
+            if not rtc_synced and fix.get('valid'):
+                try:
+                    d = fix['date']
+                    t = fix['timestamp']
+                    year = 2000 + int(d[4:6])
+                    month = int(d[2:4])
+                    day = int(d[0:2])
+                    hour = int(t[0:2])
+                    minute = int(t[2:4])
+                    second = int(t[4:6])
+                    machine.RTC().datetime((year, month, day, 0, hour, minute, second, 0))
+                    rtc_synced = True
+                    print(f"[System] RTC Synced to GPS: {year}-{month}-{day} {hour}:{minute}:{second}")
+                except:
+                    pass
+            
+            # Write GPS row if we have a fresh valid fix
+            if f and fix['valid'] and gps.new_fix:
+                write_buf.append(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},"
+                                 f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f}\n")
+                
+                # Track Engine (only on GPS rows)
+                try:
+                    event = track_eng.update(fix['lat'], fix['lon'], float(tick_ms))
+                    if event:
+                        led.trigger_event(event)
+                except Exception as e:
+                    if loop_count % 100 == 0:
+                        print(f"TrackEng Error: {e}")
+            
+            # LED update (on GPS ticks)
+            base_state = "LOGGING" if fix['valid'] else "SEARCHING"
+            led.update_with_events(base_state)
+            
+            # Debug output (every ~1s = every 10 GPS ticks)
+            if loop_count % 100 == 0:
+                print(f"[DBG] valid={fix['valid']} lat={fix['lat']} lon={fix['lon']} sats={fix['satellites']} buf={len(write_buf)}")
+        
+        # ── 3. FLUSH WRITE BUFFER ──
+        if f and len(write_buf) >= FLUSH_INTERVAL:
+            f.write(''.join(write_buf))
             f.flush()
-            if loop_count % 50 == 0:
-                print(f"[DBG] WROTE ROW: {log_line[:60]}...")
-            
-            # Track Engine
-            try:
-                ts_float = float(gps_ts)
-                event = track_eng.update(fix['lat'], fix['lon'], ts_float)
-                if event:
-                    led.trigger_event(event)
-            except Exception as e:
-                print(f"TrackEng Error: {e}")
-
-        # 7. NeoPixel LED Update
-        base_state = "LOGGING" if fix['valid'] else "SEARCHING"
+            write_buf.clear()
         
-        # Storage Check (every ~10s)
+        # ── 4. BATTERY (every 100th tick = ~1 Hz) ──
         if loop_count % 100 == 0:
+            try:
+                raw_v = vbat_adc.read()
+                vbat = (raw_v / 4095.0) * 3.3 * 2.0
+            except:
+                vbat = 0.0
+        
+        # ── 5. STORAGE CHECK (every 1000th tick = ~10s) ──
+        if loop_count % 1000 == 0:
             try:
                 s_info = sm.get_active_storage_info()
                 if s_info and s_info['total_kb'] > 0:
@@ -392,27 +414,21 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                         print(f"[System] STORAGE CRITICAL: {s_info['used_kb']}/{s_info['total_kb']} KB")
             except:
                 pass
-
-        led.update_with_events(base_state)
         
-        # 8. Periodic maintenance
-        loop_count += 1
-        
-        if loop_count % 10 == 0:
+        # ── 6. PERIODIC MAINTENANCE ──
+        if loop_count % 100 == 0:
             try:
                 os.sync()
             except:
                 pass
         
-        if loop_count % 100 == 0:
+        if loop_count % 1000 == 0:
             gc.collect()
-        
-        if loop_count % 100 == 0:
             print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count}")
 
-        # Consistent 10Hz timing
+        # ── 7. TIMING — Target 10ms per tick (100 Hz) ──
         elapsed_ms = time.ticks_diff(time.ticks_ms(), tick_start)
-        remaining = 100 - elapsed_ms
+        remaining = 10 - elapsed_ms
         if remaining > 0:
             time.sleep_ms(remaining)
             
