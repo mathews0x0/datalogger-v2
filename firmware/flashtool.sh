@@ -168,6 +168,25 @@ except:
     print('  (no device.json found — first-time setup needed)')
 "
     
+    # Show saved active track + TBL
+    echo -e "${CYAN}Active Track:${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "
+try:
+    import json
+    f=open('/data/metadata/track.json','r')
+    d=json.load(f); f.close()
+    name=d.get('track_name') or d.get('name','Unknown')
+    tbl=d.get('tbl',{})
+    print(f'  Track: {name}')
+    if tbl:
+        for k in sorted(tbl.keys(), key=lambda x: int(x)):
+            print(f'  S{int(k)+1}: {tbl[k]:.3f}s')
+    else:
+        print('  (no TBL data)')
+except:
+    print('  (no track.json found)')
+"
+
     echo -e "${GREEN}Source Sync Complete!${NC}"
 }
 

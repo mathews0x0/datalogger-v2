@@ -207,6 +207,32 @@ def get_track_geometry(track_id):
         return send_file(geo_path)
     
     return jsonify({"error": "Geometry not found. Please regenerate track."}), 404
+
+@tracks_bp.route('/api/tracks/<int:track_id>/active', methods=['POST'])
+@jwt_required()
+def set_active_track(track_id):
+    """Sets a track as the user's active session track (synced to logger)"""
+    current_user_id = int(get_jwt_identity())
+    user = User.query.get(current_user_id)
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+        
+    track_meta = TrackMeta.query.filter_by(track_id=track_id, user_id=current_user_id).first()
+    if not track_meta and not user.is_admin:
+        # Fallback to shared global tracks if admin made it?
+        track_meta = TrackMeta.query.filter_by(track_id=track_id).first()
+        
+    if not track_meta:
+        return jsonify({"error": "Track not found or access denied"}), 404
+        
+    try:
+        user.active_track_id = track_id
+        db.session.commit()
+        return jsonify({"success": True, "active_track_id": track_id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+
 @tracks_bp.route('/api/tracks/<int:track_id>', methods=['DELETE'])
 @jwt_required()
 def delete_track_endpoint(track_id):

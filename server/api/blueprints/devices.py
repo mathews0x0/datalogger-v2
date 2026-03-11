@@ -80,7 +80,35 @@ def _resolve_upload_user():
 
 @devices_bp.route('/api/device/ping', methods=['POST'])
 def device_ping():
-    """Heartbeat endpoint for devices to announce they are online"""
+    """Heartbeat endpoint for devices to announce they are online and send basic telemetry."""
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+        
+    if device_token:
+        # Extract telemetry (it's okay if fields are missing)
+        data = request.get_json() or {}
+        
+        device_token.last_sync = datetime.utcnow()
+        if 'vbatt_sense' in data:
+            device_token.vbatt_sense = data['vbatt_sense']
+        if 'storage_sd_free' in data:
+            device_token.storage_sd_free = data['storage_sd_free']
+        if 'storage_flash_free' in data:
+            device_token.storage_flash_free = data['storage_flash_free']
+        if 'device_uid' in data:
+            device_token.device_uid = str(data['device_uid'])
+            
+        db.session.commit()
+        
+        print(f"[Heartbeat] Received from device '{device_token.device_name}' (token ID {device_token.id}, user {user_id})")
+        return jsonify({"success": True})
+        
+    return jsonify({"error": "Device token required"}), 400
+
+@devices_bp.route('/api/device/active_track', methods=['GET'])
+def get_device_active_track():
+    """Device endpoint to fetch the user's active track metadata."""
     user_id, error, device_token = _resolve_upload_user()
     if error:
         return jsonify({"error": error}), 401
@@ -88,7 +116,45 @@ def device_ping():
     if device_token:
         device_token.last_sync = datetime.utcnow()
         db.session.commit()
-        return jsonify({"success": True})
+        
+        response_data = {"active_track": None}
+        
+        user = User.query.get(user_id)
+        if user and user.active_track_id:
+            from api.helpers import get_track_folder
+            from config import config
+            import json
+            
+            folder_name = get_track_folder(user.active_track_id, user_id=user_id)
+            if folder_name:
+                track_dir = config.get_user_tracks_dir(user_id)
+                track_json_path = track_dir / folder_name / "track.json"
+                tbl_json_path = track_dir / folder_name / "tbl.json"
+                
+                track_data = {}
+                if track_json_path.exists():
+                    try:
+                        with open(track_json_path, 'r') as f:
+                            track_data = json.load(f)
+                    except: pass
+                    
+                if tbl_json_path.exists():
+                    try:
+                        with open(tbl_json_path, 'r') as f:
+                            raw_tbl = json.load(f)
+                            
+                        # Format TBL for ESP32 (stringified numeric keys)
+                        str_tbl = {}
+                        for idx, time_val in enumerate(raw_tbl):
+                            str_tbl[str(idx)] = time_val
+                            
+                        track_data['tbl'] = str_tbl
+                    except: pass
+                
+                if track_data:
+                    response_data["active_track"] = track_data
+                    
+        return jsonify(response_data)
         
     return jsonify({"error": "Device token required"}), 400
 

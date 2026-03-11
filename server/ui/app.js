@@ -209,6 +209,9 @@ async function checkAuth() {
         const user = await apiCall('/api/auth/me');
         if (user) {
             currentUser = user;
+            if (currentUser.active_track_id) {
+                activeTrackId = currentUser.active_track_id;
+            }
             updateAuthUI();
         } else {
             // No user - show landing page
@@ -536,16 +539,34 @@ async function loadDeviceTokens() {
             return;
         }
 
-        container.innerHTML = devices.map(d => `
+        container.innerHTML = devices.map(d => {
+            const now = new Date();
+            let isOnline = false;
+            if (d.last_sync) {
+                const lastSyncTime = new Date(d.last_sync);
+                if (Math.abs(now - lastSyncTime) < 60000) {
+                    isOnline = true;
+                }
+            }
+
+            const batteryText = d.vbatt_sense ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-battery-half"></i> ${d.vbatt_sense.toFixed(2)}V</span>` : '';
+            const sdText = d.storage_sd_free !== null && d.storage_sd_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-sd-card"></i> ${d.storage_sd_free}M free</span>` : '';
+            const flashText = d.storage_flash_free !== null && d.storage_flash_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-microchip"></i> ${(d.storage_flash_free / 1024).toFixed(1)}k free</span>` : '';
+
+            return `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--border);">
                 <div>
                     <span style="font-weight: 600;">${d.device_name}</span>
                     <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem; font-family: monospace;">rsk_••••${d.token ? d.token.slice(-4) : '????'}</span>
-                    ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ACTIVE</span>'}
+                    ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : (isOnline ? '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ONLINE</span>' : '<span style="color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem;">OFFLINE</span>')}
+                    <div style="margin-top: 0.25rem;">
+                        ${batteryText}${sdText}${flashText}
+                    </div>
                 </div>
                 ${!d.revoked ? `<button class="btn btn-danger btn-sm" onclick="revokeDeviceToken(${d.id})" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">Revoke</button>` : ''}
             </div>
-        `).join('');
+            `;
+        }).join('');
     } catch (e) {
         container.innerHTML = '<span style="color: var(--error); font-size: 0.85rem;">Failed to load devices.</span>';
     }
@@ -829,9 +850,7 @@ async function pollStatus() {
                 }
 
             } catch (espErr) {
-                // Device likely offline
                 document.getElementById('storageIndicator').style.display = 'none';
-                document.getElementById('activeTrackBadge').style.display = 'none';
             }
         }
 
@@ -844,50 +863,19 @@ async function pollStatus() {
  * Ensures the full track metadata from Pi is pushed to the ESP32
  */
 async function ensureTrackSynced(trackId, deviceIP) {
-    if (!deviceIP) return;
-
     try {
-        console.log(`[Sync] Auto-syncing track ${trackId} to device...`);
-        const trackData = await apiCall(`/api/tracks/${trackId}`);
-
-        // Format for ESP32
-        const payload = {
-            id: trackData.track_id.toString(),
-            name: trackData.track_name,
-            pit_center_lat: trackData.pit_center_lat,
-            pit_center_lon: trackData.pit_center_lon,
-            pit_radius_m: trackData.pit_radius_m || 50,
-            start_line: {
-                lat: trackData.start_line.lat,
-                lon: trackData.start_line.lon,
-                radius_m: 20
-            },
-            sectors: trackData.sectors.map((s, idx) => ({
-                idx: idx,
-                end_lat: s.end_lat,
-                end_lon: s.end_lon
-            })),
-            tbl: {}
-        };
-
-        // Format TBL: Convert from list to dict with string keys
-        if (trackData.tbl && trackData.tbl.sectors) {
-            trackData.tbl.sectors.forEach((time, idx) => {
-                payload.tbl[idx.toString()] = time;
-            });
-        }
-
-        const resp = await fetch(`http://${deviceIP}/track/set`, {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-
-        if (resp.ok) {
-            console.log(`[Sync] Track ${trackId} synced successfully`);
+        console.log(`[Sync] Setting active track ${trackId} in cloud...`);
+        const resp = await apiCall(`/api/tracks/${trackId}/active`, { method: 'POST' });
+        if (resp && resp.success) {
+            console.log(`[Sync] Track ${trackId} active in cloud`);
             lastSyncedTrackId = trackId;
+            activeTrackId = trackId;
+            if (currentUser) {
+                currentUser.active_track_id = trackId;
+            }
         }
     } catch (err) {
-        console.error(`[Sync] Failed to sync track ${trackId}:`, err);
+        console.error(`[Sync] Failed to set active track ${trackId}:`, err);
     }
 }
 
@@ -1941,7 +1929,7 @@ async function loadTracks() {
                     </div>
                     <div class="track-actions">
                         ${!isActive ? `
-                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); pushTrackToESP(${track.track_id})">
+                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTrack(${track.track_id})">
                             <i class="fas fa-bolt"></i> Set Active
                         </button>` : ''}
                         <button class="btn small" onclick="event.stopPropagation(); renameTrack(${track.track_id}, '${track.track_name}')">
@@ -1961,24 +1949,23 @@ async function loadTracks() {
 }
 
 /**
- * Manually trigger pushing a track to the ESP32
+ * Manually set the active track in user profile
  */
-async function pushTrackToESP(trackId) {
-    const deviceIP = localStorage.getItem('lastDeviceIP');
-    if (!deviceIP) {
-        showToast('Device not connected', 'error');
-        return;
-    }
-
+async function setActiveTrack(trackId) {
     try {
-        showToast('Pushing track data...', 'info');
-        await ensureTrackSynced(trackId, deviceIP);
-        showToast('Track set as active', 'success');
+        await apiCall(`/api/tracks/${trackId}/active`, { method: 'POST' });
 
-        // Refresh tracks view to show active state
-        loadTracks();
+        // Update local state and UI immediately
+        activeTrackId = trackId;
+        const result = await apiCall('/api/auth/me'); // Refresh profile silently
+        if (result) currentUser = result;
+
+        showToast('Track set as active (Device will sync on next heartbeat)', 'success');
+        loadTracks(); // re-render the list to show the ACTIVE badge
+
+        loadTracks(); // Refresh tracks view to show active state
     } catch (err) {
-        showToast('Failed to push track', 'error');
+        showToast('Failed to set track', 'error');
     }
 }
 
@@ -6340,6 +6327,10 @@ async function pollCloudHeartbeat() {
 
             if (badge && text) {
                 if (isOnline) {
+                    if (!isDeviceConnected) {
+                        // Just came online
+                        showToast('Heartbeat received from device', 'success');
+                    }
                     badge.className = 'status-badge online';
                     text.textContent = 'RS-Core Connected';
                     isDeviceConnected = true;

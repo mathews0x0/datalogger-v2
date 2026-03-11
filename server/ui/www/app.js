@@ -23,12 +23,12 @@ function setCustomApiUrl() {
     }
 }
 
-// State
-let currentView = 'home';
+// initialization
 let tracks = [];
 let sessions = [];
 let activeTrackId = null;  // Track identified by ESP32 status
 let lastSyncedTrackId = null; // Track we last pushed to ESP32
+let isDeviceConnected = false; // True only when device is confirmed reachable
 
 // ============================================================================
 // INITIALIZATION
@@ -37,22 +37,11 @@ let lastSyncedTrackId = null; // Track we last pushed to ESP32
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Datalogger Companion App loaded');
 
-    // Auto-detect device IP on startup
-    autoDetectDeviceIP().then(ip => {
-        if (ip) {
-            console.log('[Init] Auto-detected device IP:', ip);
-            checkDeviceConnection();
-        }
-    });
+    // Start cloud heartbeat polling
+    pollCloudHeartbeat();
 
     // Set up navigation
     setupNavigation();
-
-    // Check connection
-    checkConnection();
-
-    // Check BLE support
-    initBleSupportCheck();
 
     // Check Auth
     checkAuth();
@@ -138,6 +127,7 @@ function showView(viewName) {
                 const defaultUrlSpan = document.getElementById('defaultApiUrl');
                 if (customUrlInput) customUrlInput.value = localStorage.getItem('custom_api_url') || '';
                 if (defaultUrlSpan) defaultUrlSpan.textContent = window.location.origin;
+                if (currentUser) loadDeviceTokens();
                 break;
         }
     }
@@ -147,6 +137,13 @@ function showView(viewName) {
 // API CALLS
 // ============================================================================
 
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
+
 async function apiCall(endpoint, options = {}) {
     try {
         // Prevent caching
@@ -155,6 +152,16 @@ async function apiCall(endpoint, options = {}) {
 
         // Ensure credentials are included for Capacitor mobile app cross-origin calls
         options.credentials = 'include';
+
+        // Handle JWT CSRF Protection (Required for non-GET requests in production)
+        const method = (options.method || 'GET').toUpperCase();
+        if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+            const csrfToken = getCookie('csrf_access_token');
+            if (csrfToken) {
+                options.headers = options.headers || {};
+                options.headers['X-CSRF-TOKEN'] = csrfToken;
+            }
+        }
 
         const response = await fetch(url, options);
 
@@ -168,6 +175,8 @@ async function apiCall(endpoint, options = {}) {
             if (errorData.error === "Upgrade required" || errorData.error === "Limit reached") {
                 showUpgradeModal(errorData.required_tier ? errorData.required_tier.charAt(0).toUpperCase() + errorData.required_tier.slice(1) : "Pro Feature");
                 return null;
+            } else if (endpoint === '/api/auth/login') {
+                throw new Error(errorData.error);
             }
         }
 
@@ -182,7 +191,7 @@ async function apiCall(endpoint, options = {}) {
         return await response.json();
     } catch (error) {
         console.error('API Error:', error);
-        if (!options.displayError === false) {
+        if (options.displayError !== false) {
             showToast('Connection error', 'error');
         }
         throw error;
@@ -200,18 +209,18 @@ async function checkAuth() {
         const user = await apiCall('/api/auth/me');
         if (user) {
             currentUser = user;
+            if (currentUser.active_track_id) {
+                activeTrackId = currentUser.active_track_id;
+            }
             updateAuthUI();
         } else {
-            // No user - show login modal on mobile app
+            // No user - show landing page
             currentUser = null;
             updateAuthUI();
-            showAuthModal();
         }
     } catch (e) {
         currentUser = null;
         updateAuthUI();
-        // Show login modal for unauthenticated users
-        showAuthModal();
     }
 }
 
@@ -219,12 +228,18 @@ function updateAuthUI() {
     const loginBtn = document.getElementById('loginBtn');
     const userProfileHeader = document.getElementById('userProfileHeader');
     const headerUserName = document.getElementById('headerUserName');
-    const userProfileCard = document.getElementById('userProfileCard');
     const tierBadge = document.getElementById('tierBadge');
-    const adminToolsCard = document.getElementById('adminToolsCard');
     const adminNavBtn = document.getElementById('adminNavBtn');
+    const landingPage = document.getElementById('landingPage');
+    const appContent = document.getElementById('appContent');
+    const headerStatusBadges = document.getElementById('headerStatusBadges');
 
     if (currentUser) {
+        // Show app, hide landing page
+        if (landingPage) landingPage.style.display = 'none';
+        if (appContent) appContent.style.display = 'block';
+        if (headerStatusBadges) headerStatusBadges.style.display = 'flex';
+
         if (loginBtn) loginBtn.style.display = 'none';
         if (userProfileHeader) userProfileHeader.style.display = 'flex';
         if (headerUserName) headerUserName.textContent = currentUser.name || currentUser.email;
@@ -234,25 +249,193 @@ function updateAuthUI() {
             tierBadge.className = `tier-badge ${currentUser.subscription_tier || 'free'}`;
         }
 
-        // Admin Check
+        // Admin nav
         const isAdmin = !!currentUser.is_admin;
-        if (adminToolsCard) adminToolsCard.style.display = isAdmin ? 'block' : 'none';
         if (adminNavBtn) adminNavBtn.style.display = isAdmin ? 'flex' : 'none';
 
-        if (userProfileCard) {
-            userProfileCard.style.display = 'block';
-            const nameInput = document.getElementById('profileName');
-            const bikeInput = document.getElementById('profileBike');
-            const trackInput = document.getElementById('profileHomeTrack');
-            if (nameInput) nameInput.value = currentUser.name || '';
-            if (bikeInput) bikeInput.value = currentUser.bike_info || '';
-            if (trackInput) trackInput.value = currentUser.home_track || '';
-        }
+        // Populate profile panel fields
+        const nameInput = document.getElementById('profileName');
+        const emailInput = document.getElementById('profileEmail');
+        const bikeInput = document.getElementById('profileBike');
+        const trackInput = document.getElementById('profileHomeTrack');
+        if (nameInput) nameInput.value = currentUser.name || '';
+        if (emailInput) emailInput.value = currentUser.email || '';
+        if (bikeInput) bikeInput.value = currentUser.bike_info || '';
+        if (trackInput) trackInput.value = currentUser.home_track || '';
+
+        // Profile photo
+        setProfileAvatars(currentUser);
+
+        // My Devices section visibility
+        const myDevicesCard = document.getElementById('myDevicesCard');
+        if (myDevicesCard) myDevicesCard.style.display = 'block';
     } else {
+        // Show landing page, hide app
+        if (landingPage) landingPage.style.display = 'block';
+        if (appContent) appContent.style.display = 'none';
+        if (headerStatusBadges) headerStatusBadges.style.display = 'none';
+
         if (loginBtn) loginBtn.style.display = 'block';
         if (userProfileHeader) userProfileHeader.style.display = 'none';
-        if (userProfileCard) userProfileCard.style.display = 'none';
-        if (adminToolsCard) adminToolsCard.style.display = 'none';
+
+        // Hide devices card
+        const myDevicesCard = document.getElementById('myDevicesCard');
+        if (myDevicesCard) myDevicesCard.style.display = 'none';
+    }
+}
+
+// === PASSWORD MODAL ===
+function openChangePasswordModal() {
+    closeProfilePanel();
+    const modal = document.getElementById('changePasswordModal');
+    if (modal) modal.classList.add('active');
+}
+
+function closeChangePasswordModal() {
+    const modal = document.getElementById('changePasswordModal');
+    if (modal) modal.classList.remove('active');
+}
+
+// === PROFILE PHOTO ===
+function setProfileAvatars(user) {
+    const headerImg = document.getElementById('headerAvatarImg');
+    const headerIcon = document.getElementById('headerAvatarIcon');
+    const panelImg = document.getElementById('profilePanelAvatar');
+    const panelIcon = document.getElementById('profilePanelAvatarIcon');
+    const removeBtn = document.getElementById('removePhotoBtn');
+
+    if (user && user.profile_photo) {
+        const photoUrl = `${API_BASE}/api/users/${user.id}/photo?t=${Date.now()}`;
+        if (headerImg) { headerImg.src = photoUrl; headerImg.style.display = 'block'; }
+        if (headerIcon) headerIcon.style.display = 'none';
+        if (panelImg) { panelImg.src = photoUrl; panelImg.style.display = 'block'; }
+        if (panelIcon) panelIcon.style.display = 'none';
+        if (removeBtn) removeBtn.style.display = 'inline';
+    } else {
+        if (headerImg) { headerImg.src = ''; headerImg.style.display = 'none'; }
+        if (headerIcon) headerIcon.style.display = 'inline';
+        if (panelImg) { panelImg.src = ''; panelImg.style.display = 'none'; }
+        if (panelIcon) panelIcon.style.display = 'inline';
+        if (removeBtn) removeBtn.style.display = 'none';
+    }
+}
+
+async function uploadProfilePhoto(input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+
+    // Max 2MB
+    if (file.size > 2 * 1024 * 1024) {
+        showToast('Photo must be under 2MB', 'error');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('photo', file);
+
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/profile/photo`, {
+            method: 'POST',
+            credentials: 'include',
+            body: formData
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+            currentUser = data.user;
+            setProfileAvatars(currentUser);
+            showToast('Profile photo updated', 'success');
+        } else {
+            showToast(data.error || 'Upload failed', 'error');
+        }
+    } catch (e) {
+        showToast('Upload failed', 'error');
+    }
+    input.value = ''; // Reset file input
+}
+
+async function removeProfilePhoto() {
+    try {
+        const res = await fetch(`${API_BASE}/api/auth/profile/photo`, {
+            method: 'DELETE',
+            credentials: 'include'
+        });
+        const data = await res.json();
+        if (res.ok && data.user) {
+            currentUser = data.user;
+            setProfileAvatars(currentUser);
+            showToast('Profile photo removed', 'info');
+        }
+    } catch (e) {
+        showToast('Failed to remove photo', 'error');
+    }
+}
+
+// === PROFILE PANEL ===
+function openProfilePanel() {
+    const overlay = document.getElementById('profilePanelOverlay');
+    const panel = document.getElementById('profilePanel');
+    if (overlay) overlay.classList.add('active');
+    if (panel) panel.classList.add('active');
+}
+
+function closeProfilePanel() {
+    const overlay = document.getElementById('profilePanelOverlay');
+    const panel = document.getElementById('profilePanel');
+    if (overlay) overlay.classList.remove('active');
+    if (panel) panel.classList.remove('active');
+}
+
+// Close profile panel on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeProfilePanel();
+});
+
+async function changePassword() {
+    console.log('[Auth] Change Password triggered');
+    const oldPassword = document.getElementById('oldPassword').value;
+    const newPassword = document.getElementById('newPassword').value;
+    const confirmNewPassword = document.getElementById('confirmNewPassword').value;
+
+    if (!oldPassword || !newPassword || !confirmNewPassword) {
+        showToast('Please fill in all password fields', 'error');
+        return;
+    }
+
+    if (newPassword !== confirmNewPassword) {
+        showToast('New passwords do not match', 'error');
+        return;
+    }
+
+    if (newPassword.length < 8) {
+        showToast('New password must be at least 8 characters', 'error');
+        return;
+    }
+
+    // Check strength matches backend: at least one number or uppercase
+    if (newPassword.toLowerCase() === newPassword && !/\d/.test(newPassword)) {
+        showToast('Password must contain at least one number or uppercase letter', 'error');
+        return;
+    }
+
+    try {
+        const result = await apiCall('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                old_password: oldPassword,
+                new_password: newPassword
+            })
+        });
+
+        if (result && result.success) {
+            showToast('Password updated successfully!', 'success');
+            // Clear inputs
+            document.getElementById('oldPassword').value = '';
+            document.getElementById('newPassword').value = '';
+            document.getElementById('confirmNewPassword').value = '';
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
     }
 }
 
@@ -341,11 +524,157 @@ async function saveProfile() {
     }
 }
 
-function showAuthModal() {
+// ============================================================================
+// DEVICE TOKEN MANAGEMENT
+// ============================================================================
+
+async function loadDeviceTokens() {
+    const container = document.getElementById('deviceTokensList');
+    if (!container) return;
+
+    try {
+        const devices = await apiCall('/api/devices');
+        if (!devices || devices.length === 0) {
+            container.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No devices registered. Generate a token above.</span>';
+            return;
+        }
+
+        container.innerHTML = devices.map(d => `
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--border);">
+                <div>
+                    <span style="font-weight: 600;">${d.device_name}</span>
+                    <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem; font-family: monospace;">rsk_••••${d.token ? d.token.slice(-4) : '????'}</span>
+                    ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ACTIVE</span>'}
+                </div>
+                ${!d.revoked ? `<button class="btn btn-danger btn-sm" onclick="revokeDeviceToken(${d.id})" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">Revoke</button>` : ''}
+            </div>
+        `).join('');
+    } catch (e) {
+        container.innerHTML = '<span style="color: var(--error); font-size: 0.85rem;">Failed to load devices.</span>';
+    }
+}
+
+async function generateDeviceToken() {
+    const nameInput = document.getElementById('newDeviceName');
+    const deviceName = nameInput.value.trim() || 'RS-Core';
+
+    try {
+        const result = await apiCall('/api/devices/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ device_name: deviceName })
+        });
+
+        if (result && result.token) {
+            // Show token once
+            const display = document.getElementById('newTokenDisplay');
+            const tokenInput = document.getElementById('newTokenValue');
+            display.style.display = 'block';
+            tokenInput.value = result.token;
+
+            // Add "Provision" button to token display
+            const provisionContainer = document.getElementById('tokenActionBtns');
+            if (provisionContainer) {
+                provisionContainer.innerHTML = `
+                    <button class="btn btn-primary" onclick="openHotspotSetup('${result.token}')" style="flex: 1;">
+                        <i class="fas fa-magic"></i> Auto-Setup Device
+                    </button>
+                    <button class="btn secondary" onclick="copyDeviceToken()" style="flex: 1;">
+                        <i class="fas fa-copy"></i> Copy Token
+                    </button>
+                `;
+            }
+
+            nameInput.value = '';
+            showToast('Device token generated!', 'success');
+            loadDeviceTokens();
+        }
+    } catch (e) {
+        showToast('Failed to generate token: ' + e.message, 'error');
+    }
+}
+
+function copyDeviceToken() {
+    const tokenInput = document.getElementById('newTokenValue');
+    tokenInput.select();
+    document.execCommand('copy');
+    showToast('Token copied to clipboard!', 'success');
+}
+
+async function revokeDeviceToken(tokenId) {
+    if (!confirm('Revoke this device token? The device will no longer be able to upload data.')) return;
+
+    try {
+        await apiCall(`/api/devices/${tokenId}`, { method: 'DELETE' });
+        showToast('Token revoked', 'info');
+        loadDeviceTokens();
+    } catch (e) {
+        showToast('Failed to revoke: ' + e.message, 'error');
+    }
+}
+
+// ============================================================================
+// MAGIC LINK PROVISIONING (Zero-Typing Setup)
+// ============================================================================
+
+function openHotspotSetup(token) {
+    const modal = document.getElementById('hotspotSetupModal');
+    if (!modal) return;
+
+    // Pre-fill from localStorage if available
+    const savedSsid = localStorage.getItem('provision_ssid') || '';
+    const savedPass = localStorage.getItem('provision_pass') || '';
+
+    document.getElementById('setupToken').value = token;
+    document.getElementById('setupSsid').value = savedSsid;
+    document.getElementById('setupPass').value = savedPass;
+
+    modal.classList.add('active');
+}
+
+function closeHotspotSetup() {
+    document.getElementById('hotspotSetupModal').classList.remove('active');
+}
+
+function generateMagicLink() {
+    const ssid = document.getElementById('setupSsid').value.trim();
+    const pass = document.getElementById('setupPass').value.trim();
+    const token = document.getElementById('setupToken').value.trim();
+
+    if (!ssid || !token) {
+        showToast('SSID and Token are required', 'warning');
+        return;
+    }
+
+    // Save for next time
+    localStorage.setItem('provision_ssid', ssid);
+    localStorage.setItem('provision_pass', pass);
+
+    // Build Magic Link (using DNS setup.racesense as discussed)
+    // IMPORTANT: We must explicitly pass the api_url so the device knows how to reach this specific production environment
+    const targetApiUrl = API_BASE + '/api/upload';
+    const magicUrl = `http://setup.racesense/setup?ssid=${encodeURIComponent(ssid)}&pass=${encodeURIComponent(pass)}&token=${encodeURIComponent(token)}&api_url=${encodeURIComponent(targetApiUrl)}`;
+
+    // Update UI to show instructions
+    document.getElementById('hotspotPrepSection').style.display = 'none';
+    document.getElementById('hotspotLinkSection').style.display = 'block';
+
+    const linkBtn = document.getElementById('magicLinkBtn');
+    linkBtn.href = magicUrl;
+
+    console.log('[Provisioning] Magic Link generated:', magicUrl);
+}
+
+function resetProvisioningUI() {
+    document.getElementById('hotspotPrepSection').style.display = 'block';
+    document.getElementById('hotspotLinkSection').style.display = 'none';
+}
+
+function showAuthModal(mode) {
     const modal = document.getElementById('authModal');
     if (modal) {
         modal.style.display = 'flex';
-        toggleAuthMode('login');
+        toggleAuthMode(mode || 'login');
     }
 }
 
@@ -357,14 +686,29 @@ function closeAuthModal() {
 function toggleAuthMode(mode) {
     const loginForm = document.getElementById('loginForm');
     const registerForm = document.getElementById('registerForm');
+    const regSuccessPanel = document.getElementById('regSuccessPanel');
     if (mode === 'login') {
         if (loginForm) loginForm.style.display = 'block';
         if (registerForm) registerForm.style.display = 'none';
-    } else {
+        if (regSuccessPanel) regSuccessPanel.style.display = 'none';
+        // Clear any previous login errors
+        const loginError = document.getElementById('loginError');
+        if (loginError) { loginError.style.display = 'none'; loginError.textContent = ''; }
+    } else if (mode === 'register') {
         if (loginForm) loginForm.style.display = 'none';
         if (registerForm) registerForm.style.display = 'block';
+        if (regSuccessPanel) regSuccessPanel.style.display = 'none';
+        // Clear any previous register errors
+        const regError = document.getElementById('regError');
+        if (regError) { regError.style.display = 'none'; regError.textContent = ''; }
     }
 }
+
+window.toggleDetailsSection = function (sectionId) {
+    const el = document.getElementById(sectionId);
+    if (!el) return;
+    el.classList.toggle('collapsed');
+};
 
 async function submitLogin() {
     const email = document.getElementById('loginEmail')?.value || '';
@@ -375,7 +719,8 @@ async function submitLogin() {
         const result = await apiCall('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
+            body: JSON.stringify({ email, password }),
+            displayError: false
         });
         if (result && result.success) {
             currentUser = result.user;
@@ -403,11 +748,17 @@ async function submitRegister() {
         const result = await apiCall('/api/auth/register', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, email, password })
+            body: JSON.stringify({ name, email, password }),
+            displayError: false
         });
         if (result && result.success) {
-            showToast('Registered! Please login.', 'success');
-            toggleAuthMode('login');
+            // Show the registration success / pending approval panel
+            const loginForm = document.getElementById('loginForm');
+            const registerForm = document.getElementById('registerForm');
+            const regSuccessPanel = document.getElementById('regSuccessPanel');
+            if (loginForm) loginForm.style.display = 'none';
+            if (registerForm) registerForm.style.display = 'none';
+            if (regSuccessPanel) regSuccessPanel.style.display = 'block';
         }
     } catch (e) {
         if (errorEl) {
@@ -424,37 +775,8 @@ async function logout() {
     currentUser = null;
     updateAuthUI();
     showToast('Logged out', 'info');
-    // Refresh to home
-    showView('home');
 }
-
-async function checkConnection() {
-    try {
-        await apiCall('/api/health');
-        updateConnectionStatus(true);
-    } catch (error) {
-        updateConnectionStatus(false);
-    }
-}
-
-function updateConnectionStatus(connected) {
-    const statusEl = document.getElementById('connectionStatus');
-    const dot = statusEl.querySelector('.status-dot');
-    const text = document.getElementById('connText');
-
-    if (connected) {
-        statusEl.classList.remove('offline');
-        statusEl.classList.add('online');
-        dot.classList.add('connected');
-        text.textContent = 'Connected';
-    } else {
-        statusEl.classList.remove('online');
-        statusEl.classList.add('offline');
-        dot.classList.remove('connected');
-        text.textContent = 'Disconnected';
-    }
-}
-
+// Deleted legacy checkConnection and updateConnectionStatus
 async function pollStatus() {
     try {
         // 1. Get Pi Status (Recording, Storage, etc)
@@ -510,9 +832,7 @@ async function pollStatus() {
                 }
 
             } catch (espErr) {
-                // Device likely offline
                 document.getElementById('storageIndicator').style.display = 'none';
-                document.getElementById('activeTrackBadge').style.display = 'none';
             }
         }
 
@@ -525,50 +845,19 @@ async function pollStatus() {
  * Ensures the full track metadata from Pi is pushed to the ESP32
  */
 async function ensureTrackSynced(trackId, deviceIP) {
-    if (!deviceIP) return;
-
     try {
-        console.log(`[Sync] Auto-syncing track ${trackId} to device...`);
-        const trackData = await apiCall(`/api/tracks/${trackId}`);
-
-        // Format for ESP32
-        const payload = {
-            id: trackData.track_id.toString(),
-            name: trackData.track_name,
-            pit_center_lat: trackData.pit_center_lat,
-            pit_center_lon: trackData.pit_center_lon,
-            pit_radius_m: trackData.pit_radius_m || 50,
-            start_line: {
-                lat: trackData.start_line.lat,
-                lon: trackData.start_line.lon,
-                radius_m: 20
-            },
-            sectors: trackData.sectors.map((s, idx) => ({
-                idx: idx,
-                end_lat: s.end_lat,
-                end_lon: s.end_lon
-            })),
-            tbl: {}
-        };
-
-        // Format TBL: Convert from list to dict with string keys
-        if (trackData.tbl && trackData.tbl.sectors) {
-            trackData.tbl.sectors.forEach((time, idx) => {
-                payload.tbl[idx.toString()] = time;
-            });
-        }
-
-        const resp = await fetch(`http://${deviceIP}/track/set`, {
-            method: 'POST',
-            body: JSON.stringify(payload)
-        });
-
-        if (resp.ok) {
-            console.log(`[Sync] Track ${trackId} synced successfully`);
+        console.log(`[Sync] Setting active track ${trackId} in cloud...`);
+        const resp = await apiCall(`/api/tracks/${trackId}/active`, { method: 'POST' });
+        if (resp && resp.success) {
+            console.log(`[Sync] Track ${trackId} active in cloud`);
             lastSyncedTrackId = trackId;
+            activeTrackId = trackId;
+            if (currentUser) {
+                currentUser.active_track_id = trackId;
+            }
         }
     } catch (err) {
-        console.error(`[Sync] Failed to sync track ${trackId}:`, err);
+        console.error(`[Sync] Failed to set active track ${trackId}:`, err);
     }
 }
 
@@ -751,6 +1040,15 @@ async function showUserProfile(userId) {
                     <i class="fas fa-user-circle"></i>
                 </div>
                 <h2>${name}</h2>
+                
+                ${currentUser && currentUser.id == userId ? `
+                    <div style="margin-bottom: 1.5rem;">
+                        <button class="btn btn-secondary btn-sm" onclick="showView('settings')">
+                            <i class="fas fa-cog"></i> Edit Profile & Security
+                        </button>
+                    </div>
+                ` : ''}
+
                 <div style="display: flex; justify-content: center; gap: 2rem; margin: 1.5rem 0;">
                     <div style="text-align: center;">
                         <div style="font-size: 1.5rem; font-weight: 800;">${social.followers_count}</div>
@@ -843,7 +1141,7 @@ async function loadTeams() {
         const teamsData = await apiCall('/api/teams');
 
         if (!teamsData || teamsData.length === 0) {
-            const canCreate = currentUser && currentUser.subscription_tier === 'team';
+            const canCreate = currentUser && (currentUser.subscription_tier === 'team');
             container.innerHTML = renderEmptyState(
                 '👥',
                 'No teams yet',
@@ -1395,15 +1693,33 @@ async function loadHomeData() {
         tracks = tracksData.tracks || [];
         sessions = sessionsData || [];
 
-        // Update quick stats
-        document.getElementById('totalTracks').textContent = tracks.length;
-        document.getElementById('totalSessions').textContent = sessions.length;
+        // === GREETING ===
+        updateHomeGreeting();
+
+        // === CONTEXT BANNER ===
+        updateHomeContextBanner(sessions.length);
+
+        // === STATS with count-up animation ===
+        animateCountUp('totalTracks', tracks.length);
+        animateCountUp('totalSessions', sessions.length);
 
         if (sessions.length > 0) {
-            const lastSession = new Date(sessions[0].start_time);
-            document.getElementById('recentSession').textContent = lastSession.toLocaleDateString();
+            const lastSession = sessions[0];
+            const lastDate = new Date(lastSession.start_time);
+            const daysDiff = Math.floor((Date.now() - lastDate) / (1000 * 60 * 60 * 24));
+            let timeAgo;
+            if (daysDiff === 0) timeAgo = 'Today';
+            else if (daysDiff === 1) timeAgo = 'Yesterday';
+            else if (daysDiff < 7) timeAgo = `${daysDiff} days ago`;
+            else timeAgo = lastDate.toLocaleDateString();
+
+            document.getElementById('recentSession').textContent = timeAgo;
+            const trackEl = document.getElementById('recentSessionTrack');
+            if (trackEl) trackEl.textContent = lastSession.track_name || '';
         } else {
-            document.getElementById('recentSession').textContent = 'None';
+            document.getElementById('recentSession').textContent = 'None yet';
+            const trackEl = document.getElementById('recentSessionTrack');
+            if (trackEl) trackEl.textContent = 'Head to Sync Data to get started';
         }
 
         // Show recent sessions (last 5)
@@ -1414,6 +1730,110 @@ async function loadHomeData() {
     }
 }
 
+// === HOME GREETING ===
+function updateHomeGreeting() {
+    const greetingEl = document.getElementById('greetingText');
+    const subEl = document.getElementById('greetingSub');
+    if (!greetingEl) return;
+
+    const hour = new Date().getHours();
+    const name = (currentUser && currentUser.name) ? currentUser.name.split(' ')[0] : '';
+
+    let greeting, sub;
+    if (hour < 5) {
+        greeting = name ? `Burning the midnight oil, ${name}?` : 'Late night session?';
+        sub = 'Reviewing data while the world sleeps.';
+    } else if (hour < 12) {
+        greeting = name ? `Good morning, ${name} 🏍️` : 'Good morning 🏍️';
+        sub = 'Ready to review your rides?';
+    } else if (hour < 17) {
+        greeting = name ? `Good afternoon, ${name}` : 'Good afternoon';
+        sub = "Let's see how you're doing on track.";
+    } else if (hour < 21) {
+        greeting = name ? `Good evening, ${name}` : 'Good evening';
+        sub = 'Time to analyze the day\'s laps.';
+    } else {
+        greeting = name ? `Hey ${name}, still at it?` : 'Evening rider';
+        sub = 'Reviewing telemetry before bed?';
+    }
+
+    greetingEl.textContent = greeting;
+    if (subEl) subEl.textContent = sub;
+}
+
+// === HOME CONTEXT BANNER ===
+function updateHomeContextBanner(sessionCount) {
+    const banner = document.getElementById('homeContextBanner');
+    const icon = document.getElementById('contextBannerIcon');
+    const title = document.getElementById('contextBannerTitle');
+    const detail = document.getElementById('contextBannerDetail');
+    const action = document.getElementById('contextBannerAction');
+    if (!banner) return;
+
+    const deviceIP = localStorage.getItem('lastDeviceIP');
+    const isConnected = isDeviceConnected;
+
+    if (isConnected && deviceIP) {
+        // Device is connected
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-connected';
+        icon.innerHTML = '<i class="fas fa-satellite-dish"></i>';
+        title.textContent = 'RS-Core Online';
+        detail.textContent = 'Your device is connected. Sync your latest sessions.';
+        action.innerHTML = '<button class="btn btn-sm" onclick="triggerBrowserSync()" style="background: var(--success); color: #000;"><i class="fas fa-cloud-upload-alt"></i> Sync Now</button>';
+    } else if (sessionCount === 0) {
+        // Brand new user
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-welcome';
+        icon.innerHTML = '<i class="fas fa-rocket"></i>';
+        title.textContent = 'Welcome to RaceSense!';
+        detail.textContent = 'Upload or sync your first session to get started.';
+        action.innerHTML = '<button class="btn btn-sm btn-primary" onclick="showView(\'process\')"><i class="fas fa-upload"></i> Sync Data</button>';
+    } else if (!deviceIP) {
+        // Has sessions but no device configured
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-nodevice';
+        icon.innerHTML = '<i class="fas fa-plug"></i>';
+        title.textContent = 'No RS-Core detected';
+        detail.textContent = 'Connect your module to sync new sessions.';
+        action.innerHTML = '<button class="btn btn-sm secondary" onclick="showView(\'settings\')"><i class="fas fa-cog"></i> Device Settings</button>';
+    } else {
+        // Has IP but device is offline
+        banner.style.display = 'block';
+        banner.className = 'home-context-banner context-offline';
+        icon.innerHTML = '<i class="fas fa-wifi" style="opacity: 0.5;"></i>';
+        title.textContent = 'RS-Core is offline';
+        detail.textContent = 'Your module will auto-sync when it reconnects.';
+        action.innerHTML = '';
+    }
+}
+
+// === COUNT-UP ANIMATION ===
+function animateCountUp(elementId, target) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+
+    const duration = 800; // ms
+    const start = 0;
+    const startTime = performance.now();
+
+    if (target === 0) {
+        el.textContent = '0';
+        return;
+    }
+
+    function update(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        // Ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = Math.round(start + (target - start) * eased);
+        el.textContent = current;
+        if (progress < 1) requestAnimationFrame(update);
+    }
+    requestAnimationFrame(update);
+}
+
 function renderRecentSessions(recentSessions) {
     const container = document.getElementById('recentSessionsList');
 
@@ -1421,9 +1841,9 @@ function renderRecentSessions(recentSessions) {
         container.innerHTML = renderEmptyState(
             '🏁',
             'No sessions yet',
-            'Connect your device and hit the track to start logging laps!',
-            'Connect Device',
-            "showView('settings')"
+            'Head to Sync Data to upload your first ride, or connect your RS-Core to auto-upload.',
+            'Go to Sync Data',
+            "showView('process')"
         );
         return;
     }
@@ -1465,8 +1885,8 @@ async function loadTracks() {
             container.innerHTML = renderEmptyState(
                 '🗺️',
                 'No tracks yet',
-                'Process your first session and we\'ll automatically learn the track layout.',
-                'Process Files',
+                'Tracks are auto-detected when you analyze ride sessions. Head to Sync Data to import your first ride.',
+                'Go to Sync Data',
                 "showView('process')"
             );
             return;
@@ -1514,21 +1934,13 @@ async function loadTracks() {
  * Manually trigger pushing a track to the ESP32
  */
 async function pushTrackToESP(trackId) {
-    const deviceIP = localStorage.getItem('lastDeviceIP');
-    if (!deviceIP) {
-        showToast('Device not connected', 'error');
-        return;
-    }
-
     try {
-        showToast('Pushing track data...', 'info');
-        await ensureTrackSynced(trackId, deviceIP);
+        showToast('Setting as active track...', 'info');
+        await ensureTrackSynced(trackId, null);
         showToast('Track set as active', 'success');
-
-        // Refresh tracks view to show active state
-        loadTracks();
+        loadTracks(); // Refresh tracks view to show active state
     } catch (err) {
-        showToast('Failed to push track', 'error');
+        showToast('Failed to set track', 'error');
     }
 }
 
@@ -1587,7 +1999,7 @@ async function viewTrack(trackId) {
 
         let mapDisplay = '';
         try {
-            const geometry = await apiCall(`/api/tracks/${trackId}/geometry`);
+            const geometry = await apiCall(`/api/tracks/${trackId}/geometry`, { displayError: false });
             mapDisplay = generateTrackMapSVG(geometry, null, null, { title: '' });
         } catch (e) {
             mapDisplay = `<img src="${API_BASE}/api/tracks/${trackId}/map" 
@@ -1648,6 +2060,7 @@ async function viewTrack(trackId) {
 
 function viewTrackSessions(trackId) {
     showView('sessions');
+    switchSessionTab('sessions');
     loadSessions(trackId);
 }
 
@@ -1682,8 +2095,8 @@ async function loadSessions(filterTrackId = null) {
             container.innerHTML = renderEmptyState(
                 '📊',
                 'No sessions yet',
-                'Process your first ride data to see your sessions here.',
-                'Process Files',
+                'Upload a CSV from your RS-Core in the Sync Data tab, then analyze it to see your sessions here.',
+                'Go to Sync Data',
                 "showView('process')"
             );
             return;
@@ -2905,7 +3318,7 @@ function renderFileTable() {
     const limit = window.sessionLimit;
 
     if (files.length === 0) {
-        container.innerHTML = '<p class="help-text">No learning files available</p>';
+        container.innerHTML = '<p class="help-text">No files found. Upload a CSV or sync from your RS-Core to get started.</p>';
         return;
     }
 
@@ -2949,7 +3362,7 @@ function renderFileTable() {
         const processedBadge = isProcessed ? '<span style="color:#4CAF50; margin-left:0.5rem;" title="Already Processed">✅</span>' : '';
 
         const isLimitReached = limit && limit.tier === 'free' && limit.used >= limit.max;
-        const processBtn = `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">${isProcessed ? 'Re-process' : 'Process'}</button>`;
+        const processBtn = `<button class="btn small" ${isLimitReached ? 'disabled title="Session limit reached. Upgrade to Pro."' : ''} onclick="processFile('${f.filename}')">${isProcessed ? 'Re-analyze' : 'Analyze'}</button>`;
 
         return `
             <tr class="${rowClass}">
@@ -2993,7 +3406,7 @@ function renderFileTable() {
         ${limitBanner}
         <div style="margin-bottom: 1rem; display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
             <button class="btn btn-primary" id="btnProcessAll" onclick="processAllFiles()" ${(unprocessedCount === 0 || (limit && limit.tier === 'free' && limit.used >= limit.max)) ? 'disabled style="opacity:0.5;"' : ''}>
-                🚀 Process All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}
+                🚀 Analyze All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}
             </button>
             <button class="btn btn-danger btn-sm" id="btnDeleteBulk" onclick="deleteSelectedFiles()" style="display:none;">
                 Delete Selected
@@ -3059,7 +3472,7 @@ function updateBulkUI() {
         const files = window.currentFiles || [];
         const unprocessedCount = files.filter(f => !processedFiles.has(f.filename)).length;
         if (processBtn) {
-            processBtn.textContent = `🚀 Process All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}`;
+            processBtn.textContent = `🚀 Analyze All${unprocessedCount > 0 ? ` (${unprocessedCount})` : ''}`;
             processBtn.disabled = unprocessedCount === 0;
             processBtn.style.opacity = unprocessedCount === 0 ? '0.5' : '1';
         }
@@ -3166,20 +3579,57 @@ async function performDelete(filenames, fromArchive = false) {
 }
 
 async function processFile(filename) {
-    if (!confirm(`Process session '${filename}'? This will take a few seconds.`)) {
-        return;
+    const isProcessed = window.processedFiles && window.processedFiles.has(filename);
+    let isForce = false;
+
+    if (isProcessed) {
+        if (!confirm(`Warning: This session has already been analyzed. Re-analyzing may cause duplicate sessions if the old one is not already deleted.\n\nProceed with processing?`)) {
+            return;
+        }
+        isForce = true;
+    } else {
+        if (!confirm(`Process session '${filename}'? This will be dispatched to the background queue.`)) {
+            return;
+        }
     }
 
-    showToast('Processing session...', 'info');
+    showToast('Queuing session...', 'info');
 
     try {
         const result = await apiCall('/api/process', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ filename: filename })
+            body: JSON.stringify({ filename: filename, force: isForce })
         });
 
-        showToast('Session processed successfully!', 'success');
+        if (result && result.status === 'already_processed') {
+            showToast(result.message || 'Already analyzed', 'info');
+            return;
+        }
+
+        if (result && result.job_id) {
+            showToast('Analysis processing...', 'info');
+
+            // Poll for completion
+            let isComplete = false;
+            while (!isComplete) {
+                await new Promise(res => setTimeout(res, 2000));
+                try {
+                    const statusRes = await apiCall(`/api/jobs/${result.job_id}`);
+                    if (statusRes.status === 'complete') {
+                        isComplete = true;
+                        showToast('Session processed successfully!', 'success');
+                    } else if (statusRes.status === 'failed') {
+                        isComplete = true;
+                        showToast('Analysis failed: ' + statusRes.error, 'error');
+                    }
+                } catch (e) {
+                    console.error("Polling error", e);
+                }
+            }
+        } else {
+            showToast('Session processed!', 'success');
+        }
 
         // Refresh data
         setTimeout(() => {
@@ -3187,7 +3637,7 @@ async function processFile(filename) {
         }, 1000);
 
     } catch (error) {
-        showToast('Processing failed', 'error');
+        showToast('Analysis failed', 'error');
     }
 }
 
@@ -3200,13 +3650,15 @@ async function processAllFiles() {
     let filesToProcess = [];
 
     if (selectedCheckboxes.length > 0) {
-        // Process only selected files (allowing re-processing)
+        // Process only selected non-analyzed files
         filesToProcess = Array.from(selectedCheckboxes)
-            .map(cb => cb.value);
+            .map(cb => cb.value)
+            .filter(filename => !processedFiles.has(filename));
     } else {
-        // Process all files (allowing re-processing)
+        // Process all non-analyzed files
         filesToProcess = files
-            .map(f => f.filename);
+            .map(f => f.filename)
+            .filter(filename => !processedFiles.has(filename));
     }
 
     if (filesToProcess.length === 0) {
@@ -3219,28 +3671,50 @@ async function processAllFiles() {
         return;
     }
 
-    showToast(`Processing ${filesToProcess.length} files...`, 'info');
+    showToast(`Analyzing ${filesToProcess.length} files...`, 'info');
 
     try {
-        const isForce = selectedCheckboxes.length > 0;
         const result = await apiCall('/api/process/all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ files: filesToProcess, force: isForce })
+            body: JSON.stringify({ files: filesToProcess, force: false })
         });
 
-        if (result.processed > 0) {
-            showToast(`Successfully processed ${result.processed} file(s)!`, 'success');
-        } else if (result.skipped > 0) {
+        if (result.status === 'queued') {
+            showToast(`Queued ${result.queued} files for background processing!`, 'info');
+
+            if (result.details && result.details.job_ids) {
+                let pendingJobs = [...result.details.job_ids];
+                while (pendingJobs.length > 0) {
+                    await new Promise(res => setTimeout(res, 3000));
+
+                    for (let i = pendingJobs.length - 1; i >= 0; i--) {
+                        try {
+                            const statusRes = await apiCall(`/api/jobs/${pendingJobs[i]}`);
+                            if (statusRes.status === 'complete' || statusRes.status === 'failed') {
+                                pendingJobs.splice(i, 1);
+                            }
+                        } catch (e) {
+                            pendingJobs.splice(i, 1);
+                        }
+                    }
+                    if (pendingJobs.length > 0) {
+                        showToast(`Still processing ${pendingJobs.length} files...`, 'info');
+                    }
+                    loadLearningFiles(); // Load files as they complete
+                }
+                showToast(`All queued files finished processing!`, 'success');
+            }
+        } else if (result.skipped > 0 && result.queued === 0) {
             showToast('All files were already processed', 'info');
         }
 
         if (result.failed > 0) {
-            showToast(`${result.failed} file(s) failed to process`, 'warning');
-            console.error('Processing failures:', result.details?.failed);
+            showToast(`${result.failed} file(s) failed to queue`, 'warning');
+            console.error('Queue failures:', result.details?.failed);
         }
 
-        // Refresh the file list to show updated checkmarks
+        // Full refresh at the end
         setTimeout(() => {
             loadLearningFiles();
         }, 500);
@@ -4390,18 +4864,18 @@ async function runComparison(sessionId) {
     status.innerText = "Analyzing telemetry...";
 
     try {
-        const res = await apiCall(`/api/sessions/${sessionId}/compare?lap1=${ref}&lap2=${target}`);
-        currentComparisonData = res.data;
+        const res = await apiCall(`/api/compare?session1=${sessionId}&lap1=${ref}&session2=${sessionId}&lap2=${target}`);
+        currentComparisonData = res;
 
         status.innerText = "";
         results.style.display = "block";
 
         // Setup Replay
-        initReplayMap(res.data);
+        initReplayMap(res);
 
         // Draw Chart
         setTimeout(() => {
-            drawDeltaChart(res.data);
+            drawDeltaChart(res);
         }, 50);
 
     } catch (e) {
@@ -5723,371 +6197,127 @@ function drawFrame() {
     }
 }
 // ============================================================================
-// WIFI SYNC
+// BROWSER-BASED SYNC
 // ============================================================================
-
-async function syncFromDevice(forcePrompt = false) {
-    let ip = await autoDetectDeviceIP();
-
-    if (!ip || forcePrompt) {
-        const defaultIP = ip || '192.168.4.1';
-        ip = prompt("Enter ESP32 IP Address:\n(Or cancel to Scan Network)", defaultIP);
-        if (!ip) {
-            // User cancelled prompt, offer scan?
-            if (confirm("Scan local network for Datalogger instead?")) {
-                scanDevicesAndSync();
-            }
-            return;
-        }
-    }
-
-    localStorage.setItem('lastDeviceIP', ip);
-    await performSync(ip);
-}
-
-async function performSync(ip) {
-    const btn = document.querySelector('button[onclick="syncFromDevice()"]');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Syncing...';
-    btn.disabled = true;
-
-    showToast(`Connecting to ${ip}...`, 'info');
-
-    try {
-        const res = await apiCall('/api/sync/device', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip })
-        });
-
-        if (res.success) {
-            const count = res.synced.length;
-            if (count > 0) {
-                showToast(`Successfully synced ${count} files!`, 'success');
-                loadLearningFiles();
-            } else {
-                showToast('Connected! No new files.', 'success');
-            }
-            if (res.failed.length > 0) showToast(`Warning: ${res.failed.length} failed`, 'warning');
-
-            // Update connection status immediately
-            checkDeviceConnection();
-        } else if (res.error) {
-            // If connection failed, ask user
-            if (confirm(`Connection to ${ip} failed. Scan for device?`)) {
-                scanDevicesAndSync();
-            } else {
-                showToast(res.error, 'error');
-            }
-        }
-    } catch (error) {
-        if (confirm(`Connection to ${ip} failed. Scan for device?`)) {
-            scanDevicesAndSync();
-        } else {
-            showToast('Sync Failed', 'error');
-        }
-    } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
-
-async function scanDevicesAndSync() {
-    const btn = document.querySelector('button[onclick="scanDevicesAndSync()"]');
-    const originalIcon = btn ? btn.innerHTML : '';
-    if (btn) {
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-        btn.disabled = true;
-    }
-
-    showToast('Scanning network...', 'info');
-
-    // Clear previous IP context
-    if (document.getElementById('devConfigIP')) document.getElementById('devConfigIP').value = '';
-    localStorage.removeItem('lastDeviceIP');
-
-    const startTime = Date.now();
-
-    try {
-        const res = await apiCall('/api/device/scan');
-
-        // Ensure at least 3 seconds for visual feedback
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 3000) {
-            await new Promise(resolve => setTimeout(resolve, 3000 - elapsed));
-        }
-
-        const devices = res.devices || [];
-
-        if (devices.length === 0) {
-            showToast("No Datalogger devices found on network.", 'warning');
-        } else if (devices.length === 1) {
-            const newIP = devices[0].ip;
-            showToast(`Device found at ${newIP}!`, 'success');
-
-            // Update stored IP and input field
-            localStorage.setItem('lastDeviceIP', newIP);
-            if (document.getElementById('devConfigIP')) {
-                document.getElementById('devConfigIP').value = newIP;
-            }
-
-            // Force immediate status update
-            await checkDeviceConnection();
-
-        } else {
-            // Multiple
-            const ips = devices.map(d => d.ip).join(', ');
-            showToast(`Found ${devices.length} devices: ${ips}`, 'info');
-            // Save first one
-            localStorage.setItem('lastDeviceIP', devices[0].ip);
-            await checkDeviceConnection();
-        }
-    } catch (e) {
-        showToast('Scan failed: ' + e.message, 'error');
-        console.error('[Scan] Error:', e);
-    } finally {
-        if (btn) {
-            btn.innerHTML = originalIcon;
-            btn.disabled = false;
-        }
-    }
-}
-
-// ============================================================================
-// DEVICE CONFIG
-// ============================================================================
-
-async function configureDeviceWifi() {
-    const ip = document.getElementById('devConfigIP').value.trim();
-    const ssid = document.getElementById('devConfigSSID').value.trim();
-    const password = document.getElementById('devConfigPass').value.trim();
-
-    if (!ip || !ssid || !password) {
-        showToast('Please fill all fields', 'warning');
-        return;
-    }
-
-    const btn = document.querySelector('button[onclick="configureDeviceWifi()"]');
-    const originalText = btn.innerHTML;
-    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-    btn.disabled = true;
-
-    // Save IP to localStorage immediately
-    localStorage.setItem('lastDeviceIP', ip);
-
-    try {
-        // Try direct call to ESP32 first (works when browser is on hotspot)
-        console.log(`[WiFi Config] Trying direct call to http://${ip}/wifi/add`);
-        const directResponse = await fetch(`http://${ip}/wifi/add`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ssid, password }),
-            mode: 'cors'
-        });
-
-        if (directResponse.ok) {
-            const data = await directResponse.json();
-            if (data.success) {
-                showToast('Success! Device is rebooting to connect to ' + ssid, 'success');
-                return;
-            }
-        }
-    } catch (directError) {
-        console.log('[WiFi Config] Direct call failed (expected if not on hotspot):', directError.message);
-        // Fall through to try backend proxy
-    }
-
-    try {
-        // Fallback: Try via backend (works when backend is on same network as ESP32)
-        console.log('[WiFi Config] Trying via backend proxy /api/device/configure');
-        const res = await apiCall('/api/device/configure', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip, ssid, password })
-        });
-
-        if (res.success) {
-            showToast('Success! Device is rebooting...', 'success');
-        } else if (res.error) {
-            showToast('Failed: ' + res.error, 'error');
-        }
-    } catch (error) {
-        showToast('Configuration Failed. Make sure you are connected to ESP32 or same network.', 'error');
-        console.error('[WiFi Config] Both methods failed:', error);
-    } finally {
-        btn.innerHTML = originalText;
-        btn.disabled = false;
-    }
-}
-
-// Helper: Load saved IP into config box on load
-document.addEventListener('DOMContentLoaded', () => {
-    const savedIP = localStorage.getItem('lastDeviceIP');
-    if (savedIP && document.getElementById('devConfigIP')) {
-        document.getElementById('devConfigIP').value = savedIP;
-    }
-    // Fast initial check with direct fetch
-    fastConnectCheck();
-    // Background polling every 30s
-    setInterval(checkDeviceConnection, 30000);
-});
-
-// Fast connect - tries direct fetch to last known IP first
-async function fastConnectCheck() {
-    const ip = localStorage.getItem('lastDeviceIP');
-    const badge = document.getElementById('connectionStatus');
-    const text = document.getElementById('connText');
-
-    if (!badge || !text) return;
-
-    if (!ip) {
-        badge.className = 'status-badge offline';
-        text.textContent = 'No Device';
-        return;
-    }
-
-    badge.className = 'status-badge checking';
-    text.textContent = 'Checking...';
-
-    try {
-        const response = await fetch(`http://${ip}/status`, {
-            mode: 'cors',
-            signal: AbortSignal.timeout(2000)
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            badge.className = 'status-badge online';
-            text.textContent = `Connected: ${ip}`;
-            updateStorageIndicator(data);
-            console.log('[FastCheck] Direct connection success:', ip);
-            return;
-        }
-    } catch (e) {
-        console.log('[FastCheck] Direct fetch failed, trying backend...');
-    }
-
-    checkDeviceConnection();
-}
-
 /**
- * Auto-detects the device IP using BLE (if connected) or network scan.
- * Stores the found IP in localStorage.
- * @returns {Promise<string|null>} Found IP or null
+ * Manual CSV Upload Handling
  */
-async function autoDetectDeviceIP() {
-    // 1. Check BLE if connected
-    if (bleConnector && bleConnector.isConnected()) {
-        try {
-            const status = await bleConnector.getWifiStatus();
-            if (status.connected && status.ip && status.ip !== '0.0.0.0') {
-                console.log('[AutoDetect] Found IP via BLE:', status.ip);
-                localStorage.setItem('lastDeviceIP', status.ip);
-                return status.ip;
-            }
-        } catch (e) {
-            console.warn('[AutoDetect] Failed to get IP via BLE', e);
-        }
-    }
-
-    // 2. Check localStorage
-    const savedIP = localStorage.getItem('lastDeviceIP');
-    if (savedIP) return savedIP;
-
-    // 3. Fallback to network scan
-    try {
-        console.log('[AutoDetect] Falling back to network scan...');
-        const res = await apiCall('/api/device/scan', { displayError: false });
-        if (res.devices && res.devices.length > 0) {
-            const ip = res.devices[0].ip;
-            console.log('[AutoDetect] Found IP via scan:', ip);
-            localStorage.setItem('lastDeviceIP', ip);
-            return ip;
-        }
-    } catch (e) {
-        console.warn('[AutoDetect] Network scan failed', e);
-    }
-
-    return null;
+function triggerFileUpload() {
+    const input = document.getElementById('manualCsvUpload');
+    if (input) input.click();
 }
 
-async function checkDeviceConnection() {
-    const ip = localStorage.getItem('lastDeviceIP');
-    const badge = document.getElementById('connectionStatus');
-    const text = document.getElementById('connText');
+async function handleManualUpload(event) {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
-    // New UI Elements
-    const scanBadge = document.getElementById('scanStatusBadge');
-    const scanText = document.getElementById('scanStatusText');
-    const scanIp = document.getElementById('scanIpText');
+    showToast(`Uploading ${files.length} file(s)...`, 'info');
 
-    if (!badge || !text) return; // Elements not ready yet
+    let successCount = 0;
+    let failCount = 0;
 
-    if (!ip) {
-        badge.className = 'status-badge offline';
-        text.textContent = 'No Device IP';
-        if (scanBadge) scanBadge.className = 'status-dot error';
-        if (scanText) { scanText.textContent = 'Disconnected'; scanText.style.color = 'var(--text-primary)'; }
-        if (scanIp) scanIp.textContent = '---';
-        return;
+    for (let i = 0; i < files.length; i++) {
+        try {
+            const success = await uploadOneFile(files[i]);
+            if (success) successCount++;
+            else failCount++;
+        } catch (e) {
+            console.error('Upload failed:', e);
+            failCount++;
+        }
     }
 
+    if (successCount > 0) {
+        showToast(`Successfully uploaded ${successCount} file(s)`, 'success');
+        if (typeof loadLearningFiles === 'function') {
+            loadLearningFiles();
+        }
+    }
+    if (failCount > 0) {
+        showToast(`Failed to upload ${failCount} file(s)`, 'error');
+    }
+
+    // Clear the input so the same files can be selected again
+    event.target.value = '';
+}
+
+async function uploadOneFile(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const content = e.target.result;
+                const res = await apiCall('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: file.name,
+                        content: content,
+                        skip_analysis: true // Just save it to learning folder
+                    })
+                });
+                resolve(res && res.success);
+            } catch (err) {
+                console.error('apiCall error:', err);
+                resolve(false);
+            }
+        };
+        reader.onerror = () => {
+            console.error('FileReader error');
+            resolve(false);
+        };
+        reader.readAsText(file);
+    });
+}
+
+
+async function pollCloudHeartbeat() {
+    // Re-schedule first to ensure persistence
+    setTimeout(pollCloudHeartbeat, 15000);
+
+    if (!currentUser) return;
+
     try {
-        const res = await apiCall(`/api/device/check?ip=${ip}`);
-        if (res && res.reachable) {
-            badge.className = 'status-badge online';
-            text.textContent = `Connected: ${ip}`;
+        const res = await apiCall('/api/devices', { displayError: false });
+        if (res && res.length > 0) {
+            const now = new Date();
+            let isOnline = false;
 
-            if (scanBadge) scanBadge.className = 'status-dot success';
-            if (scanText) { scanText.textContent = 'Connected'; scanText.style.color = 'var(--success)'; }
-            if (scanIp) scanIp.textContent = ip;
+            for (const device of res) {
+                if (device.last_sync) {
+                    // Modern ISO format from backend (with T and Z) is parsed reliably
+                    const lastSyncTime = new Date(device.last_sync);
 
-            console.log('[Status] Device connected:', ip);
-
-            // Check compatibility
-            const warningBadge = document.getElementById('versionWarning');
-            if (warningBadge) {
-                if (res.compatible === false) {
-                    warningBadge.style.display = 'inline-block';
-                    warningBadge.title = `Firmware Mismatch: Device has v${res.info.version}, server requires v${res.min_required}`;
-                    warningBadge.onclick = () => {
-                        showView('settings');
-                        showToast(`Firmware v${res.info.version} is outdated. Update to v${res.min_required} in settings.`, 'warning');
-                    };
-                } else {
-                    warningBadge.style.display = 'none';
+                    // If device synced within last 60 seconds, it's online
+                    // We use Math.abs to handle clock skew in either direction
+                    if (Math.abs(now - lastSyncTime) < 60000) {
+                        isOnline = true;
+                        break;
+                    }
                 }
             }
 
-            // Use storage info from backend response
-            if (res.info) {
-                updateStorageIndicator(res.info);
+            const badge = document.getElementById('connectionStatus');
+            const text = document.getElementById('connText');
+
+            if (badge && text) {
+                if (isOnline) {
+                    badge.className = 'status-badge online';
+                    text.textContent = 'RS-Core Connected';
+                    isDeviceConnected = true;
+                } else {
+                    badge.className = 'status-badge offline';
+                    text.textContent = 'Device Offline';
+                    isDeviceConnected = false;
+                }
             }
-        } else {
-            badge.className = 'status-badge offline';
-            text.textContent = 'Device Offline';
-
-            if (scanBadge) scanBadge.className = 'status-dot warning';
-            if (scanText) { scanText.textContent = 'Offline'; scanText.style.color = 'var(--warning)'; }
-            if (scanIp) scanIp.textContent = ip;
-
-            console.log('[Status] Device offline:', ip);
-            updateStorageIndicator({});  // Hide indicator
         }
-    } catch (err) {
-        badge.className = 'status-badge offline';
-        text.textContent = 'Check Failed';
-
-        if (scanBadge) scanBadge.className = 'status-dot error';
-        if (scanText) { scanText.textContent = 'Error'; scanText.style.color = 'var(--error)'; }
-
-        console.error('[Status] Check failed:', err);
-
-        // Hide storage indicator when offline
-        const storageEl = document.getElementById('storageIndicator');
-        if (storageEl) storageEl.style.display = 'none';
+    } catch (e) {
+        console.warn('[Heartbeat] Failed to fetch device status', e);
     }
 }
+
+// Local device connection logic has been removed in favor of Direct-To-Cloud architecture.
 
 // Update storage indicator
 function updateStorageIndicator(data) {
@@ -6284,10 +6514,7 @@ async function scanForDevice() {
     hideScanProgress();
     showToast('No Datalogger found. Is it powered on?', 'warning');
 
-    const scanBadge = document.getElementById('scanStatusBadge');
-    const scanText = document.getElementById('scanStatusText');
-    if (scanBadge) scanBadge.className = 'status-dot error';
-    if (scanText) { scanText.textContent = 'Not Found'; scanText.style.color = 'var(--error)'; }
+    updateDeviceStatus(false, null);
 
     finishScan(btn);
 }
@@ -6302,23 +6529,15 @@ function finishScanSuccess(ip, data, btn) {
     localStorage.setItem('lastDeviceIP', ip);
 
     // Update Scan Card UI
-    const scanBadge = document.getElementById('scanStatusBadge');
-    const scanText = document.getElementById('scanStatusText');
-    const scanIp = document.getElementById('scanIpText');
-
-    if (scanBadge && scanText && scanIp) {
-        scanBadge.className = 'status-dot success';
-        scanText.textContent = 'Connected';
-        scanText.style.color = 'var(--success)';
-        scanIp.textContent = ip;
-    }
+    updateDeviceStatus(true, ip);
 
     // Update Header Status
     const badge = document.getElementById('connectionStatus');
     const text = document.getElementById('connText');
     if (badge && text) {
         badge.className = 'status-badge online';
-        text.textContent = `Connected: ${ip}`;
+        text.textContent = 'RS-Core Online';
+        isDeviceConnected = true;
     }
     updateStorageIndicator(data);
     finishScan(btn);
@@ -6332,114 +6551,7 @@ function finishScan(btn) {
     }
 }
 
-// Load stored networks from device
-async function loadStoredNetworks() {
-    const ip = getDeviceIP();
-    const container = document.getElementById('storedNetworksList');
 
-    if (!container) return;
-
-    container.innerHTML = '<span style="color: var(--text-muted);"><i class="fas fa-spinner fa-spin"></i> Loading...</span>';
-
-    try {
-        const response = await fetch(`http://${ip}/wifi/list`, {
-            method: 'GET',
-            mode: 'cors',
-            signal: AbortSignal.timeout(5000)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const networks = data.networks || [];
-
-        if (networks.length === 0) {
-            container.innerHTML = '<span style="color: var(--text-muted);">No networks stored. Add one below.</span>';
-        } else {
-            container.innerHTML = networks.map(ssid => `
-                <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; background: var(--bg-primary); border-radius: 4px; margin-bottom: 0.25rem;">
-                    <span><i class="fas fa-wifi" style="margin-right: 0.5rem; color: var(--primary);"></i>${ssid}</span>
-                    <button class="btn btn-danger btn-sm" onclick="removeWifiNetwork('${ssid}')" style="padding: 0.25rem 0.5rem;">
-                        <i class="fas fa-trash"></i>
-                    </button>
-                </div>
-            `).join('');
-        }
-    } catch (e) {
-        container.innerHTML = `<span style="color: var(--danger);">Failed to load: ${e.message}</span>`;
-        console.error('[WiFi List]', e);
-    }
-}
-
-// Add WiFi network to device
-async function addWifiNetwork() {
-    const ip = getDeviceIP();
-    const ssid = document.getElementById('devConfigSSID').value.trim();
-    const password = document.getElementById('devConfigPass').value;
-
-    if (!ssid) {
-        showToast('Please enter SSID', 'warning');
-        return;
-    }
-
-    showToast(`Adding ${ssid}...`, 'info');
-
-    try {
-        const response = await fetch(`http://${ip}/wifi/add`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            mode: 'cors',
-            body: JSON.stringify({ ssid, password }),
-            signal: AbortSignal.timeout(10000)
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            showToast(`✓ Added ${ssid}. Device rebooting...`, 'success');
-
-            // Clear form
-            document.getElementById('devConfigSSID').value = '';
-            document.getElementById('devConfigPass').value = '';
-
-            // Reload list after reboot delay
-            setTimeout(() => loadStoredNetworks(), 5000);
-        } else {
-            const err = await response.text();
-            showToast(`Failed: ${err}`, 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-        console.error('[Add WiFi]', e);
-    }
-}
-
-// Remove WiFi network from device
-async function removeWifiNetwork(ssid) {
-    if (!confirm(`Remove "${ssid}" from stored networks?`)) return;
-
-    const ip = getDeviceIP();
-
-    try {
-        const response = await fetch(`http://${ip}/wifi/remove`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            mode: 'cors',
-            body: JSON.stringify({ ssid }),
-            signal: AbortSignal.timeout(5000)
-        });
-
-        if (response.ok) {
-            showToast(`Removed ${ssid}`, 'success');
-            loadStoredNetworks();
-        } else {
-            showToast('Failed to remove', 'error');
-        }
-    } catch (e) {
-        showToast(`Error: ${e.message}`, 'error');
-    }
-}
 
 
 // ============================================================================
@@ -6524,401 +6636,58 @@ async function flashLatestEspWifi() {
     }
 }
 
-// ============================================================================
-// BLE PROVISIONING INTEGRATION
-// ============================================================================
 
-let bleConnector = null;
+// ============================================================================
+// DEVICE STATUS & AUTO-SYNC
+// ============================================================================
 
 /**
- * AUTO-SHARE WIFI LOGIC
+ * Update device status in settings and home sync banner
  */
-const WIFI_CRED_KEY = 'racesense_wifi_vault';
+function updateDeviceStatus(connected, ip) {
+    const dot = document.getElementById('deviceStatusDot');
+    const text = document.getElementById('deviceStatusText');
+    const ipEl = document.getElementById('deviceStatusIP');
+    const banner = document.getElementById('deviceSyncBanner');
 
-function getWifiVault() {
-    try {
-        const vault = localStorage.getItem(WIFI_CRED_KEY);
-        // Simple obfuscation (b64) to prevent plain text scraping, not for high security
-        return vault ? JSON.parse(atob(vault)) : {};
-    } catch (e) { return {}; }
-}
-
-function saveToWifiVault(ssid, pass) {
-    if (!document.getElementById('autoShareWifiToggle').checked) return;
-    const vault = getWifiVault();
-    vault[ssid] = pass;
-    localStorage.setItem(WIFI_CRED_KEY, btoa(JSON.stringify(vault)));
-}
-
-function toggleAutoShareWifi() {
-    const enabled = document.getElementById('autoShareWifiToggle').checked;
-    localStorage.setItem('autoShareWifiEnabled', enabled);
-    if (!enabled) {
-        if (confirm("Clear saved WiFi vault?")) {
-            localStorage.removeItem(WIFI_CRED_KEY);
+    if (connected && ip) {
+        if (dot) dot.style.background = 'var(--success)';
+        if (text) text.textContent = 'Online';
+        if (ipEl) ipEl.textContent = ip;
+        if (banner) {
+            banner.style.display = 'block';
+            const title = document.getElementById('syncBannerTitle');
+            const detail = document.getElementById('syncBannerDetail');
+            if (title) title.textContent = 'RS-Core Connected';
+            if (detail) detail.textContent = 'Auto-sync active';
         }
-    }
-}
-
-async function attemptAutoWifiShare(visibleNetworks) {
-    if (!document.getElementById('autoShareWifiToggle').checked) return false;
-
-    const vault = getWifiVault();
-    // Prioritize networks by vault presence
-    const match = visibleNetworks.find(ssid => vault[ssid]);
-
-    if (match) {
-        showToast(`Auto-configuring WiFi: ${match}...`, 'info');
-        try {
-            await bleConnector.configureWifi(match, vault[match]);
-            return true;
-        } catch (e) {
-            console.error('[AutoShare] Failed', e);
-        }
-    }
-    return false;
-}
-
-function initBleSupportCheck() {
-    console.log('Checking Web Bluetooth support...');
-    const warning = document.getElementById('bleSupportWarning');
-    const connectBtn = document.getElementById('btnBleConnect');
-
-    // Check if DataloggerBLE class is loaded
-    if (typeof DataloggerBLE === 'undefined') {
-        console.warn('DataloggerBLE class not found. Skipping BLE check.');
-        if (warning) {
-            warning.style.display = 'block';
-            warning.innerHTML = '<i class="fas fa-exclamation-circle"></i> BLE Module failed to load';
-        }
-        if (connectBtn) connectBtn.disabled = true;
-        return;
-    }
-
-    // Restore Auto-Share toggle state
-    const autoShareEnabled = localStorage.getItem('autoShareWifiEnabled') !== 'false';
-    const toggle = document.getElementById('autoShareWifiToggle');
-    if (toggle) toggle.checked = autoShareEnabled;
-
-    if (!DataloggerBLE.isSupported()) {
-        if (warning) warning.style.display = 'block';
-        if (connectBtn) connectBtn.disabled = true;
     } else {
-        bleConnector = new DataloggerBLE();
-        setupBleCallbacks();
+        if (dot) dot.style.background = 'var(--error)';
+        if (text) text.textContent = 'Not detected';
+        if (ipEl) ipEl.textContent = '---';
+        if (banner) banner.style.display = 'none';
     }
+
+    updateLastSyncDisplay();
 }
 
-function setupBleCallbacks() {
-    if (!bleConnector) return;
-
-    bleConnector.onConnect = () => {
-        updateBleUiState('connected');
-        showToast('Bluetooth Connected!', 'success');
-        // Automatically scan for networks on connect
-        handleBleWifiScan();
-        // Try to auto-detect IP if already on WiFi
-        autoDetectDeviceIP().then(ip => {
-            if (ip) checkDeviceConnection();
-        });
-    };
-
-    bleConnector.onDisconnect = () => {
-        updateBleUiState('disconnected');
-        showToast('Bluetooth Disconnected', 'warning');
-    };
-
-    bleConnector.onStatusChange = (status) => {
-        console.log('[BLE] Status Change:', status);
-        if (status.connected && status.ip !== '0.0.0.0') {
-            // Update app state with device IP
-            localStorage.setItem('lastDeviceIP', status.ip);
-            const ipInput = document.getElementById('devConfigIP');
-            if (ipInput) ipInput.value = status.ip;
-
-            showToast(`WiFi Connected! Device IP: ${status.ip}`, 'success');
-
-            // Re-check connection via HTTP now
-            checkDeviceConnection();
-        }
-    };
-
-    bleConnector.onDeviceInfoChange = (info) => {
-        console.log('[BLE] Device Info:', info);
-        // Could update UI elements here
-    };
-}
-
-async function handleBleConnect() {
-    if (!bleConnector) return;
-    try {
-        await bleConnector.connect();
-    } catch (e) {
-        if (e.name !== 'NotFoundError' && e.name !== 'AbortError') {
-            showToast(`BLE Connect Failed: ${e.message}`, 'error');
-        }
-    }
-}
-
-async function provisionHotspot() {
-    const ssid = document.getElementById('hotspotSSID').value;
-    const pass = document.getElementById('hotspotPass').value;
-
-    if (!ssid || !pass) {
-        showToast('Hotspot name and password required', 'warning');
-        return;
-    }
-
-    try {
-        // 1. Check if already connected via BLE
-        if (!bleConnector || !bleConnector.isConnected()) {
-            showToast('Connecting to ESP32 via Bluetooth...', 'info');
-            await handleBleConnect();
-        }
-
-        if (!bleConnector.isConnected()) return;
-
-        // 2. Send credentials
-        showToast(`Provisioning ESP32 for hotspot: ${ssid}...`, 'info');
-        await bleConnector.configureWifi(ssid, pass);
-
-        // 3. Save to local storage for future auto-shares
-        saveToWifiVault(ssid, pass);
-
-        showToast('Provisioned! ESP32 is now searching for your hotspot.', 'success');
-
-        // 4. Start checking for connection
-        setTimeout(() => checkDeviceConnection(), 5000);
-
-    } catch (e) {
-        showToast(`Provisioning failed: ${e.message}`, 'error');
-    }
-}
-
-async function handleBleWifiScan() {
-    if (!bleConnector || !bleConnector.isConnected()) return;
-
-    const select = document.getElementById('bleWifiSelect');
-    select.innerHTML = '<option value="">Scanning...</option>';
-
-    try {
-        const networks = await bleConnector.scanNetworks();
-        if (networks.length === 0) {
-            select.innerHTML = '<option value="">No networks found</option>';
-        } else {
-            select.innerHTML = networks.map(ssid => `<option value="${ssid}">${ssid}</option>`).join('');
-
-            // ATTEMPT AUTO-SHARE
-            const autoSuccess = await attemptAutoWifiShare(networks);
-            if (autoSuccess) {
-                showToast('Auto-share successful! Device is connecting...', 'success');
-            }
-        }
-    } catch (e) {
-        showToast('WiFi scan failed over BLE', 'error');
-        select.innerHTML = '<option value="">Scan failed</option>';
-    }
-}
-
-async function handleBleWifiConfig() {
-    if (!bleConnector || !bleConnector.isConnected()) return;
-
-    const ssid = document.getElementById('bleWifiSelect').value;
-    const password = document.getElementById('bleWifiPass').value;
-
-    if (!ssid) {
-        showToast('Please select a network', 'warning');
-        return;
-    }
-
-    // Save to vault if enabled
-    saveToWifiVault(ssid, password);
-
-    showToast(`Configuring ${ssid}...`, 'info');
-    try {
-        await bleConnector.configureWifi(ssid, password);
-
-        // Start polling for status
-        showToast('Waiting for device to connect to WiFi...', 'info');
-
-        let attempts = 0;
-        const maxAttempts = 20;
-
-        const pollInterval = setInterval(async () => {
-            if (!bleConnector || !bleConnector.isConnected()) {
-                clearInterval(pollInterval);
-                return;
-            }
-            attempts++;
-            try {
-                const status = await bleConnector.getWifiStatus();
-                if (status.connected && status.ip && status.ip !== '0.0.0.0') {
-                    clearInterval(pollInterval);
-                    localStorage.setItem('lastDeviceIP', status.ip);
-
-                    const ipInput = document.getElementById('devConfigIP');
-                    if (ipInput) ipInput.value = status.ip;
-
-                    showToast(`WiFi Connected! IP: ${status.ip}`, 'success');
-
-                    // Trigger device connection check
-                    checkDeviceConnection();
-
-                    // Optionally auto-disconnect BLE to save power after a small delay
-                    setTimeout(() => {
-                        if (bleConnector && bleConnector.isConnected()) {
-                            console.log('[BLE] Auto-disconnecting to save power');
-                            bleConnector.disconnect();
-                        }
-                    }, 3000);
-                }
-            } catch (e) {
-                console.error('Error polling BLE status:', e);
-            }
-
-            if (attempts >= maxAttempts) {
-                clearInterval(pollInterval);
-                showToast('WiFi connection timeout. Check credentials.', 'warning');
-            }
-        }, 1000);
-
-    } catch (e) {
-        showToast('Failed to send WiFi config', 'error');
-    }
-}
-
-async function handleBleStartAP() {
-    if (!bleConnector || !bleConnector.isConnected()) return;
-
-    if (!confirm('Start AP mode? You will need to connect to the "Datalogger-Setup" WiFi.')) return;
-
-    try {
-        await bleConnector.startAPMode();
-        showToast('AP Mode started on device', 'success');
-        // Give heads up about Mac network behavior
-        alert('Please connect your computer to the "Datalogger-Setup" WiFi. Note: You might lose internet while connected.');
-    } catch (e) {
-        showToast('Failed to start AP', 'error');
-    }
-}
-
-function updateBleUiState(state) {
-    const dot = document.getElementById('bleStatusDot');
-    const text = document.getElementById('bleStatusText');
-    const btn = document.getElementById('btnBleConnect');
-    const setupArea = document.getElementById('bleWifiSetup');
-
-    if (state === 'connected') {
-        dot.className = 'status-dot connected';
-        text.textContent = 'Bluetooth: Connected';
-        btn.textContent = 'Disconnect';
-        btn.onclick = () => bleConnector.disconnect();
-        setupArea.style.display = 'block';
+function updateLastSyncDisplay() {
+    const el = document.getElementById('lastSyncTime');
+    if (!el) return;
+    const lastSync = localStorage.getItem('lastSyncTime');
+    if (lastSync) {
+        const d = new Date(lastSync);
+        const now = new Date();
+        const diff = Math.floor((now - d) / 60000);
+        if (diff < 1) el.textContent = 'Just now';
+        else if (diff < 60) el.textContent = `${diff} min ago`;
+        else if (diff < 1440) el.textContent = `${Math.floor(diff / 60)}h ago`;
+        else el.textContent = d.toLocaleDateString();
     } else {
-        dot.className = 'status-dot offline';
-        text.textContent = 'Bluetooth: Not Connected';
-        btn.innerHTML = '<i class="fab fa-bluetooth-b"></i> Connect';
-        btn.onclick = handleBleConnect;
-        setupArea.style.display = 'none';
+        el.textContent = 'Never';
     }
 }
 
-/**
- * UI Cleanup: Collapsible section helper
- */
-function toggleDetailsSection(sectionId) {
-    const section = document.getElementById(sectionId);
-    if (section) {
-        section.classList.toggle('collapsed');
-    }
-}
-
-
-// ============================================================================
-// HYBRID BURST SYNC LOGIC
-// ============================================================================
-
-async function startHybridSync() {
-    const overlay = document.getElementById('syncOverlay');
-    const title = document.getElementById('syncStatusTitle');
-    const details = document.getElementById('syncStatusDetails');
-    const icon = document.getElementById('syncIcon');
-    const progressFill = document.getElementById('syncProgressFill');
-    const progressBar = document.getElementById('syncProgressBar');
-    const closeBtn = document.getElementById('syncCloseBtn');
-
-    // Show overlay
-    overlay.classList.add('active');
-    closeBtn.style.display = 'none';
-    progressBar.style.display = 'none';
-    icon.innerHTML = '<i class="fas fa-sync fa-spin"></i>';
-    icon.style.color = 'var(--primary)';
-    title.textContent = 'Syncing Data';
-    details.textContent = 'Initializing connection...';
-
-    try {
-        window.hybridBurstService.setProgressCallback(({ step, details: stepDetails }) => {
-            details.textContent = stepDetails;
-
-            switch (step) {
-                case 'BLE_CONNECTING':
-                    title.textContent = 'Connecting...';
-                    break;
-                case 'STARTING_AP':
-                    title.textContent = 'Activating WiFi';
-                    break;
-                case 'JOINING_WIFI':
-                    title.textContent = 'Joining Network';
-                    break;
-                case 'DOWNLOADING':
-                    title.textContent = 'Downloading CSVs';
-                    progressBar.style.display = 'block';
-                    // Update progress bar if stepDetails contains "X/Y"
-                    const match = stepDetails.match(/(\d+)\/(\d+)/);
-                    if (match) {
-                        const current = parseInt(match[1]);
-                        const total = parseInt(match[2]);
-                        progressFill.style.width = `${(current / total) * 100}%`;
-                    }
-                    break;
-                case 'AP_STOPPING':
-                    title.textContent = 'Wrapping Up';
-                    progressFill.style.width = '100%';
-                    break;
-                case 'SYNC_COMPLETE':
-                    title.textContent = 'Sync Success!';
-                    icon.innerHTML = '<i class="fas fa-check-circle"></i>';
-                    icon.style.color = 'var(--success)';
-                    closeBtn.style.display = 'block';
-                    showToast('Sync completed successfully!', 'success');
-                    // Refresh data
-                    loadHomeData();
-                    break;
-                case 'ERROR':
-                    title.textContent = 'Sync Failed';
-                    icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-                    icon.style.color = 'var(--error)';
-                    closeBtn.style.display = 'block';
-                    showToast('Sync failed: ' + stepDetails, 'error');
-                    break;
-            }
-        });
-
-        await window.hybridBurstService.startSync();
-    } catch (error) {
-        console.error('Hybrid sync failed:', error);
-        title.textContent = 'Sync Failed';
-        details.textContent = error.message;
-        icon.innerHTML = '<i class="fas fa-exclamation-triangle"></i>';
-        icon.style.color = 'var(--error)';
-        closeBtn.style.display = 'block';
-    }
-}
-
-function closeSyncOverlay() {
-    const overlay = document.getElementById('syncOverlay');
-    overlay.classList.remove('active');
-}
 
 // ============================================================================
 // ADMIN USER MANAGEMENT
@@ -6928,17 +6697,20 @@ let adminUsersData = [];
 let adminCurrentPage = 1;
 let adminPerPage = 50;
 
-async function loadAdminUsers(page = 1, query = '', tier = '') {
+async function loadAdminUsers(page = 1, query = '', tier = '', approval = '') {
     const searchInput = document.getElementById('adminSearchInput');
     const tierFilter = document.getElementById('adminTierFilter');
+    const approvalFilter = document.getElementById('adminApprovalFilter');
 
     query = query || (searchInput ? searchInput.value : '');
     tier = tier || (tierFilter ? tierFilter.value : '');
+    approval = approval || (approvalFilter ? approvalFilter.value : '');
 
     try {
         let url = `/api/admin/users?page=${page}&per_page=${adminPerPage}`;
         if (query) url += `&q=${encodeURIComponent(query)}`;
         if (tier) url += `&tier=${tier}`;
+        if (approval) url += `&approval=${approval}`;
 
         const result = await apiCall(url);
         if (result) {
@@ -6957,8 +6729,13 @@ function renderAdminStats(data) {
     const statsEl = document.getElementById('adminStats');
     if (!statsEl) return;
 
+    const pendingHtml = data.pending_count > 0
+        ? `<span style="color: var(--warning); cursor: pointer;" onclick="document.getElementById('adminApprovalFilter').value='pending'; filterAdminUsers();">⏳ Pending: <strong>${data.pending_count}</strong></span>`
+        : '';
+
     statsEl.innerHTML = `
         <span>Total Users: <strong>${data.total}</strong></span>
+        ${pendingHtml}
         <span>Page <strong>${data.page}</strong> of <strong>${data.pages}</strong></span>
     `;
 }
@@ -6970,7 +6747,7 @@ function renderAdminUsersTable(data) {
     if (data.users.length === 0) {
         tbody.innerHTML = `
             <tr>
-                <td colspan="6" style="text-align: center; padding: 3rem; color: var(--text-dim);">
+                <td colspan="7" style="text-align: center; padding: 3rem; color: var(--text-dim);">
                     <i class="fas fa-user-slash" style="font-size: 2rem; margin-bottom: 1rem; opacity: 0.3; display: block;"></i>
                     No users found matching your filters
                 </td>
@@ -6987,6 +6764,18 @@ function renderAdminUsersTable(data) {
         const isCurrentUser = currentUser && currentUser.id === user.id;
         const adminBadge = user.is_admin ? '<i class="fas fa-crown admin-badge" title="Admin"></i>' : '';
 
+        const approvalBadge = user.is_approved
+            ? '<span class="badge success" style="font-size: 0.65rem; padding: 0.2rem 0.6rem;">APPROVED</span>'
+            : '<span class="badge warning" style="font-size: 0.65rem; padding: 0.2rem 0.6rem;">PENDING</span>';
+
+        const approvalActions = !user.is_approved
+            ? `<button class="btn btn-sm" onclick="adminApproveUser(${user.id}, true)" style="background: var(--success); color: #000; padding: 0.25rem 0.6rem; font-size: 0.75rem;" title="Approve User">
+                    <i class="fas fa-check"></i> Approve
+               </button>`
+            : `<button class="btn btn-sm" onclick="adminApproveUser(${user.id}, false)" style="background: var(--error); color: #fff; padding: 0.25rem 0.6rem; font-size: 0.75rem;" title="Revoke Approval">
+                    <i class="fas fa-ban"></i>
+               </button>`;
+
         return `
             <tr>
                 <td style="color: var(--text-dim); font-family: monospace;">#${user.id}</td>
@@ -6996,6 +6785,7 @@ function renderAdminUsersTable(data) {
                         <span class="admin-user-email">${user.email}</span>
                     </div>
                 </td>
+                <td style="text-align: center;">${approvalBadge}</td>
                 <td>
                     <span class="tier-badge ${user.subscription_tier}">
                         ${user.subscription_tier}
@@ -7005,14 +6795,15 @@ function renderAdminUsersTable(data) {
                 <td>${joinDate}</td>
                 <td>
                     <div class="admin-actions">
-                        <select onchange="adminSetUserTier(${user.id}, this.value)" class="filter-select" style="min-width: 120px; padding: 0.35rem; font-size: 0.8rem;">
+                        ${approvalActions}
+                        <select onchange="adminSetUserTier(${user.id}, this.value)" class="filter-select" style="min-width: 100px; padding: 0.35rem; font-size: 0.8rem;">
                             <option value="free" ${user.subscription_tier === 'free' ? 'selected' : ''}>Free</option>
                             <option value="pro" ${user.subscription_tier === 'pro' ? 'selected' : ''}>Pro</option>
                             <option value="team" ${user.subscription_tier === 'team' ? 'selected' : ''}>Team</option>
                         </select>
                         ${(currentUser.id === 1 && user.id !== 1) ? `
                             <button class="btn-icon" onclick="adminToggleAdmin(${user.id}, ${!user.is_admin})" title="${user.is_admin ? 'Revoke Admin' : 'Grant Admin'}">
-                                <i class="fas ${user.is_admin ? 'fa-user-minus' : 'fa-user-shield'}\"></i>
+                                <i class="fas ${user.is_admin ? 'fa-user-minus' : 'fa-user-shield'}"></i>
                             </button>
                         ` : ''}
                     </div>
@@ -7103,6 +6894,26 @@ async function adminToggleAdmin(userId, isAdmin) {
     }
 }
 
+async function adminApproveUser(userId, approved) {
+    const action = approved ? 'APPROVE' : 'REJECT';
+    if (!confirm(`${action} user #${userId}?`)) return;
+
+    try {
+        const result = await apiCall(`/api/admin/users/${userId}/approve`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ approved: approved })
+        });
+
+        if (result && result.success) {
+            showToast(`User #${userId} ${approved ? 'approved' : 'rejected'}`, 'success');
+            loadAdminUsers(adminCurrentPage);
+        }
+    } catch (e) {
+        showToast('Failed to update approval: ' + e.message, 'error');
+    }
+}
+
 function searchAdminUsers() {
     const query = document.getElementById('adminSearchInput').value;
     loadAdminUsers(1, query);
@@ -7110,6 +6921,21 @@ function searchAdminUsers() {
 
 function filterAdminUsers() {
     const tier = document.getElementById('adminTierFilter').value;
+    const approval = document.getElementById('adminApprovalFilter') ? document.getElementById('adminApprovalFilter').value : '';
     const query = document.getElementById('adminSearchInput').value;
-    loadAdminUsers(1, query, tier);
+    loadAdminUsers(1, query, tier, approval);
 }
+
+// === SCROLL REVEAL ANIMATION ===
+(function initScrollReveal() {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry, i) => {
+            if (entry.isIntersecting) {
+                setTimeout(() => entry.target.classList.add('visible'), i * 100);
+                observer.unobserve(entry.target);
+            }
+        });
+    }, { threshold: 0.15 });
+
+    document.querySelectorAll('[data-animate]').forEach(el => observer.observe(el));
+})();

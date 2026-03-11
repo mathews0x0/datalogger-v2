@@ -3,7 +3,17 @@ from datetime import datetime
 from flask_bcrypt import Bcrypt
 import uuid
 
-db = SQLAlchemy()
+from sqlalchemy import MetaData
+
+convention = {
+    "ix": 'ix_%(column_0_label)s',
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s"
+}
+
+db = SQLAlchemy(metadata=MetaData(naming_convention=convention))
 bcrypt = Bcrypt()
 
 class User(db.Model):
@@ -19,6 +29,7 @@ class User(db.Model):
     subscription_expires_at = db.Column(db.DateTime, nullable=True)
     is_admin = db.Column(db.Boolean, default=False)
     is_approved = db.Column(db.Boolean, default=False)
+    active_track_id = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def set_password(self, password):
@@ -39,6 +50,7 @@ class User(db.Model):
             "subscription_expires_at": self.subscription_expires_at.isoformat() if self.subscription_expires_at else None,
             "is_admin": self.is_admin,
             "is_approved": self.is_approved,
+            "active_track_id": self.active_track_id,
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 
@@ -181,6 +193,12 @@ class DeviceToken(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=True)  # Optional expiration
     last_sync = db.Column(db.DateTime, nullable=True)
+    
+    # Telemetry data from heartbeat
+    device_uid = db.Column(db.String(100), nullable=True)
+    vbatt_sense = db.Column(db.Float, nullable=True)
+    storage_sd_free = db.Column(db.Integer, nullable=True)
+    storage_flash_free = db.Column(db.Integer, nullable=True)
 
     def to_dict(self):
         return {
@@ -191,6 +209,10 @@ class DeviceToken(db.Model):
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "last_sync": self.last_sync.isoformat() + 'Z' if self.last_sync else None,
             "expires_at": self.expires_at.isoformat() + 'Z' if self.expires_at else None,
+            "device_uid": self.device_uid,
+            "vbatt_sense": self.vbatt_sense,
+            "storage_sd_free": self.storage_sd_free,
+            "storage_flash_free": self.storage_flash_free
         }
 
 class Job(db.Model):

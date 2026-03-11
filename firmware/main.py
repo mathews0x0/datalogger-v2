@@ -158,6 +158,9 @@ def run_sync_mode(led, sm, sync_btn, wdt):
     """
     from lib.wifi_manager import load_device_config, stop_wifi
     import network
+    import urequests
+    import ujson
+    import os
     
     config = load_device_config()
     wifi_connected = False
@@ -193,7 +196,9 @@ def run_sync_mode(led, sm, sync_btn, wdt):
                 wifi_connected = True
                 print(f"[Sync] WiFi Connected! IP: {sta.ifconfig()[0]}")
                 led.update_sync("SYNC_FOUND")
+                wdt.feed()
                 time.sleep(1)  # Brief visual confirmation
+                wdt.feed()
                 break
             
             time.sleep_ms(100)
@@ -202,56 +207,145 @@ def run_sync_mode(led, sm, sync_btn, wdt):
             print("[Sync] WiFi connection failed.")
             sta.active(False)
     
-    # --- Phase 2: Upload if connected ---
-    if wifi_connected:
-        pending = sm.list_sessions()
-        if pending:
-            print(f"[Sync] Uploading {len(pending)} file(s)...")
-            led.update_sync("SYNC_UPLOADING")
-            
-            from lib.uploader import sync_all
-            wdt.feed()
-            success = sync_all(sm, led, wdt)
-            
-            if success:
-                print("[Sync] Upload Complete!")
-                # Show success for 5 seconds
-                end = time.ticks_ms() + 5000
-                while time.ticks_diff(time.ticks_ms(), end) < 0:
-                    wdt.feed()
-                    led.update_sync("SYNC_OK")
-                    time.sleep_ms(50)
+    # --- Phase 2 & 3: Dual-Core Sync Architecture ---
+    # Core 1: Background Uploader
+    # Core 0: Main Heartbeat & Active Track loop
+    
+    wdt.feed()
+    from lib.uploader import sync_all
+    wdt.feed()
+    
+    # Helper function to get battery voltage
+    def get_vbatt():
+        raw_v = vbat_adc.read()
+        return (raw_v / 4095.0) * 3.3 * 2.0
+
+    # Background Uploader Thread (Core 1)
+    def uploader_thread_func(sm_ref, led_ref):
+        try:
+            pending = sm_ref.list_sessions()
+            if pending:
+                print(f"[Sync] Uploading {len(pending)} file(s) in background...")
+                # We do not feed main wdt here, sync_all has its own wdt feeds
+                success = sync_all(sm_ref, led_ref, wdt)
+                if success:
+                    print("[Sync] Background Upload Complete!")
+                    led_ref.update_sync("SYNC_OK")
+                else:
+                    print("[Sync] Background Upload had issues.")
+                    led_ref.update_sync("SYNC_FAIL")
             else:
-                print("[Sync] Upload had issues.")
-                end = time.ticks_ms() + 5000
-                while time.ticks_diff(time.ticks_ms(), end) < 0:
-                    wdt.feed()
-                    led.update_sync("SYNC_FAIL")
-                    time.sleep_ms(50)
-        else:
-            print("[Sync] No pending files to upload.")
-            # Show OK since there's nothing to do
-            end = time.ticks_ms() + 3000
-            while time.ticks_diff(time.ticks_ms(), end) < 0:
-                wdt.feed()
-                led.update_sync("SYNC_OK")
-                time.sleep_ms(50)
+                print("[Sync] No pending files to upload.")
+                led_ref.update_sync("SYNC_OK")
+        except Exception as e:
+            print(f"[Sync] Uploader Thread Error: {e}")
+            led_ref.update_sync("SYNC_FAIL")
+
+    if wifi_connected:
+        print("[Sync] Starting Background Uploader (Core 1)...")
+        _thread.start_new_thread(uploader_thread_func, (sm, led))
+
+    # --- Phase 3: Main Heartbeat Loop (Core 0) ---
+    print("[Sync] Main Core handling Heartbeats & Setup. Hold SYNC for 3s to enter Pairing.")
     
-    # --- Phase 3: Stay in sync idle loop ---
-    # Long press (>3s) on sync button → Pairing mode
-    print("[Sync] Idle. Hold SYNC button for 3s to enter Pairing mode.")
-    
-    press_start = 0
     pairing_active = False
+    press_start = 0
+    last_ping = 0
+    wdt.feed()
     
     while True:
         wdt.feed()
+        current_time = time.ticks_ms()
         
         if pairing_active:
             led.update_sync("PAIRING")
             time.sleep_ms(50)
             continue
-        
+            
+        # --- Background Heartbeat (Every 15s) ---
+        if wifi_connected and time.ticks_diff(current_time, last_ping) > 15000:
+            last_ping = current_time
+            try:
+                # Brief white flash to signal a ping is being sent
+                led.set_color(60, 60, 60)
+                
+                # Setup Ping API URL
+                api_url = config.get('api_url', '')
+                if api_url.endswith('/upload'):
+                    ping_url = api_url.replace('/upload', '/device/ping')
+                    track_url = api_url.replace('/upload', '/device/active_track')
+                else:
+                    ping_url = api_url.replace('/upload/chunk', '/device/ping').replace('/upload/complete', '/device/ping')
+                    track_url = ping_url.replace('/ping', '/active_track')
+                    
+                headers = {
+                    'Authorization': f"Bearer {config.get('token', '')}",
+                    'Content-Type': 'application/json'
+                }
+                
+                # Gather Telemetry
+                try: vbatt = get_vbatt()
+                except: vbatt = 0.0
+                
+                try:
+                    stats = os.statvfs('/sd')
+                    sd_free = (stats[0] * stats[3]) // (1024 * 1024)
+                except: sd_free = 0
+                
+                try:
+                    f_stats = os.statvfs('/')
+                    flash_free = (f_stats[0] * f_stats[3])
+                except: flash_free = 0
+                
+                import machine
+                # using unique_id hex string
+                device_uid = ''.join(['{:02x}'.format(b) for b in machine.unique_id()])
+
+                telemetry = {
+                    "device_uid": device_uid,
+                    "vbatt_sense": vbatt,
+                    "storage_sd_free": sd_free,
+                    "storage_flash_free": flash_free
+                }
+                
+                wdt.feed()
+                # 1. PING SERVER
+                resp = urequests.post(ping_url, headers=headers, json=telemetry)
+                wdt.feed()
+                
+                if resp.status_code == 200:
+                    print("[Heartbeat] Sent to server successfully.")
+                    resp.close()
+                    
+                    # 2. PULL ACTIVE TRACK
+                    wdt.feed()
+                    track_resp = urequests.get(track_url, headers=headers)
+                    wdt.feed()
+                    if track_resp.status_code == 200:
+                        t_data = track_resp.json()
+                        if t_data and "active_track" in t_data and t_data["active_track"]:
+                            try:
+                                try: os.mkdir('/data')
+                                except OSError: pass
+                                try: os.mkdir('/data/metadata')
+                                except OSError: pass
+                                
+                                with open('/data/metadata/track.json', 'w') as f:
+                                    ujson.dump(t_data["active_track"], f)
+                                print("[Sync] Active track updated from cloud!")
+                            except Exception as fe:
+                                print(f"[Sync] Flash Write Error: {fe}")
+                    track_resp.close()
+                else:
+                    print(f"[Heartbeat] Server rejected ping: {resp.status_code}")
+                    resp.close()
+                    
+            except Exception as e:
+                print(f"[Heartbeat] Error: {e}")
+            
+            # Ensure LED returns to sync state immediately after flash
+            led.update_sync(led._sync_state)
+            
         # Show current status
         if needs_setup:
             led.update_sync("SETUP_NEEDED")
@@ -382,7 +476,8 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                         print(f"TrackEng Error: {e}")
             
             # LED update (on GPS ticks)
-            base_state = "LOGGING" if fix['valid'] else "SEARCHING"
+            # Remove "LOGGING" base state which forces solid green and masks track feedback
+            base_state = "" if fix['valid'] else "SEARCHING"
             led.update_with_events(base_state)
             
             # Debug output (every ~1s = every 10 GPS ticks)
