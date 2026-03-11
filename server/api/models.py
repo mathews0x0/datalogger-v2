@@ -200,6 +200,12 @@ class DeviceToken(db.Model):
     storage_sd_free = db.Column(db.Integer, nullable=True)
     storage_flash_free = db.Column(db.Integer, nullable=True)
 
+    # Sync progress tracking
+    is_syncing = db.Column(db.Boolean, default=False)
+    last_sync_filename = db.Column(db.String(255), nullable=True)
+    last_sync_chunk = db.Column(db.Integer, default=0)
+    last_sync_total = db.Column(db.Integer, default=0)
+
     def to_dict(self):
         return {
             "id": self.id,
@@ -212,7 +218,11 @@ class DeviceToken(db.Model):
             "device_uid": self.device_uid,
             "vbatt_sense": self.vbatt_sense,
             "storage_sd_free": self.storage_sd_free,
-            "storage_flash_free": self.storage_flash_free
+            "storage_flash_free": self.storage_flash_free,
+            "is_syncing": self.is_syncing,
+            "sync_filename": self.last_sync_filename,
+            "sync_chunk": self.last_sync_chunk,
+            "sync_total": self.last_sync_total
         }
 
 class Job(db.Model):

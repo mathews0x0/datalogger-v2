@@ -156,6 +156,20 @@ def upload_chunk():
         with open(chunk_path, 'wb') as f:
             f.write(data)
 
+        # Record progress for UI
+        if device_token:
+            device_token.is_syncing = True
+            device_token.last_sync_filename = safe_name
+            device_token.last_sync_chunk = chunk_index
+            # We assume the caller might send total chunks in a header if we updated it,
+            # otherwise we just track the index.
+            total_chunks = request.headers.get('X-Total-Chunks')
+            if total_chunks:
+                device_token.last_sync_total = int(total_chunks)
+            
+            device_token.last_sync = datetime.utcnow()
+            db.session.commit()
+
         return jsonify({"received": True, "chunk_index": chunk_index, "bytes": len(data)})
 
     except Exception as e:

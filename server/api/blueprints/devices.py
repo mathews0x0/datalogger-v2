@@ -27,10 +27,23 @@ def create_device_token():
 @devices_bp.route('/api/devices')
 @jwt_required()
 def list_device_tokens():
-    """List all device tokens for the current user"""
+    """List all device tokens for the current user with live status"""
     user_id = get_jwt_identity()
     tokens = DeviceToken.query.filter_by(user_id=user_id).order_by(DeviceToken.created_at.desc()).all()
+    # to_dict now includes sync_filename, sync_chunk, sync_total, etc.
     return jsonify([t.to_dict() for t in tokens])
+
+@devices_bp.route('/api/device/sync-status')
+@jwt_required()
+def get_sync_status():
+    """Live status check for UI progress bars"""
+    user_id = get_jwt_identity()
+    # Find active syncing device for this user
+    active = DeviceToken.query.filter_by(user_id=user_id, is_syncing=True).first()
+    if not active:
+        return jsonify({"is_syncing": False})
+    
+    return jsonify(active.to_dict())
 
 @devices_bp.route('/api/devices/<int:token_id>', methods=['DELETE'])
 @jwt_required()

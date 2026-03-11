@@ -2292,4 +2292,43 @@ Fundamental shift in the uploader's networking model:
 - **Stability:** Zero "ECONNABORTED" errors during sustained 29-file uploads.
 - **Memory:** Managed fragmentation via aggressive `gc.collect()` before large buffer allocations.
 
-**Status:** ✅ Deployed as RS-Core V8 firmware.
+**Status:** ✅ Deployed as RS-Core V9 firmware (Internal: V10 fixes applied).
+
+## [2026-03-12] Phase 7.7: Premium Visual Feedback & Bugfixes (V10)
+
+**Objective:** Finalize the user experience with high-fidelity visual indicators for internal states.
+
+### 1. Fixes & Refinements
+- **Math Import Bug**: Resolved a `NameError: math` in `main.py` caused by the new animation logic.
+- **Heartbeat "Lub-Dub"**: Implemented a realistic double-thump pulse for the heartbeat phase.
+- **Blocking Animation Loops**: Wrapped network handshakes in short, high-priority animation loops to ensure the visual pattern "locks in" for the user before the request blocks the core.
+- **Hypersonic Uploading**: Increased the green upload blink speed to **40ms** for a high-throughput, high-energy visual effect.
+
+**Status:** ✅ RS-Core V10 Ready for Deployment.
+
+## [2026-03-12] Phase 7.8: High-Fidelity Heartbeat & Variable Cleanup (V11)
+
+**Objective:** Fix regressions and perfect the visual "Lub-Dub" experience.
+
+### 1. Fixes & Visual Polish
+- **Variable Cleanup**: Fixed a `NameError: total_chunks` in `uploader.py` by adding proper chunk count calculation.
+- **Heartbeat Logic**: Migrated the "Lub-Dub" pulse logic into separate `SYNC_HEARTBEAT_RED` and `SYNC_HEARTBEAT_GREEN` states in `led_manager.py`.
+- **Import Safety**: Verified `import math` is available in all critical animation loops.
+- **Improved Timing**: Increased the upload pulse speed to a 40ms hypersonic cycle.
+
+**Status:** ✅ RS-Core V11 Deployed.
+## [2026-03-12] Phase 7.9: LED Animation Thread Integration (V12)
+
+**Objective:** Eliminate LED "freezing" during blocking network operations by moving animations to a background thread.
+
+### 1. Architectural Improvements
+- **Background Animation Thread**: Spawned `LEDManager.start_animation_thread()` on Core 0 during `setup()`.
+- **Async State Machine**: Transitioned from manual polling (`update()`) to a state-based model (`set_state()`). The background thread now pumps NeoPixel updates at a consistent 50Hz.
+- **Hypersonic Tuning**: Adjusted the upload blink to a precise 40ms cycle (20ms ON/OFF) for maximum visual energy during throughput.
+
+### 2. Integration & Cleanup
+- **main.py**: Start thread in `setup()`, converted all status updates to `set_state`. Protected uploader state from being overridden by heartbeat logic.
+- **Stability Fix**: Increased WDT to **20s** and reduced heartbeat timeout to **5s** to prevent "ghost crashes" during network retries.
+- **Retry UI**: Handshake persists in "Lub-Dub" (red heartbeat) mode during retry cycles for better user diagnostic feedback.
+
+**Status:** ✅ RS-Core V12 Deployed. LEDs now stay fluid during SSL handshakes and 64KB chunk writes.

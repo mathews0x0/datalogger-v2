@@ -59,6 +59,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
 
     chunk_index = 0
     bytes_sent = 0
+    total_chunks = (total_size + CHUNK_SIZE - 1) // CHUNK_SIZE
     
     # Establish Persistent Connection
     s = None
@@ -80,6 +81,9 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
         s.connect(ai[-1])
         ss = ssl.wrap_socket(s, server_hostname=host)
         
+        # Set background animation state once
+        if led: led.set_state("SYNC_UPLOADING")
+
         with open(filepath, 'rb') as f:
             while True:
                 data = f.read(CHUNK_SIZE)
@@ -97,13 +101,13 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
                 request += "X-Filename: " + fname + "\r\n"
                 request += "X-Chunk-Index: " + str(chunk_index) + "\r\n"
                 request += "X-Total-Size: " + str(total_size) + "\r\n"
+                request += "X-Total-Chunks: " + str(total_chunks) + "\r\n"
                 request += "Connection: keep-alive\r\n\r\n"
                 request = request.encode()
 
                 sent = False
                 for attempt in range(MAX_RETRIES):
                     try:
-                        if led: led.update_sync("SYNC_UPLOADING")
                         if wdt: wdt.feed()
                         
                         # Send Headers + Data

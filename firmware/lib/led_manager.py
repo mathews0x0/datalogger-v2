@@ -35,6 +35,32 @@ class LEDManager:
 
         # Lock for thread-safe NeoPixel writes
         self._lock = _thread.allocate_lock()
+        self._state = "IDLE"
+        self._thread_running = False
+
+    def start_animation_thread(self):
+        """Spawns background thread for fluid animations during network I/O."""
+        if self._thread_running: return
+        self._thread_running = True
+        _thread.stack_size(8192)
+        _thread.start_new_thread(self._animation_loop, ())
+
+    def set_state(self, state):
+        self._state = state
+
+    def _animation_loop(self):
+        while self._thread_running:
+            try:
+                # Handle state transitions and event priority
+                if self._event_active and time.ticks_diff(time.ticks_ms(), self._event_end_time) < 0:
+                    self._animate_event(time.ticks_ms())
+                elif self._state.startswith("SYNC_"):
+                    self.update_sync(self._state)
+                else:
+                    self.update(self._state)
+            except:
+                pass
+            time.sleep_ms(20) # Smooth 50Hz update rate
 
     def _write_all(self):
         """Write to both NeoPixel strips with thread lock."""
@@ -102,10 +128,26 @@ class LEDManager:
             on = (now % 200 < 100)
             self.set_color(180 if on else 0, 0, 180 if on else 0)
 
+        elif sync_state == "SYNC_HEARTBEAT_RED":
+            # True "Heartbeat" pattern (Double Red Pulse)
+            ms = now % 1000
+            val = 0
+            if ms < 150: val = int(math.sin((ms / 150) * math.pi) * 255)
+            elif 250 < ms < 400: val = int(math.sin(((ms - 250) / 150) * math.pi) * 180)
+            self.set_color(val, 0, 0)
+
+        elif sync_state == "SYNC_HEARTBEAT_GREEN":
+            # True "Heartbeat" pattern (Double Green Pulse)
+            ms = now % 1000
+            val = 0
+            if ms < 150: val = int(math.sin((ms / 150) * math.pi) * 255)
+            elif 250 < ms < 400: val = int(math.sin(((ms - 250) / 150) * math.pi) * 180)
+            self.set_color(0, val, 0)
+
         elif sync_state == "SYNC_UPLOADING":
-            # Fast green blink
-            on = (now % 200 < 100)
-            self.set_color(0, 255 if on else 0, 0)
+            # Hypersonic green blink (extremely fast)
+            on = (now % 40 < 20) # 20ms on, 20ms off
+            self.set_color(0, 255 if on else 5, 0)
 
         elif sync_state == "SYNC_OK":
             # Slow green fade
