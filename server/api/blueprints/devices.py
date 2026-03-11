@@ -6,6 +6,8 @@ import requests
 from datetime import datetime
 
 from api.models import db, User, DeviceToken
+import api.config as config
+import json
 
 devices_bp = Blueprint('devices', __name__)
 
@@ -135,8 +137,6 @@ def get_device_active_track():
         user = User.query.get(user_id)
         if user and user.active_track_id:
             from api.helpers import get_track_folder
-            from config import config
-            import json
             
             folder_name = get_track_folder(user.active_track_id, user_id=user_id)
             if folder_name:

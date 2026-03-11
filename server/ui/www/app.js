@@ -1911,7 +1911,7 @@ async function loadTracks() {
                     </div>
                     <div class="track-actions">
                         ${!isActive ? `
-                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); pushTrackToESP(${track.track_id})">
+                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTrack(${track.track_id})">
                             <i class="fas fa-bolt"></i> Set Active
                         </button>` : ''}
                         <button class="btn small" onclick="event.stopPropagation(); renameTrack(${track.track_id}, '${track.track_name}')">
@@ -1933,7 +1933,7 @@ async function loadTracks() {
 /**
  * Manually trigger pushing a track to the ESP32
  */
-async function pushTrackToESP(trackId) {
+async function setActiveTrack(trackId) {
     try {
         showToast('Setting as active track...', 'info');
         await ensureTrackSynced(trackId, null);
@@ -1944,12 +1944,6 @@ async function pushTrackToESP(trackId) {
     }
 }
 
-async function markPitLane(trackId) {
-    const deviceIP = localStorage.getItem('lastDeviceIP');
-    if (!deviceIP) {
-        showToast('Device not connected', 'error');
-        return;
-    }
 
     try {
         showToast('Getting GPS from device...', 'info');
@@ -1976,7 +1970,7 @@ async function markPitLane(trackId) {
         showToast('Pit Lane marked at current location', 'success');
 
         // Re-push to ESP32 to sync the new metadata
-        await pushTrackToESP(trackId);
+        await setActiveTrack(trackId);
 
     } catch (err) {
         console.error('Mark Pit Error:', err);
@@ -2014,7 +2008,7 @@ async function viewTrack(trackId) {
                 <h2>${track.track_name}</h2>
                 <div>
                 ${isActive ? '<span class="badge success">ACTIVE ON DEVICE</span>' : `
-                    <button class="btn btn-primary" onclick="pushTrackToESP(${trackId})">
+                    <button class="btn btn-primary" onclick="setActiveTrack(${trackId})">
                         <i class="fas fa-bolt"></i> Set as Active
                     </button>
                 `}

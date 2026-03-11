@@ -323,17 +323,32 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                     req_tr += f"Host: {host}\r\n"
                     req_tr += f"Authorization: Bearer {config.get('token', '')}\r\n"
                     req_tr += "Connection: close\r\n\r\n"
+                    
+                    print(f"[Sync] Pulling track: {track_path}")
                     ss_tr.write(req_tr.encode())
                     
                     # Skip headers and read body
                     resp_tr = ss_tr.read(4096).decode()
+                    print(f"[Sync] Raw response (partial): {resp_tr[:200]}...")
+                    
                     if "200 OK" in resp_tr and "\r\n\r\n" in resp_tr:
                         body = resp_tr.split("\r\n\r\n", 1)[1]
-                        t_data = ujson.loads(body)
-                        if t_data and "active_track" in t_data and t_data["active_track"]:
-                            with open('/data/metadata/track.json', 'w') as f:
-                                ujson.dump(t_data["active_track"], f)
-                            print("[Sync] Active track updated!")
+                        try:
+                            t_data = ujson.loads(body)
+                            if t_data and "active_track" in t_data:
+                                track_info = t_data["active_track"]
+                                if track_info:
+                                    with open('/data/metadata/track.json', 'w') as f:
+                                        ujson.dump(track_info, f)
+                                    print(f"[Sync] Active track saved: {track_info.get('track_name', 'Unknown')}")
+                                else:
+                                    print("[Sync] Active track is null on server.")
+                            else:
+                                print("[Sync] No 'active_track' key in response.")
+                        except Exception as json_e:
+                            print(f"[Sync] JSON Parse Error: {json_e}")
+                    else:
+                        print(f"[Sync] Invalid response (No 200 OK or body separator)")
                 except Exception as tr_e:
                     print(f"[Sync] Track Pull Error: {tr_e}")
                 finally:

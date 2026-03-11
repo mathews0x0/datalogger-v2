@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // DATALOGGER COMPANION - APPLICATION LOGIC
 // ============================================================================
 
@@ -1961,51 +1961,9 @@ async function setActiveTrack(trackId) {
         if (result) currentUser = result;
 
         showToast('Track set as active (Device will sync on next heartbeat)', 'success');
-        loadTracks(); // re-render the list to show the ACTIVE badge
-
         loadTracks(); // Refresh tracks view to show active state
     } catch (err) {
         showToast('Failed to set track', 'error');
-    }
-}
-
-async function markPitLane(trackId) {
-    const deviceIP = localStorage.getItem('lastDeviceIP');
-    if (!deviceIP) {
-        showToast('Device not connected', 'error');
-        return;
-    }
-
-    try {
-        showToast('Getting GPS from device...', 'info');
-        const status = await fetch(`http://${deviceIP}/status`).then(r => r.json());
-
-        if (!status.gps_lat || !status.gps_lon) {
-            showToast('No GPS fix on device', 'error');
-            return;
-        }
-
-        showToast('Saving pit geofence...', 'info');
-        // Update track metadata via Pi API
-        // Note: Using track_id in the URL, and sending the new fields
-        await apiCall(`/api/tracks/${trackId}`, {
-            method: 'POST', // The server seems to use POST for updates in some places, or I'll assume it works
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                pit_center_lat: status.gps_lat,
-                pit_center_lon: status.gps_lon,
-                pit_radius_m: 50
-            })
-        });
-
-        showToast('Pit Lane marked at current location', 'success');
-
-        // Re-push to ESP32 to sync the new metadata
-        await pushTrackToESP(trackId);
-
-    } catch (err) {
-        console.error('Mark Pit Error:', err);
-        showToast('Failed to mark pit lane', 'error');
     }
 }
 
@@ -2039,7 +1997,7 @@ async function viewTrack(trackId) {
                 <h2>${track.track_name}</h2>
                 <div>
                 ${isActive ? '<span class="badge success">ACTIVE ON DEVICE</span>' : `
-                    <button class="btn btn-primary" onclick="pushTrackToESP(${trackId})">
+                    <button class="btn btn-primary" onclick="setActiveTrack(${trackId})">
                         <i class="fas fa-bolt"></i> Set as Active
                     </button>
                 `}
@@ -2073,9 +2031,6 @@ async function viewTrack(trackId) {
             
             <button class="btn" style="margin-top: 1rem;" onclick="viewTrackSessions(${trackId})">
                 View Sessions
-            </button>
-            <button class="btn btn-secondary" style="margin-top: 1rem; margin-left: 0.5rem;" onclick="markPitLane(${trackId})">
-                <i class="fas fa-map-pin"></i> Mark Pit Lane
             </button>
         `;
     } catch (error) {

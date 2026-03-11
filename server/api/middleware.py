@@ -35,6 +35,7 @@ def protect_api():
             '/api/upload/chunk',
             '/api/upload/complete',
             '/api/device/ping',
+            '/api/device/active_track',
             '/api/devices/token'
         ]
         if request.path in public_paths:

@@ -2331,4 +2331,18 @@ Fundamental shift in the uploader's networking model:
 - **Stability Fix**: Increased WDT to **20s** and reduced heartbeat timeout to **5s** to prevent "ghost crashes" during network retries.
 - **Retry UI**: Handshake persists in "Lub-Dub" (red heartbeat) mode during retry cycles for better user diagnostic feedback.
 
-**Status:** ✅ RS-Core V12 Deployed. LEDs now stay fluid during SSL handshakes and 64KB chunk writes.
+**Status:** ✅ RS-Core L12 Deployed. LEDs now stay fluid during SSL handshakes and 64KB chunk writes.
+
+## [2026-03-12] Phase 7.10: Active Track Sync Authorization Fix
+
+**Objective:** Resolve 401 Unauthorized error during active track synchronization on the device.
+
+### 1. Root Cause Analysis
+- The device received a 401 error when calling `/api/device/active_track` because the endpoint was not whitelisted in the API middleware's mandatory JWT check.
+- While `/api/device/ping` was whitelisted, the newer active track endpoint was omitted.
+
+### 2. Implementation
+- **Middleware Update**: Added `/api/device/active_track` to the `public_paths` list in `server/api/middleware.py`.
+- This ensures that device token-based authentication (handled within the route) is allowed to proceed.
+
+**Status:** ✅ Active Track Sync restored.
