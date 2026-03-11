@@ -49,9 +49,11 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 
 ### **SYNC MODE (Button Press — No Logging)**
 *   No telemetry logging occurs. No CSV files are created.
-*   Device searches for known WiFi (configured via captive portal).
-    *   **Found**: Uploads all pending session CSVs to cloud, then idles.
-    *   **Not found**: Idles and waits.
+*   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
+*   **Background High-Speed Uploader**: Once heartbeat is OK, spawns an uploader thread on Core 1:
+    *   **Persistent SSL**: Uses raw sockets held open for the entire file duration to eliminate per-chunk handshake overhead.
+    *   **High Throughput**: Uses **64KB chunks** (optimized for DMA) to saturate the link.
+*   **Locking**: Uses a global `network_lock` to ensure the Heartbeat (Core 0) and Uploader (Core 1) never clash.
 *   **Long press (>3s)** on Sync Button at any time in Sync Mode → enters **Pairing Mode** (AP + Captive Portal).
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 

@@ -333,19 +333,27 @@ def run_sync_mode(led, sm, sync_btn, wdt):
         finally:
             uploader_busy = False
 
-    # --- PHASE 1: INITIAL HANDSHAKE (MODIFIED: HEARTBEAT FIRST) ---
+    # --- PHASE 1: INITIAL HANDSHAKE ---
     hb_ok = False
+    uploader_spawned = False
+    
     if wifi_connected:
         print("[Sync] Performing initial handshake...")
-        with network_lock: # Hold lock for first sequence
-            hb_ok = perform_heartbeat()
+        # Try initial handshake up to 3 times
+        for i in range(3):
+            with network_lock:
+                hb_ok = perform_heartbeat()
+            if hb_ok: break
+            print(f"[Sync] Handshake retry {i+1}/3...")
+            time.sleep(2)
         
         if hb_ok:
             print("[Sync] Handshake successful. Spawning uploader thread.")
             _thread.stack_size(24576)
             _thread.start_new_thread(uploader_thread_func, (sm, led))
+            uploader_spawned = True
         else:
-            print("[Sync] Handshake failed. Will retry heartbeat in background.")
+            print("[Sync] Handshake failed. Will retry in background.")
 
     # --- PHASE 2: MAIN SYNC LOOP (Core 0) ---
     print("[Sync] Sync Engine Ready.")
@@ -368,7 +376,15 @@ def run_sync_mode(led, sm, sync_btn, wdt):
             if network_lock.acquire(False): # Only heartbeat if lock is free
                 try:
                     last_ping = current_time
-                    perform_heartbeat()
+                    success = perform_heartbeat()
+                    
+                    # If we haven't spawned the uploader yet because of a failed handshake,
+                    # spawn it now that we finally have a successful heartbeat!
+                    if success and not uploader_spawned:
+                        print("[Sync] Heartbeat finally succeeded! Spawning uploader thread.")
+                        _thread.stack_size(24576)
+                        _thread.start_new_thread(uploader_thread_func, (sm, led))
+                        uploader_spawned = True
                 finally:
                     network_lock.release()
                     gc.collect()
@@ -399,30 +415,6 @@ def run_sync_mode(led, sm, sync_btn, wdt):
         
         time.sleep_ms(50)
             
-        # Show current status
-        if needs_setup:
-            led.update_sync("SETUP_NEEDED")
-        elif wifi_connected:
-            led.update_sync("SYNC_OK")
-        else:
-            led.update_sync("SYNC_FAIL")
-        
-        # Long press detection for pairing
-        if sync_btn.value() == 0:  # Button pressed
-            if press_start == 0:
-                press_start = time.ticks_ms()
-            elif time.ticks_diff(time.ticks_ms(), press_start) > 3000:
-                print("[Sync] Long press detected! Entering Pairing Mode...")
-                stop_wifi()
-                time.sleep_ms(200)
-                
-                from lib.captive_portal import start_background_portal
-                _thread.start_new_thread(start_background_portal, (led,))
-                pairing_active = True
-                press_start = 0
-        else:
-            press_start = 0
-        
         time.sleep_ms(50)
 
 

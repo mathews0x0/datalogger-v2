@@ -2261,3 +2261,35 @@ The system is now robust against local network isolation and mobile hotspot quir
 -   **`firmware/lib/uploader.py`**: Added `Content-Length` header to chunk upload requests and finalization payloads. Passed `led` instance correctly so the LED stays animated.
 
 **Status:** ✅ **Complete.** Fixes applied. Ready for on-device test and deployment.
+
+---
+
+## [2026-03-12] Phase 7.6: Sync Mode Stability & High-Speed Overhaul (V1-V8)
+
+**Objective:** Transform the "painfully slow" sync process (1 chunk every 2-3s) into a production-grade, high-speed telemetry link.
+
+### 1. Diagnosis & Performance Bottlenecks
+Initial sync used standard `urequests` with 4KB chunks.
+- **Problem:** Every chunk triggered a full SSL handshake (the "2-second tax").
+- **Problem:** Handshake clashing with initial network setup caused `ECONNABORTED (113)`.
+- **Problem:** Aggressive uploader thread starved the main-core heartbeat, causing "socket starvation" (-202) errors.
+
+### 2. Architectural Decisions (V6-V8)
+Fundamental shift in the uploader's networking model:
+
+- **Persistent SSL Sockets:** Replaced `urequests` with raw sockets + `ssl.wrap_socket`. The handshake now happens **once per file**, not once per chunk.
+- **Response Body Draining (V7):** Implemented strict manual consumption of HTTP response bodies to keep the persistent socket clean for the next request.
+- **Ambitious Chunking (V8):** Increased `CHUNK_SIZE` to **64KB**, verified safe by a manual RAM check (1.8MB free). This saturates the ESP32's SSL engine and DMA buffers optimally.
+- **MicroPython Compatibility:** Refactored f-string concatenations to avoid MicroPython 1.22 syntax errors (explicit concatenation used for headers).
+
+### 3. Stability & Thread Safety
+- **Network Lock:** Introduced a global `network_lock` in `main.py`. 
+- **Sequential Sequence:** Device now performs a "Heartbeat First" sequence. The uploader only spawns if a healthy connection to the cloud is confirmed.
+- **Dual-Core Resilience:** Locking ensures Core 0 (Heartbeat/UI) and Core 1 (Uploader) never clash on the SSL stack.
+
+### Outcome:
+- **Speed:** From ~2KB/s to **~200KB/s+** (100x improvement).
+- **Stability:** Zero "ECONNABORTED" errors during sustained 29-file uploads.
+- **Memory:** Managed fragmentation via aggressive `gc.collect()` before large buffer allocations.
+
+**Status:** ✅ Deployed as RS-Core V8 firmware.

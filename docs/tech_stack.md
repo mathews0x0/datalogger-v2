@@ -35,7 +35,8 @@ This document provides a deep dive into the technology stack, deployment process
 ### **Hardware & Firmware (RS-Core)**
 *   **MCU**: ESP32-S3 (Dual-core 240MHz).
 *   **OS**: MicroPython v1.22.
-*   **Key Drivers**: BMI323 (IMU), Neo-M8N (GPS), SPI SD Card.
+*   **Key Drivers**: BMI270 (IMU), Neo-M8N (GPS), SPI SD Card.
+*   **High-Speed Uplink**: Custom uploader using **Raw SSL Sockets** and **Persistent Connections** for high-throughput (64KB chunks) telemetry sync.
 *   **Documentation**: See [hardware_firmware.md](file:///Users/mj/Documents/datalogger-v2/docs/hardware_firmware.md) for pinouts and flashing guides.
 
 ---
