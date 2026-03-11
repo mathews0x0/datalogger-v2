@@ -216,50 +216,142 @@ def run_sync_mode(led, sm, sync_btn, wdt):
     wdt.feed()
 
     # Shared state for thread coordination
-    global uploader_busy
+    global uploader_busy, network_lock
     uploader_busy = False
+    network_lock = _thread.allocate_lock()
     
     # Helper function to get battery voltage
     def get_vbatt():
         raw_v = vbat_adc.read()
         return (raw_v / 4095.0) * 3.3 * 2.0
 
-    # Background Uploader Thread (Core 1)
+    import urequests, ujson # Core imports for sync workflow
+
+    def perform_heartbeat():
+        """Single heartbeat + active track pull. Returns True on success."""
+        # Setup URLs
+        api_url = config.get('api_url', '')
+        if api_url.endswith('/upload'):
+            p_base = api_url.replace('/upload', '/device')
+        else:
+            p_base = api_url.split('/api')[0] + '/api/device'
+        
+        ping_url = p_base + '/ping'
+        track_url = p_base + '/active_track'
+        
+        headers = {
+            'Authorization': f"Bearer {config.get('token', '')}",
+            'Content-Type': 'application/json'
+        }
+        
+        # Gather Telemetry
+        try: vbatt = get_vbatt()
+        except: vbatt = 0.0
+        
+        try:
+            stats = os.statvfs('/sd')
+            sd_free = (stats[0] * stats[3]) // (1024 * 1024)
+        except: sd_free = 0
+        try:
+            f_stats = os.statvfs('/')
+            flash_free = (f_stats[0] * f_stats[3])
+        except: flash_free = 0
+        
+        device_uid = ''.join(['{:02x}'.format(b) for b in machine.unique_id()])
+        telemetry = {
+            "device_uid": device_uid,
+            "vbatt_sense": vbatt,
+            "storage_sd_free": sd_free,
+            "storage_flash_free": flash_free
+        }
+
+        success = False
+        # 1. PING SERVER
+        resp = None
+        try:
+            wdt.feed()
+            gc.collect()
+            print(f"[Heartbeat] Sending to {ping_url}...")
+            # Brief white flash to signal a ping is being sent
+            led.set_color(60, 60, 60)
+            resp = urequests.post(ping_url, headers=headers, json=telemetry, timeout=10)
+            wdt.feed()
+            if resp.status_code == 200:
+                print("[Heartbeat] Server Acknowledge OK.")
+                success = True
+            else:
+                print(f"[Heartbeat] Server Rejected ({resp.status_code})")
+        except Exception as e:
+            print(f"[Heartbeat] Network Error: {e}")
+        finally:
+            if resp: resp.close()
+            gc.collect()
+
+        # 2. PULL ACTIVE TRACK (Only if ping worked)
+        if success:
+            track_resp = None
+            try:
+                wdt.feed()
+                track_resp = urequests.get(track_url, headers=headers, timeout=10)
+                if track_resp.status_code == 200:
+                    t_data = track_resp.json()
+                    if t_data and "active_track" in t_data and t_data["active_track"]:
+                        with open('/data/metadata/track.json', 'w') as f:
+                            ujson.dump(t_data["active_track"], f)
+                        print("[Sync] Active track updated!")
+            except Exception as te:
+                print(f"[Heartbeat] Track Pull Error: {te}")
+            finally:
+                if track_resp: track_resp.close()
+                gc.collect()
+        
+        return success
+
+    # Background Uploader Thread
     def uploader_thread_func(sm_ref, led_ref):
-        global uploader_busy
+        global uploader_busy, network_lock
         uploader_busy = True
         try:
             pending = sm_ref.list_sessions()
             if pending:
-                print(f"[Sync] Uploading {len(pending)} file(s) in background...")
-                # We do not feed main wdt here, sync_all has its own wdt feeds
-                success = sync_all(sm_ref, led_ref, wdt)
+                print(f"[Sync] Starting upload of {len(pending)} file(s)...")
+                from lib.uploader import sync_all
+                # sync_all now handles its own per-request locking via network_lock
+                success = sync_all(sm_ref, led_ref, wdt, network_lock)
                 if success:
-                    print("[Sync] Background Upload Complete!")
+                    print("[Sync] All files uploaded successfully!")
                     led_ref.update_sync("SYNC_OK")
                 else:
-                    print("[Sync] Background Upload had issues.")
+                    print("[Sync] One or more uploads failed.")
                     led_ref.update_sync("SYNC_FAIL")
             else:
-                print("[Sync] No pending files to upload.")
+                print("[Sync] No pending files.")
                 led_ref.update_sync("SYNC_OK")
         except Exception as e:
-            print(f"[Sync] Uploader Thread Error: {e}")
+            print(f"[Sync] Uploader Thread Fatal: {e}")
             led_ref.update_sync("SYNC_FAIL")
         finally:
             uploader_busy = False
 
+    # --- PHASE 1: INITIAL HANDSHAKE (MODIFIED: HEARTBEAT FIRST) ---
+    hb_ok = False
     if wifi_connected:
-        print("[Sync] Starting Background Uploader (Core 1)...")
-        _thread.stack_size(16384) # Increase stack for SSL + threading
-        _thread.start_new_thread(uploader_thread_func, (sm, led))
+        print("[Sync] Performing initial handshake...")
+        with network_lock: # Hold lock for first sequence
+            hb_ok = perform_heartbeat()
+        
+        if hb_ok:
+            print("[Sync] Handshake successful. Spawning uploader thread.")
+            _thread.stack_size(24576)
+            _thread.start_new_thread(uploader_thread_func, (sm, led))
+        else:
+            print("[Sync] Handshake failed. Will retry heartbeat in background.")
 
-    # --- Phase 3: Main Heartbeat Loop (Core 0) ---
-    print("[Sync] Main Core handling Heartbeats & Setup. Hold SYNC for 3s to enter Pairing.")
-    
+    # --- PHASE 2: MAIN SYNC LOOP (Core 0) ---
+    print("[Sync] Sync Engine Ready.")
     pairing_active = False
     press_start = 0
-    last_ping = 0
+    last_ping = time.ticks_ms()
     wdt.feed()
     
     while True:
@@ -271,87 +363,41 @@ def run_sync_mode(led, sm, sync_btn, wdt):
             time.sleep_ms(50)
             continue
             
-        # --- Background Heartbeat (Every 15s) ---
-        # Skip if uploader is busy to avoid network/SSL contention
+        # Periodic Heartbeat (Every 15s)
         if wifi_connected and not uploader_busy and time.ticks_diff(current_time, last_ping) > 15000:
-            last_ping = current_time
-            try:
-                # Brief white flash to signal a ping is being sent
-                led.set_color(60, 60, 60)
-                
-                # Setup Ping API URL
-                api_url = config.get('api_url', '')
-                if api_url.endswith('/upload'):
-                    ping_url = api_url.replace('/upload', '/device/ping')
-                    track_url = api_url.replace('/upload', '/device/active_track')
-                else:
-                    ping_url = api_url.replace('/upload/chunk', '/device/ping').replace('/upload/complete', '/device/ping')
-                    track_url = ping_url.replace('/ping', '/active_track')
-                    
-                headers = {
-                    'Authorization': f"Bearer {config.get('token', '')}",
-                    'Content-Type': 'application/json'
-                }
-                
-                # Gather Telemetry
-                try: vbatt = get_vbatt()
-                except: vbatt = 0.0
-                
+            if network_lock.acquire(False): # Only heartbeat if lock is free
                 try:
-                    stats = os.statvfs('/sd')
-                    sd_free = (stats[0] * stats[3]) // (1024 * 1024)
-                except: sd_free = 0
-                
-                try:
-                    f_stats = os.statvfs('/')
-                    flash_free = (f_stats[0] * f_stats[3])
-                except: flash_free = 0
-                
-                import machine
-                # using unique_id hex string
-                device_uid = ''.join(['{:02x}'.format(b) for b in machine.unique_id()])
-
-                telemetry = {
-                    "device_uid": device_uid,
-                    "vbatt_sense": vbatt,
-                    "storage_sd_free": sd_free,
-                    "storage_flash_free": flash_free
-                }
-                
-                wdt.feed()
-                # 1. PING SERVER
-                resp = urequests.post(ping_url, headers=headers, json=telemetry)
-                wdt.feed()
-                
-                if resp.status_code == 200:
-                    print("[Heartbeat] Sent to server successfully.")
-                    resp.close()
-                    
-                    # 2. PULL ACTIVE TRACK
-                    wdt.feed()
-                    track_resp = urequests.get(track_url, headers=headers)
-                    wdt.feed()
-                    if track_resp.status_code == 200:
-                        t_data = track_resp.json()
-                        if t_data and "active_track" in t_data and t_data["active_track"]:
-                            try:
-                                try: os.mkdir('/data')
-                                except OSError: pass
-                                try: os.mkdir('/data/metadata')
-                                except OSError: pass
-                                
-                                with open('/data/metadata/track.json', 'w') as f:
-                                    ujson.dump(t_data["active_track"], f)
-                                print("[Sync] Active track updated from cloud!")
-                            except Exception as fe:
-                                print(f"[Sync] Flash Write Error: {fe}")
-                    track_resp.close()
-                else:
-                    print(f"[Heartbeat] Server rejected ping: {resp.status_code}")
-                    resp.close()
-                    
-            except Exception as e:
-                print(f"[Heartbeat] Error: {e}")
+                    last_ping = current_time
+                    perform_heartbeat()
+                finally:
+                    network_lock.release()
+                    gc.collect()
+        
+        # Visual Status
+        if needs_setup:
+            led.update_sync("SETUP_NEEDED")
+        elif hb_ok or wifi_connected:
+            led.update_sync("SYNC_OK")
+        else:
+            led.update_sync("SYNC_FAIL")
+        
+        # Long press detection for pairing
+        if sync_btn.value() == 0:
+            if press_start == 0:
+                press_start = time.ticks_ms()
+            elif time.ticks_diff(time.ticks_ms(), press_start) > 3000:
+                print("[Sync] Entering Pairing Mode...")
+                from lib.wifi_manager import stop_wifi
+                stop_wifi()
+                time.sleep_ms(200)
+                from lib.captive_portal import start_background_portal
+                _thread.start_new_thread(start_background_portal, (led,))
+                pairing_active = True
+                press_start = 0
+        else:
+            press_start = 0
+        
+        time.sleep_ms(50)
             
         # Show current status
         if needs_setup:
