@@ -214,6 +214,10 @@ def run_sync_mode(led, sm, sync_btn, wdt):
     wdt.feed()
     from lib.uploader import sync_all
     wdt.feed()
+
+    # Shared state for thread coordination
+    global uploader_busy
+    uploader_busy = False
     
     # Helper function to get battery voltage
     def get_vbatt():
@@ -222,6 +226,8 @@ def run_sync_mode(led, sm, sync_btn, wdt):
 
     # Background Uploader Thread (Core 1)
     def uploader_thread_func(sm_ref, led_ref):
+        global uploader_busy
+        uploader_busy = True
         try:
             pending = sm_ref.list_sessions()
             if pending:
@@ -240,9 +246,12 @@ def run_sync_mode(led, sm, sync_btn, wdt):
         except Exception as e:
             print(f"[Sync] Uploader Thread Error: {e}")
             led_ref.update_sync("SYNC_FAIL")
+        finally:
+            uploader_busy = False
 
     if wifi_connected:
         print("[Sync] Starting Background Uploader (Core 1)...")
+        _thread.stack_size(16384) # Increase stack for SSL + threading
         _thread.start_new_thread(uploader_thread_func, (sm, led))
 
     # --- Phase 3: Main Heartbeat Loop (Core 0) ---
@@ -263,7 +272,8 @@ def run_sync_mode(led, sm, sync_btn, wdt):
             continue
             
         # --- Background Heartbeat (Every 15s) ---
-        if wifi_connected and time.ticks_diff(current_time, last_ping) > 15000:
+        # Skip if uploader is busy to avoid network/SSL contention
+        if wifi_connected and not uploader_busy and time.ticks_diff(current_time, last_ping) > 15000:
             last_ping = current_time
             try:
                 # Brief white flash to signal a ping is being sent
@@ -342,9 +352,6 @@ def run_sync_mode(led, sm, sync_btn, wdt):
                     
             except Exception as e:
                 print(f"[Heartbeat] Error: {e}")
-            
-            # Ensure LED returns to sync state immediately after flash
-            led.update_sync(led._sync_state)
             
         # Show current status
         if needs_setup:

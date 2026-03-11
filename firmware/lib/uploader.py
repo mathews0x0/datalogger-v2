@@ -6,7 +6,7 @@ import gc
 import time
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
-CHUNK_SIZE = 8 * 1024   # 8KB per chunk — safe for ESP32 with SSL overhead
+CHUNK_SIZE = 4 * 1024   # Reduced to 4KB to save memory during concurrent sync
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
 
@@ -71,7 +71,6 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None):
                 'X-Filename': fname,
                 'X-Chunk-Index': str(chunk_index),
                 'X-Total-Size': str(total_size),
-                'Content-Length': str(len(data)),
             }
 
             # Retry loop for this chunk
@@ -125,7 +124,6 @@ def _finalize_upload(fname, api_url, token, total_chunks, led=None, wdt=None):
     headers = {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + token,
-        'Content-Length': str(len(payload))
     }
 
     if wdt:

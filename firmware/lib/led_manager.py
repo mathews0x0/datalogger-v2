@@ -1,3 +1,4 @@
+import _thread
 from machine import Pin
 import neopixel
 import time
@@ -32,11 +33,15 @@ class LEDManager:
         self._event_end_time = 0
         self._event_type = None
 
+        # Lock for thread-safe NeoPixel writes
+        self._lock = _thread.allocate_lock()
+
     def _write_all(self):
-        """Write to both NeoPixel strips. Onboard mirrors pixel[0]."""
-        self.np.write()
-        self.onboard_np[0] = self.np[0]
-        self.onboard_np.write()
+        """Write to both NeoPixel strips with thread lock."""
+        with self._lock:
+            self.np.write()
+            self.onboard_np[0] = self.np[0]
+            self.onboard_np.write()
 
     def clear(self):
         for i in range(self.count):
