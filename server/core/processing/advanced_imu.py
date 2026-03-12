@@ -120,11 +120,11 @@ class AdvancedIMUProcessor:
             
             # Centripetal Lateral G
             lat_g = (v_ms * (gz_sm * math.pi / 180.0)) / 9.81
-            lean = math.degrees(math.atan(abs(lat_g)))
+            lean = math.degrees(math.atan(-lat_g))
             
             # Exponential Moving Average Smoothing
-            alpha_lean = 0.5  # Smooth lean heavily
-            alpha_g = 0.5     # Smooth G-forces moderately
+            alpha_lean = 0.15  # Smooth lean heavily
+            alpha_g = 0.15     # Smooth G-forces moderately
 
             if i == 0:
                  smoothed_lean = lean

@@ -2365,3 +2365,18 @@ Fundamental shift in the uploader's networking model:
     - **Red (Flash)**: Significant gap (> 0.5s).
 
 **Status:** ✅ Active Track feature suite fully operational.
+
+## [2026-03-13] Phase 7.12: IMU Lean Angle Direction Fix
+
+**Objective:** Correct visually inverted lean angles during session playback.
+
+### 1. Root Cause Analysis
+- The frontend visualization maps positive lean values to right turns and negative lean values to left turns. 
+- The backend `AdvancedIMUProcessor` enforced strictly positive leans by applying an `abs()` function to the computed lateral G-forces. 
+
+### 2. Implementation
+- **Mathematical Correction**: Removed the `abs()` constraint from the `lat_g` variable inside the lean calculation loop, allowing for signed outputs. 
+- **Sign Flipping**: Extracted lean angles directly from `-lat_g` to guarantee matching directionality with the UI (right hand turns produce negative lateral G's, which should visualize as a positive right lean).
+- **Smoothing Adjustment**: Reduced the Exponential Moving Average (EMA) alpha factor from `0.5` to `0.15` to heavily smooth lean data and prevent UI jitter at 100Hz.
+
+**Status:** ✅ Signed Lean Angle calculations with heavier smoothing deployed for V2 IMU.
