@@ -102,6 +102,7 @@ class LapDetector:
                     # Validate heading
                     if heading is not None:
                         if not self._heading_is_valid(heading):
+                            in_zone = False  # Reset zone so we keep checking
                             continue  # Skip wrong-way crossing
                         
                         # Learn reference heading from first valid crossing
@@ -115,7 +116,8 @@ class LapDetector:
                             crossing_indices.append(i)
                     elif self._reference_heading is not None:
                         # If we can't determine heading but have a reference, we might be too slow.
-                        # For safety, skip if we can't confirm direction.
+                        # For safety, skip if we can't confirm direction, and reset in_zone to check next frame.
+                        in_zone = False
                         continue
             else:
                 in_zone = False
