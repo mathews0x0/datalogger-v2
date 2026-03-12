@@ -116,18 +116,28 @@ class TrackEngine:
             gate = sectors[self.current_sector]
             gate_lat = gate.get('end_lat')
             gate_lon = gate.get('end_lon')
+            gate_radius = gate.get('radius_m', GATE_RADIUS_M)
             
             if gate_lat and gate_lon:
                 dist = self._haversine_m(lat, lon, gate_lat, gate_lon)
                 
-                if dist < GATE_RADIUS_M:
+                if dist < gate_radius:
                     # Sector Complete
-                    sector_time = timestamp - self.sector_start_ts
+                    # Convert timestamp from ms to s
+                    s_timestamp = timestamp / 1000.0
+                    s_sector_start = self.sector_start_ts / 1000.0
+                    sector_time = s_timestamp - s_sector_start
+                    
                     self.current_lap_sectors[self.current_sector] = sector_time
                     
                     # Compare with TBL
-                    tbl = self.track.get('tbl', {})
-                    tbl_time = tbl.get(str(self.current_sector))
+                    tbl = self.track.get('tbl', {}) or {}
+                    tbl_sectors = tbl.get('sectors', [])
+                    
+                    # TBL sectors are often a list of times
+                    tbl_time = None
+                    if isinstance(tbl_sectors, list) and self.current_sector < len(tbl_sectors):
+                        tbl_time = tbl_sectors[self.current_sector]
                     
                     event = self._calc_delta_event(sector_time, tbl_time)
                     
@@ -150,18 +160,18 @@ class TrackEngine:
     
     def _calc_delta_event(self, sector_time, tbl_time):
         """Determine feedback color based on delta."""
-        if tbl_time is None:
+        if tbl_time is None or tbl_time == 0:
             return "SECTOR_NEUTRAL"  # No TBL data
             
         delta = sector_time - tbl_time
         
         # Thresholds (in seconds)
-        if delta <= 0.2:
-            return "SECTOR_FAST"  # Green
-        elif delta <= 0.6:
-            return "SECTOR_NEUTRAL"  # Orange
+        if delta < 0:
+            return "SECTOR_FAST"  # Green (Faster than best)
+        elif delta <= 0.5:
+            return "SECTOR_NEUTRAL"  # Orange (Within 0.5s)
         else:
-            return "SECTOR_SLOW"  # Red
+            return "SECTOR_SLOW"  # Red (Significant gap)
     
     def _haversine_m(self, lat1, lon1, lat2, lon2):
         """Calculate distance in meters between two GPS points.

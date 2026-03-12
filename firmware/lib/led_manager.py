@@ -273,7 +273,7 @@ class LEDManager:
     def _animate_event(self, now):
         """Animate the current event (simple flashing)."""
         if self._event_type == "TRACK_FOUND":
-            on = (now % 150 < 75)
+            on = (now % 100 < 50)
             c = 255 if on else 0
             self.set_color(c, c, c)
 

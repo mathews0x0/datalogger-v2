@@ -2345,4 +2345,23 @@ Fundamental shift in the uploader's networking model:
 - **Middleware Update**: Added `/api/device/active_track` to the `public_paths` list in `server/api/middleware.py`.
 - This ensures that device token-based authentication (handled within the route) is allowed to proceed.
 
-**Status:** ✅ Active Track Sync restored.
+**Status:** ✅ Active Track Sync restored (authorization fix).
+
+## [2026-03-12] Phase 7.11: Sync Stability & Live Timing Integration Fixes
+
+**Objective:** Stabilize backend sync and perfect the firmware-side live timing engine.
+
+### 1. Backend Stability (V13)
+- **Resolved 500 Error**: Fixed an `ImportError` in `devices.py` where a broken local import `from config import config` was used instead of the standardized `import api.config as config`.
+- **Verified Whitelisting**: Confirmed that `/api/device/active_track` is correctly bypassed in the JWT middleware to allow device token authentication.
+
+### 2. Firmware Track Engine & UI
+- **Timing Unit Fix**: Corrected a critical unit mismatch in `TrackEngine.py` that was comparing raw milliseconds to sector best times in seconds.
+- **Dynamic Sector Gates**: Added support for per-sector `radius_m` definitions from the track JSON, allowing for precise gate sensitivity on different track sections.
+- **Track Identification UI**: Added a 10Hz fast white blink for 3 seconds when the start line is first identified, providing clear "Lock-On" feedback to the rider.
+- **Feedback Refinement**: Standardized NeoPixel feedback thresholds:
+    - **Green (Flash)**: Faster than personal best (< 0s).
+    - **Orange (Flash)**: Consistent pace (0s - 0.5s).
+    - **Red (Flash)**: Significant gap (> 0.5s).
+
+**Status:** ✅ Active Track feature suite fully operational.

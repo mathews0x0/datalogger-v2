@@ -74,10 +74,14 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 |-------|-----------|-------|
 | Boot | 3 pulses | Blue |
 | Decision Window | Fast blink | Green (SD ok) / Red (no SD) |
-| SEARCHING | Slow pulse | Red |
+| SEARCHING | Slow pulse | Yellow |
 | LOGGING | Solid | Green |
 | PAUSED | Slow pulse | Amber |
 | CALIBRATING | Fast pulse | Blue |
+| **TRACK_FOUND** | **Fast blink (10Hz)** | **White (3s only)** |
+| **SECTOR_FAST** | **Fast blink** | **Green (3s only)** |
+| **SECTOR_NEUTRAL**| **Fast blink** | **Orange (3s only)** |
+| **SECTOR_SLOW** | **Fast blink** | **Red (3s only)** |
 | Sync: Searching WiFi | Slow fade | Purple |
 | Sync: WiFi Found | Fast blink | Purple |
 | Sync: Uploading | Fast blink | Green |
