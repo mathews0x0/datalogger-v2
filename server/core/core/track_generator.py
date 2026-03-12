@@ -220,20 +220,32 @@ class TrackGenerator:
             print("[TrackGenerator] Error: No samples.")
             return 0.0, 0.0
             
-        step = 1 # High precision scan
-        buffer_frames = 600 # ~60s - ensure we're finding full lap closures
-        skip_initial = 300 # Skip first 30s to avoid pit exit/entry areas
-        
-        limit = min(len(samples), 5000) 
+        # Dynamically calculate sample rate (Hz) to support both 10Hz and 100Hz logs
+        sample_rate = 10.0
+        if len(samples) > 10:
+            duration = samples[10].timestamp - samples[0].timestamp
+            if duration > 0.05:
+                sample_rate = 10.0 / duration
+        hz = max(10, min(200, int(sample_rate)))
 
-        print("[TrackGenerator] Scanning for First Loop Closure (Skipping pit areas)...")
+        step = max(1, hz // 10) # Base 10Hz scan rate
+        buffer_frames = 60 * hz # ~60s - ensure we're finding full lap closures
+        
+        session_duration_s = (samples[-1].timestamp - samples[0].timestamp) if samples else 0
+        skip_s = 30 if session_duration_s >= 180 else 10
+        skip_initial = int(skip_s * hz) # Skip initial area carefully
+        
+        limit = min(len(samples), 500 * hz) # Limit to first 500s
+
+        print(f"[TrackGenerator] Scanning for First Loop Closure at {hz}Hz (Skipping pit areas)...")
         
         import math
         def get_heading(idx):
              # Improved heading using look-back to handle "stair-step" GPS
-             # Look back up to 20 samples (~2s at 10Hz) to find 5m of movement
+             # Look back up to 2 seconds to find 5m of movement
              target_s = samples[idx]
-             for lookback in range(1, min(idx, 20) + 1):
+             lookback_limit = min(idx, max(20, int(2.0 * hz)))
+             for lookback in range(1, lookback_limit + 1):
                  s_prev = samples[idx - lookback]
                  d_km = haversine_distance(
                      s_prev.gps.lat, s_prev.gps.lon,

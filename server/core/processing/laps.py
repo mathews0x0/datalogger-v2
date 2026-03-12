@@ -54,6 +54,15 @@ class LapDetector:
         
         in_zone = False
         
+        # Dynamically calculate sample rate (Hz)
+        sample_rate = 10.0
+        if session.samples and len(session.samples) > 10:
+            duration = session.samples[10].timestamp - session.samples[0].timestamp
+            if duration > 0.05:
+                sample_rate = 10.0 / duration
+        hz = max(10, min(200, int(sample_rate)))
+        lookback_limit = max(20, int(2.0 * hz)) # Look back up to 2 seconds
+
         for i, sample in enumerate(session.samples):
             dist_km = haversine_distance(
                 sample.gps.lat, sample.gps.lon,
@@ -67,8 +76,8 @@ class LapDetector:
                     
                     # Calculate heading using look-back to handle "stair-step" GPS
                     heading = None
-                    # Look back up to 20 samples (~2s at 10Hz) to find 5m of movement
-                    for lookback in range(1, min(i, 20) + 1):
+                    # Look back up to 2s to find 5m of movement
+                    for lookback in range(1, min(i, lookback_limit) + 1):
                         prev = session.samples[i - lookback]
                         d_km = haversine_distance(
                             prev.gps.lat, prev.gps.lon,
