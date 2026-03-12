@@ -145,8 +145,8 @@ class LEDManager:
             self.set_color(0, val, 0)
 
         elif sync_state == "SYNC_UPLOADING":
-            # Hypersonic green blink (extremely fast)
-            on = (now % 40 < 20) # 20ms on, 20ms off
+            # 6Hz blink (83ms on/off)
+            on = (now % 166 < 83)
             self.set_color(0, 255 if on else 5, 0)
 
         elif sync_state == "SYNC_OK":
@@ -180,17 +180,7 @@ class LEDManager:
         now = time.ticks_ms()
         t = now / 1000.0
 
-        if state == "STORAGE_FULL":
-            # Fast red flash
-            on = (now % 200 < 100)
-            self.set_color(255 if on else 0, 0, 0)
-
-        elif state == "STORAGE_WARN":
-            # Yellow pulse
-            val = int((math.sin(t * 4.0) + 1) / 2 * 180)
-            self.set_color(val, val, 0)
-
-        elif state == "SEARCHING":
+        if state == "SEARCHING":
             # Slow yellow pulse (searching for GPS)
             val = int((math.sin(t * 3.0) + 1) / 2 * 150)
             self.set_color(val, val, 0)
@@ -222,18 +212,22 @@ class LEDManager:
         event_type: TRACK_FOUND, SECTOR_FAST, SECTOR_NEUTRAL, SECTOR_SLOW,
                     STORAGE_CRITICAL, CALIBRATED
         """
+        now = time.ticks_ms()
         self._event_active = True
-        self._event_end_time = time.ticks_ms() + duration_ms
+        self._event_end_time = now + duration_ms
         self._event_type = event_type
 
         # Immediate flash
         if event_type == "TRACK_FOUND":
             self.set_color(255, 255, 255)
         elif event_type == "SECTOR_FAST":
+            self._event_end_time = now + 1000 # 5 flashes @ 5Hz
             self.set_color(0, 255, 0)
         elif event_type == "SECTOR_NEUTRAL":
+            self._event_end_time = now + 1000
             self.set_color(255, 165, 0)
         elif event_type == "SECTOR_SLOW":
+            self._event_end_time = now + 1000
             self.set_color(255, 0, 0)
         elif event_type == "STORAGE_CRITICAL":
             self.set_color(255, 0, 0)
@@ -273,7 +267,8 @@ class LEDManager:
     def _animate_event(self, now):
         """Animate the current event (simple flashing)."""
         if self._event_type == "TRACK_FOUND":
-            on = (now % 100 < 50)
+            # 6Hz = 166.6ms cycle -> 83ms on/off
+            on = (now % 166 < 83)
             c = 255 if on else 0
             self.set_color(c, c, c)
 
@@ -282,16 +277,22 @@ class LEDManager:
             self.set_color(0, 255 if on else 0, 0)
 
         elif self._event_type in ("SECTOR_FAST", "SECTOR_NEUTRAL", "SECTOR_SLOW"):
+            # 5Hz = 200ms cycle -> 100ms on/off
             on = (now % 200 < 100)
-            if self._event_type == "SECTOR_FAST":
-                self.set_color(0, 255 if on else 0, 0)
-            elif self._event_type == "SECTOR_NEUTRAL":
-                self.set_color(255 if on else 0, 165 if on else 0, 0)
-            else:
-                self.set_color(255 if on else 0, 0, 0)
+            if not on:
+                self.set_color(0, 0, 0)
+                return
 
-        elif self._event_type == "STORAGE_CRITICAL":
-            self.set_color(255, 0, 0)
+            if self._event_type == "SECTOR_FAST":
+                self.set_color(0, 255, 0)
+            elif self._event_type == "SECTOR_NEUTRAL":
+                self.set_color(255, 165, 0)
+            else:
+                self.set_color(255, 0, 0)
+
+        elif self._event_type == "CALIBRATED":
+            on = (now % 333 < 166)
+            self.set_color(0, 255 if on else 0, 0)
 
     # --- GPIO 2 Debug LED ---
 

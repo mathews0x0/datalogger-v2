@@ -362,6 +362,13 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             if s: s.close()
             gc.collect()
         
+        # Update: Only set status LED if uploader is not busy
+        if not uploader_busy:
+            if success:
+                led.set_state("SYNC_HEARTBEAT_GREEN")
+            else:
+                led.set_state("SYNC_HEARTBEAT_RED")
+        
         return success
 
     # Background Uploader Thread
@@ -377,16 +384,16 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                 success = sync_all(sm_ref, led_ref, wdt, network_lock)
                 if success:
                     print("[Sync] All files uploaded successfully!")
-                    led_ref.set_state("SYNC_OK")
+                    led_ref.set_state("IDLE") # Back to idle/ready
                 else:
                     print("[Sync] One or more uploads failed.")
-                    led_ref.set_state("SYNC_FAIL")
+                    led_ref.set_state("SYNC_HEARTBEAT_RED")
             else:
                 print("[Sync] No pending files.")
-                led_ref.set_state("SYNC_OK")
+                led_ref.set_state("IDLE")
         except Exception as e:
             print(f"[Sync] Uploader Thread Fatal: {e}")
-            led_ref.set_state("SYNC_FAIL")
+            led_ref.set_state("SYNC_HEARTBEAT_RED")
         finally:
             uploader_busy = False
 
@@ -435,13 +442,6 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                     last_ping = current_time
                     success = perform_heartbeat()
                     
-                    # If we haven't spawned the uploader yet because of a failed handshake,
-                    # spawn it now that we finally have a successful heartbeat!
-                    if success and not uploader_spawned:
-                        print("[Sync] Heartbeat finally succeeded! Spawning uploader thread.")
-                        _thread.stack_size(24576)
-                        _thread.start_new_thread(uploader_thread_func, (sm, led))
-                        uploader_spawned = True
                 finally:
                     network_lock.release()
                     gc.collect()
@@ -580,8 +580,8 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                         print(f"TrackEng Error: {e}")
             
             # LED update (using set_state for background thread)
-            # Remove "LOGGING" base state which forces solid green and masks track feedback
-            base_state = "" if fix['valid'] else "SEARCHING"
+            # LOGGING is solid green (requested by user)
+            base_state = "LOGGING" if fix['valid'] else "SEARCHING"
             led.set_state(base_state)
             
             # Debug output (every ~1s = every 10 GPS ticks)
