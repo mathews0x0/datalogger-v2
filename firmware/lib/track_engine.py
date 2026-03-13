@@ -31,7 +31,8 @@ class TrackEngine:
         try:
             with open(TRACK_FILE, 'r') as f:
                 self.track = json.load(f)
-            print(f"[TrackEngine] Loaded: {self.track.get('name', 'Unknown')}")
+            name = self.track.get('track_name') or self.track.get('name', 'Unknown')
+            print(f"[TrackEngine] Loaded: {name}")
             return True
         except Exception as e:
             print(f"[TrackEngine] Load Error: {e}")
@@ -205,7 +206,7 @@ class TrackEngine:
         """Return current state for API."""
         return {
             "track_loaded": self.track is not None,
-            "track_name": self.track.get('name') if self.track else None,
+            "track_name": self.track.get('track_name') or self.track.get('name', 'Unknown') if self.track else None,
             "track_identified": self.track_identified,
             "current_sector": self.current_sector,
             "sector_count": len(self.track.get('sectors', [])) if self.track else 0

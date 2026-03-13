@@ -603,12 +603,12 @@ Backend is production-ready. Now need racer-friendly UI for track-day analysis.
 
 ### Active / Next
 
-- **Phase 3.3: Data Validation & Regression Testing**
+
 
 ### Explicitly Blocked
 
-- Phase 4: Insight & Intelligence
-- Phase 6: Live Feedback
+-   Phase 4: Insight & Intelligence
+-   Phase 6: Live Feedback
 
 ### Deferred but Planned
 
@@ -2380,3 +2380,35 @@ Fundamental shift in the uploader's networking model:
 - **Smoothing Adjustment**: Reduced the Exponential Moving Average (EMA) alpha factor from `0.5` to `0.15` to heavily smooth lean data and prevent UI jitter at 100Hz.
 
 **Status:** ✅ Signed Lean Angle calculations with heavier smoothing deployed for V2 IMU.
+
+---
+
+## 49. Hardware Standardisation: Transition to BMI323 (2026-03-14)
+
+**Objective:** Consolidate the hardware platform by standardising on the newer BMI323 IMU, replacing the legacy BMI270 to simplify firmware management and manufacturing.
+
+### Actions Completed:
+1.  **Firmware Pivot**: Modified `main.py` and `flashtool.sh` to exclusively target the BMI323 driver.
+2.  **Driver Refactoring**: Updated `bmi323.py` to expose sensitivity constants (`ACC_SENSITIVITY`, `GYR_SENSITIVITY`) as class properties, allowing `main.py` to dynamically adjust scaling without hardcoded globals.
+3.  **Legacy Preservation**: Kept the `bmi270.py` driver in the codebase for reference but removed all operational imports and deployment hooks.
+
+**Status:** ✅ **Complete.** The RS-Core platform now natively targets BMI323.
+
+---
+
+## 50. Critical Fix: BMI323 Frozen Gyroscope Diagnostic (2026-03-14)
+
+**Objective:** Resolve a "frozen gyroscope" bug where raw data was saturated at `-32768` (0x8000), effectively breaking lean angle and dynamic capture.
+
+### Diagnostic & Resolution:
+1.  **Reproduction**: Used `mpremote` to run a raw register-probing script on the device, confirming the gyro was stuck in a low-power/disabled state despite standard init.
+2.  **Root Cause Identification**: 
+    *   **Register Map Mismatch**: Discovered that the `bmi323.py` driver had shifted addresses for configuration registers (Legacy: 0x1F/0x20 vs Actual: 0x20/0x21).
+    *   **Power Mode Collision**: Misconfigured power settings were preventing the gyro engine from spinning up.
+3.  **The Fix**:
+    *   Remapped `REG_ACC_CONF` to `0x20` and `REG_GYR_CONF` to `0x21`.
+    *   Initialised both sensors into **High Performance Mode (Power Mode 7)** via `0x7087` (Accel) and `0x7007` (Gyro).
+4.  **Hardware Verification**: Confirmed live 6-axis motion via `mpremote`. Accel and Gyro now respond dynamically to physical orientation changes.
+
+**Status:** ✅ **Complete & Verified.** Gyroscope data is fluid and accurate.
+-   **Phase 3.3: Data Validation & Regression Testing**s

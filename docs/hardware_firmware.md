@@ -11,7 +11,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 ### **Core Components**
 *   **MCU**: ESP32-S3-WROOM-1 (Dual-core, 240MHz).
 *   **GNSS (GPS)**: Neo-M8N (Connected via UART on IO17/18). Target rate: **10Hz**.
-*   **IMU (6-Axis)**: BMI270 (Connected via I2C on IO21/39). Accel + Gyro.
+*   **IMU (6-Axis)**: BMI323 (Connected via I2C on IO21/39). Accel + Gyro. Requires High Performance Mode (Power Mode 7) for reliable gyro output.
 *   **Storage**: 
     *   **Primary**: MicroSD Card (FAT32, High-speed SPI on IO10-13).
     *   **Fallback**: Internal 16MB Flash (if SD is missing or unmounted).
@@ -130,4 +130,4 @@ The production server can push updates to local devices via the **UpdateManager*
 ## ⚠️ Hardware Precautions
 *   **GPS Antenna**: Ensure a clear sky view. The Neo-M8N performance degrades significantly under carbon fiber or metal.
 *   **SD Card**: Always use **Class 10** or faster cards. Slow cards can cause Core 0 to hang during long sessions.
-*   **IMU Orientation**: The BMI270 must be mounted flat. The auto-calibration routine (`CALIBRATING` state) expects the bike to be perfectly upright.
+*   **IMU Orientation**: The BMI323 must be mounted flat. The auto-calibration routine (`CALIBRATING` state) expects the bike to be perfectly upright. Note that BMI323 uses word-based I2C communication and a different register map (0x20/0x21 for conf) compared to the legacy BMI270.

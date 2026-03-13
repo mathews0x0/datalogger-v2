@@ -130,6 +130,7 @@ except: pass"
     
     # Step 2: Create necessary filesystem structure
     $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
+    $MPREMOTE_CMD connect "$PORT" mkdir /drivers 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data/metadata 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /sd 2>/dev/null
@@ -143,15 +144,24 @@ except: pass"
         fi
     done
     
-    # Sync directories recursively
     if [ -d "lib" ]; then
         echo -e "${CYAN}Syncing lib/...${NC}"
-        $MPREMOTE_CMD connect "$PORT" cp -r lib :
+        # Copy file by file to avoid __pycache__
+        for f in lib/*.py; do
+            [ -e "$f" ] || continue
+            $MPREMOTE_CMD connect "$PORT" cp "$f" :lib/
+        done
     fi
     
     if [ -d "drivers" ]; then
         echo -e "${CYAN}Syncing drivers/...${NC}"
-        $MPREMOTE_CMD connect "$PORT" cp -r drivers :
+        # Explicit driver list to exclude bmi270 and __pycache__
+        DRIVERS_LIST=("bmi323.py" "gps.py" "sdcard.py")
+        for driver in "${DRIVERS_LIST[@]}"; do
+            if [ -f "drivers/$driver" ]; then
+                $MPREMOTE_CMD connect "$PORT" cp "drivers/$driver" :drivers/
+            fi
+        done
     fi
     
     # (BMI270 library sync removed as part of BMI323 switch)
@@ -175,13 +185,18 @@ try:
     name=d.get('track_name') or d.get('name','Unknown')
     tbl=d.get('tbl',{})
     print(f'  Track: {name}')
-    if tbl:
-        for k in sorted(tbl.keys(), key=lambda x: int(x)):
-            print(f'  S{int(k)+1}: {tbl[k]:.3f}s')
+    if tbl and isinstance(tbl, dict):
+        # Only try to print numeric indices
+        for k in sorted(tbl.keys()):
+            try:
+                val = tbl[k]
+                if isinstance(val, (int, float)) or (isinstance(val, str) and val.replace('.','',1).isdigit()):
+                    print(f'  S{int(k)+1}: {float(val):.3f}s')
+            except: pass
     else:
         print('  (no TBL data)')
-except:
-    print('  (no track.json found)')
+except Exception as e:
+    print('  (no track.json found or invalid format)')
 "
 
     echo -e "${GREEN}Source Sync Complete!${NC}"
