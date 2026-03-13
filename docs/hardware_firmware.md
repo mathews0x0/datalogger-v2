@@ -44,16 +44,15 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 *   All WiFi radios are killed immediately.
 *   **Core 0 runs exclusive 100Hz telemetry loop**: IMU every tick (100Hz), GPS every 10th tick (10Hz).
 *   **Buffered writes**: Rows are batched in memory (~20 rows) and flushed to SD card ~5 times/sec for efficiency.
-*   **Track Engine** provides lap/sector crossing events for NeoPixel feedback (fires on GPS ticks only).
+*   **Method-Driven UI Signaling**: Core 0 never touches NeoPixel hardware directly. It calls semantic methods (e.g., `led.play_logging()`) which set internal flags for the background worker.
+*   **Track Engine** provides lap/sector crossing events which are overlaid via `led.trigger_event()`.
 *   No uploader, no captive portal, no WiFi threads.
 
 ### **SYNC MODE (Button Press — No Logging)**
 *   No telemetry logging occurs. No CSV files are created.
 *   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
-*   **Background High-Speed Uploader**: Once heartbeat is OK, spawns an uploader thread on Core 1:
-    *   **Persistent SSL**: Uses raw sockets held open for the entire file duration to eliminate per-chunk handshake overhead.
-    *   **High Throughput**: Uses **64KB chunks** (optimized for DMA) to saturate the link.
-*   **Locking**: Uses a global `network_lock` to ensure the Heartbeat (Core 0) and Uploader (Core 1) never clash.
+*   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread. This prevents SSL handshake jitter from affecting animation fluidness.
+*   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is applied to all animations, ensuring consistent intensity.
 *   **Long press (>3s)** on Sync Button at any time in Sync Mode → enters **Pairing Mode** (AP + Captive Portal).
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 
@@ -68,20 +67,23 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 *   **CALIBRATING**: Stationary and upright for >10s in pit. Calibrates IMU offsets.
 *   **STORAGE_CRITICAL**: Storage usage > 95%.
 
-### **LED Feedback (Both NeoPixels Mirror)**
+### **LED Feedback (Method-Driven)**
 
-| State | Animation | Color |
-|-------|-----------|-------|
+The `LEDManager` uses semantic methods. Direct state strings are no longer used for control.
+
+| Event / State | Method | Animation | Color |
+|---------------|--------|-----------|-------|
 | Boot | 3 pulses | Blue |
 | Decision Window | Fast blink | Green (SD ok) / Red (no SD) |
 | SEARCHING | Slow pulse | Yellow |
-| LOGGING | Solid | Green |
+| LOGGING (Casual) | Solid | Green |
+| **LOGGING (Racing)**| **OFF** | **None (Stealth)** |
 | PAUSED | Slow pulse | Amber |
 | CALIBRATING | Fast pulse | Blue |
-| **TRACK_FOUND** | **Fast blink (10Hz)** | **White (3s only)** |
-| **SECTOR_FAST** | **Fast blink** | **Green (3s only)** |
-| **SECTOR_NEUTRAL**| **Fast blink** | **Orange (3s only)** |
-| **SECTOR_SLOW** | **Fast blink** | **Red (3s only)** |
+| **TRACK_FOUND** | **Fast blink (10Hz)** | **White (2.5s duration)** |
+| **SECTOR_FAST** | **Fast blink** | **Green (2.5s duration)** |
+| **SECTOR_NEUTRAL**| **Fast blink** | **Orange (2.5s duration)** |
+| **SECTOR_SLOW** | **Fast blink** | **Red (2.5s duration)** |
 | Sync: Searching WiFi | Slow fade | Purple |
 | Sync: WiFi Found | Fast blink | Purple |
 | Sync: Uploading | Fast blink | Green |

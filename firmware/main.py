@@ -51,7 +51,8 @@ def setup():
     
     # 1. LED Manager (Dual NeoPixel: IO4 feedback + IO6 onboard)
     led = LEDManager(pin=PIN_LED_FEEDBACK, count=16, onboard_neo_pin=PIN_LED_ONBOARD, onboard_led_pin=PIN_DEBUG_LED)
-    led.animation_boot()  # 3 blue pulses
+    led.start_animation_thread()
+    led.play_booting()
     
     # 2. Power Stability Delay
     print("Stabilizing power...")
@@ -100,8 +101,7 @@ def setup():
     # 9. Watchdog Timer (Increase to 20s for network operations)
     wdt = machine.WDT(timeout=20000)
 
-    # 10. Start Animation Thread (Background fluid UI)
-    led.start_animation_thread()
+    # 10. (Removed Duplicate Thread Start)
 
     return led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted
 
@@ -127,7 +127,7 @@ def main():
     
     while time.ticks_diff(time.ticks_ms(), start) < 10000:
         wdt.feed()
-        led.animation_decision_tick(sd_mounted)
+        led.play_decision(sd_mounted)
         
         # Check button (active LOW — pressed when value() == 0)
         if sync_btn.value() == 0:
@@ -180,7 +180,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         # Stay in rainbow loop — portal runs in background
         while True:
             wdt.feed()
-            led.update_sync("SETUP_NEEDED")
+            led.play_setup_needed()
             time.sleep_ms(50)
     
     elif config.get('ssid'):
@@ -195,12 +195,11 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         # Wait up to 30s for connection
         for i in range(300):
             wdt.feed()
-            led.update_sync("SYNC_SEARCHING")
             
             if sta.isconnected():
                 wifi_connected = True
                 print(f"[Sync] WiFi Connected! IP: {sta.ifconfig()[0]}")
-                led.set_state("SYNC_FOUND")
+                led.play_sync_found()
                 wdt.feed()
                 time.sleep(1)  # Brief visual confirmation
                 wdt.feed()
@@ -365,9 +364,9 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         # Update: Only set status LED if uploader is not busy
         if not uploader_busy:
             if success:
-                led.set_state("SYNC_HEARTBEAT_GREEN")
+                led.play_heartbeat_success()
             else:
-                led.set_state("SYNC_HEARTBEAT_RED")
+                led.play_heartbeat_error()
         
         return success
 
@@ -384,16 +383,16 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                 success = sync_all(sm_ref, led_ref, wdt, network_lock)
                 if success:
                     print("[Sync] All files uploaded successfully!")
-                    led_ref.set_state("IDLE") # Back to idle/ready
+                    led_ref.play_idle() # Back to idle/ready
                 else:
                     print("[Sync] One or more uploads failed.")
-                    led_ref.set_state("SYNC_HEARTBEAT_RED")
+                    led_ref.play_heartbeat_error()
             else:
                 print("[Sync] No pending files.")
-                led_ref.set_state("IDLE")
+                led_ref.play_idle()
         except Exception as e:
             print(f"[Sync] Uploader Thread Fatal: {e}")
-            led_ref.set_state("SYNC_HEARTBEAT_RED")
+            led_ref.play_heartbeat_error()
         finally:
             uploader_busy = False
 
@@ -431,7 +430,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         current_time = time.ticks_ms()
         
         if pairing_active:
-            led.update_sync("PAIRING")
+            led.play_pairing()
             time.sleep_ms(50)
             continue
             
@@ -449,14 +448,13 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         # Visual Status
         if not uploader_busy:
             if needs_setup:
-                led.set_state("SETUP_NEEDED")
+                led.play_setup_needed()
             elif hb_ok:
-                led.set_state("SYNC_OK")
+                led.play_sync_ok()
             elif wifi_connected:
-                # Keep showing red heartbeat if WiFi is up but handshake hasn't passed
-                led.set_state("SYNC_HEARTBEAT_RED")
+                led.play_heartbeat_error()
             else:
-                led.set_state("SYNC_FAIL")
+                led.play_sync_fail()
         
         if sync_btn.value() == 0:
             if press_start == 0:
@@ -575,14 +573,16 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                     event = track_eng.update(fix['lat'], fix['lon'], float(tick_ms))
                     if event:
                         led.trigger_event(event)
+                        if event == "TRACK_FOUND":
+                            led.set_track_mode(True)
                 except Exception as e:
                     if loop_count % 100 == 0:
                         print(f"TrackEng Error: {e}")
             
-            # LED update (using set_state for background thread)
-            # LOGGING is solid green (requested by user)
+            # LOGGING is solid green
             base_state = "LOGGING" if fix['valid'] else "SEARCHING"
-            led.set_state(base_state)
+            if fix['valid']: led.play_logging()
+            else: led.play_searching()
             
             # Debug output (every ~1s = every 10 GPS ticks)
             if loop_count % 100 == 0:
@@ -610,6 +610,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                     usage = s_info['used_kb'] / s_info['total_kb']
                     if usage > 0.95:
                         base_state = "STORAGE_CRITICAL"
+                        led.play_storage_critical()
                         print(f"[System] STORAGE CRITICAL: {s_info['used_kb']}/{s_info['total_kb']} KB")
             except:
                 pass
