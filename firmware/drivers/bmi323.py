@@ -14,12 +14,15 @@ class BMI323:
     REG_GYR_DATA_Z = 0x08
     REG_TEMP_DATA = 0x09
     
-    REG_ACC_CONF = 0x1F
-    REG_GYR_CONF = 0x20
-    REG_PWR_CTRL = 0x21
+    REG_ACC_CONF = 0x20
+    REG_GYR_CONF = 0x21
     REG_CMD = 0x7E
     
     CHIP_ID = 0x43
+    
+    # Sensitivity constants for +/- 4g and +/- 2000dps
+    ACC_SENSITIVITY = 8192.0   # LSB/g (2^15 / 4)
+    GYR_SENSITIVITY = 16.4     # LSB/dps (2^15 / 2000)
     
     def __init__(self, i2c, address=0x69):
         self.i2c = i2c
@@ -65,15 +68,13 @@ class BMI323:
         if err != 0:
             print(f"IMU: Sensor Error Register: {hex(err)}")
             
-        # 5. Enable Accel, Gyro, Temp (0x000F: All on, adv_power_save off)
-        self._write_word(self.REG_PWR_CTRL, 0x000F)
-        time.sleep(0.1)  # Settling delay for PLL
+        # 5. Configure Accel (High Performance, 100Hz, +/- 4g)
+        # Power Mode 7 (bits 12-14), Range 1 (bits 7-10), ODR 7 (bits 0-3)
+        self._write_word(self.REG_ACC_CONF, 0x7087)
         
-        # 6. Configure Accel (100Hz, +/- 2g, Normal Mode)
-        self._write_word(self.REG_ACC_CONF, 0x2107) 
-        
-        # 7. Configure Gyro (100Hz, +/- 2000dps, Normal Mode)
-        self._write_word(self.REG_GYR_CONF, 0x2107)
+        # 6. Configure Gyro (High Performance, 100Hz, +/- 2000dps)
+        # Power Mode 7 (bits 12-14), Range 0 (bits 7-10), ODR 7 (bits 0-3)
+        self._write_word(self.REG_GYR_CONF, 0x7007)
         time.sleep(0.1)
 
     def get_accel(self):

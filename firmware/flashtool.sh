@@ -154,10 +154,7 @@ except: pass"
         $MPREMOTE_CMD connect "$PORT" cp -r drivers :
     fi
     
-    # BMI270 config library (required for IMU initialization)
-    echo -e "${MAGENTA}Installing BMI270 config library...${NC}"
-    $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
-    $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/
+    # (BMI270 library sync removed as part of BMI323 switch)
     
     # Show saved device config (WiFi creds + token)
     echo -e "${CYAN}Device Config:${NC}"
@@ -192,7 +189,7 @@ except:
 
 do_sync_drivers_only() {
     echo -e "${YELLOW}Synchronizing drivers to ESP32 root...${NC}"
-    DRIVERS=("bmi323.py" "bmi270.py" "gps.py" "sdcard.py")
+    DRIVERS=("bmi323.py" "gps.py" "sdcard.py")
     for driver in "${DRIVERS[@]}"; do
         if [ -f "drivers/$driver" ]; then
             echo "Pushing $driver..."
@@ -240,10 +237,7 @@ except: pass"
         
         # Install BMI270 config file library if deploying full system test
         if [[ "$src_file" == *"full_system_test"* ]]; then
-            echo -e "${MAGENTA}Installing BMI270 config library (local)...${NC}"
-            $MPREMOTE_CMD connect "$PORT" mkdir /lib 2>/dev/null
-            $MPREMOTE_CMD connect "$PORT" cp -r lib/micropython_bmi270 :/lib/
-            echo -e "${GREEN}BMI270 Library Installed!${NC}"
+            # BMI270 library install removed
             
             # Also deploy the neopixel driver just in case the OS wipe killed it
             echo -e "${MAGENTA}Ensuring neopixel library is present...${NC}"

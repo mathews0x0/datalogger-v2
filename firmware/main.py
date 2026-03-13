@@ -9,19 +9,12 @@ import ujson
 import socket
 import ssl
 
-# --- SAFE BOOT WINDOW ---
-print("=== SAFE BOOT WINDOW ===")
-print("You have 5 seconds to press Ctrl-C via mpremote to halt the logger.")
-for i in range(5, 0, -1):
-    print(f"Booting in {i}...")
-    time.sleep(1)
-print("=== BOOTING ===")
 
 # Drivers
 import ubinascii
 from lib.uploader import sync_all
 from drivers.gps import GPS
-from drivers.bmi270 import BMI270
+from drivers.bmi323 import BMI323
 from lib.session_manager import SessionManager
 from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
@@ -42,9 +35,7 @@ PIN_SD_CD = 3           # Card Detect
 PIN_BATTERY_ADC = 8     # VBAT-SENSE
 PIN_DEBUG_LED = 2       # Blue Debug LED
 
-# --- IMU SENSITIVITY CONSTANTS (BMI270 at ±4g / ±2000dps) ---
-ACC_SENSITIVITY = 8192.0   # LSB/g (2^15 / 4)
-GYR_SENSITIVITY = 16.4     # LSB/dps (2^15 / 2000)
+# Sensitivity constants now handled by IMU driver class
 
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
@@ -79,8 +70,8 @@ def setup():
     imu = None
     try:
         i2c = machine.I2C(0, sda=machine.Pin(PIN_I2C_SDA), scl=machine.Pin(PIN_I2C_SCL), freq=400000)
-        imu = BMI270(i2c, address=0x69)
-        print("IMU: BMI270 Initialized Success")
+        imu = BMI323(i2c, address=0x69)
+        print("IMU: BMI323 Initialized Success")
     except Exception as e:
         print(f"IMU: Failed to initialize ({e})")
 
@@ -529,12 +520,12 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
         if imu:
             try:
                 data = imu.get_values()
-                acc_x = data["acc"]["x"] / ACC_SENSITIVITY
-                acc_y = data["acc"]["y"] / ACC_SENSITIVITY
-                acc_z = data["acc"]["z"] / ACC_SENSITIVITY
-                gyr_x = data["gyro"]["x"] / GYR_SENSITIVITY
-                gyr_y = data["gyro"]["y"] / GYR_SENSITIVITY
-                gyr_z = data["gyro"]["z"] / GYR_SENSITIVITY
+                acc_x = data["acc"]["x"] / imu.ACC_SENSITIVITY
+                acc_y = data["acc"]["y"] / imu.ACC_SENSITIVITY
+                acc_z = data["acc"]["z"] / imu.ACC_SENSITIVITY
+                gyr_x = data["gyro"]["x"] / imu.GYR_SENSITIVITY
+                gyr_y = data["gyro"]["y"] / imu.GYR_SENSITIVITY
+                gyr_z = data["gyro"]["z"] / imu.GYR_SENSITIVITY
             except:
                 pass
         
