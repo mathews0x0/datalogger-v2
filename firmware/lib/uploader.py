@@ -5,10 +5,10 @@ import gc
 import time
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
-CHUNK_SIZE = 64 * 1024  # Ambitious 64KB chunks for maximum throughput
+CHUNK_SIZE = 128 * 1024  # Turbo mode: 128KB chunks for massive throughput
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
-TIMEOUT = 30  # Increased for larger chunks
+TIMEOUT = 45  # Increased for larger 128KB chunks
 
 
 def _load_config():

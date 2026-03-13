@@ -97,6 +97,27 @@ def test_led_logic():
     assert led._track_mode == False
     print("✓ Track Mode reset upon 'play_booting'")
 
+    # 10. Test Lub-Dub Heartbeat Animation
+    led.play_heartbeat_send() # Red heartbeat
+    # Lub (peak at 100ms)
+    led._render_state(100)
+    for i in range(16): assert led.np[i][0] > 200 and led.np[i][1] == 0 # Strong red
+    
+    # Dub (peak at 450ms, though Dub starts at 350ms, peak is midpoint 450ms)
+    led._render_state(450)
+    for i in range(16): assert 50 < led.np[i][0] < 150 # Softer red
+    
+    # Rest (1000ms)
+    led._render_state(1000)
+    for i in range(16): assert led.np[i] == (0, 0, 0)
+    print("✓ Lub-Dub Animation: Timing and varying intensities work")
+
+    # 11. Test Heartbeat Color Logic
+    led.play_heartbeat_ack() # Should be green
+    led._render_state(100) # During lub
+    for i in range(16): assert led.np[i][1] > 200 and led.np[i][0] == 0 # Strong green
+    print("✓ Heartbeat Colors: Red for send, Green for ACK")
+
     print("\nALL PHASE 4 LOGIC TESTS PASSED!")
 
 if __name__ == "__main__":

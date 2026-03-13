@@ -153,7 +153,7 @@ def start_captive_portal(led=None, ap_ip='192.168.4.1'):
             print('[Portal] Safety timeout reached. Shutting down WiFi.')
             break
 
-        if led: led.update_onboard_led("PAIRING")
+        if led: led.play_pairing()
         
         try:
             cl, addr = s.accept()
@@ -237,7 +237,7 @@ def start_captive_portal(led=None, ap_ip='192.168.4.1'):
                     # Countdown with LED
                     start_wait = time.ticks_ms()
                     while time.ticks_diff(time.ticks_ms(), start_wait) < 15000:
-                        if led: led.update_onboard_led("PAIRING") # Keep blinking
+                        if led: led.play_pairing() # Keep blinking
                         time.sleep(0.1)
                         
                     machine.reset()

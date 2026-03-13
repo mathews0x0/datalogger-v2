@@ -271,7 +271,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         try:
             gc.collect()
             print(f"[Heartbeat] Pinging {host}:{port}{ping_path}...")
-            led.set_state("SYNC_HEARTBEAT_RED")
+            led.play_heartbeat_send()
             
             # 1. Opening Raw Socket
             ai = socket.getaddrinfo(host, port)[0]
@@ -298,7 +298,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             resp_line = ss.readline().decode()
             if "200 OK" in resp_line:
                 print("[Heartbeat] Server ACK OK.")
-                led.set_state("SYNC_HEARTBEAT_GREEN")
+                led.play_heartbeat_ack()
                 time.sleep(1) # Visual confirmation
                 success = True
             else:

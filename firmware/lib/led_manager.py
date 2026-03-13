@@ -75,6 +75,11 @@ class LEDManager:
     
     def play_heartbeat_success(self): self._state = "HB_SUCCESS"
     def play_heartbeat_error(self): self._state = "HB_ERROR"
+    def play_heartbeat_send(self): self._state = "HB_SEND"
+    def play_heartbeat_ack(self): self._state = "HB_ACK"
+
+    def play_wifi_connecting(self): self._state = "WIFI_CONNECTING"
+    def play_wifi_connected(self): self._state = "WIFI_CONNECTED"
 
     def trigger_event(self, event_type, duration_ms=None):
         """Overlay a priority event (e.g. lap crossing) over the base state."""
@@ -140,14 +145,19 @@ class LEDManager:
             on = (now % 300 < 150) if s == "SYNC_FOUND" else True
             val = int((math.sin(t * 4.0) + 1) / 2 * 200) if s == "SYNC_SEARCHING" else 200
             self._fill(val if on else 0, 0, val if on else 0)
-        elif s.startswith("HB_"):
-            # Double pulse heartbeat
-            ms = now % 1000
+        elif s.startswith("HB_") or s.startswith("SYNC_HEARTBEAT_"):
+            # "Lub-Dub" Heartbeat (2s cycle)
+            ms = now % 2000
             val = 0
-            if ms < 150: val = int(math.sin((ms / 150) * math.pi) * 255)
-            elif 250 < ms < 400: val = int(math.sin(((ms - 250) / 150) * math.pi) * 180)
-            if s == "HB_SUCCESS": self._fill(0, val, 0)
-            else: self._fill(val, 0, 0)
+            if ms < 200: # Lub
+                val = int(math.sin((ms / 200.0) * math.pi) * 255)
+            elif 350 < ms < 550: # Dub
+                val = int(math.sin(((ms - 350) / 200.0) * math.pi) * 120)
+            
+            # Color Mapping
+            is_green = s in ("HB_SUCCESS", "HB_ACK", "SYNC_HEARTBEAT_GREEN")
+            if is_green: self._fill(0, val, 0)
+            else: self._fill(val, 0, 0) # HB_SEND, HB_ERROR, SYNC_HEARTBEAT_RED
         elif s == "BOOT":
             on = (now % 400 < 200)
             self._fill(0, 0, 255 if on else 0)
@@ -158,6 +168,11 @@ class LEDManager:
         elif s == "PAIRING":
             val = int((math.sin(t * 2.0) + 1) / 2 * 200)
             self._fill(0, 0, val)
+        elif s == "WIFI_CONNECTING":
+            val = int((math.sin(t * 8.0) + 1) / 2 * 255)
+            self._fill(val, val, 0) # Rapid yellow pulse
+        elif s == "WIFI_CONNECTED":
+            self._fill(0, 255, 0) # Solid green for a moment (usually transitions quickly)
         elif s == "SETUP_NEEDED":
             # Rainbow cycle
             hue = int(t * 100) % 255
@@ -220,3 +235,15 @@ class LEDManager:
     def set_state(self, state):
         """For backward compat: maps old state strings to new methods."""
         self._state = state
+
+    def update_onboard_led(self, state):
+        """Backward compatibility for legacy WiFi/Portal flow."""
+        mapping = {
+            "CONNECTING": self.play_wifi_connecting,
+            "CONNECTED": self.play_wifi_connected,
+            "PAIRING": self.play_pairing,
+        }
+        if state in mapping:
+            mapping[state]()
+        else:
+            print(f"[LED] Warning: Unknown legacy state '{state}'")

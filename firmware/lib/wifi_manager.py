@@ -40,7 +40,7 @@ def connect_or_ap(led=None):
     if ssid:
         # Try STA mode
         print(f'[WiFi] Connecting to: {ssid}')
-        if led: led.update_onboard_led("CONNECTING")
+        if led: led.play_wifi_connecting()
         
         sta = network.WLAN(network.STA_IF)
         sta.active(True)
@@ -48,11 +48,11 @@ def connect_or_ap(led=None):
         
         # Wait up to 30 seconds (300 * 0.1s)
         for i in range(300):
-            if led: led.update_onboard_led("CONNECTING") # Keep blinking
+            if led: led.play_wifi_connecting() # Ensure state persists
             if sta.isconnected():
                 ip = sta.ifconfig()[0]
                 print(f'[WiFi] Connected! IP: {ip}')
-                if led: led.update_onboard_led("CONNECTED")
+                if led: led.play_wifi_connected()
                 
                 # Sync time for HTTPS certificates
                 try:
@@ -72,7 +72,7 @@ def connect_or_ap(led=None):
         sta.active(False)
     
     # AP Mode fallback
-    if led: led.update_onboard_led("PAIRING")
+    if led: led.play_pairing()
     return start_ap_mode(led)
 
 
@@ -94,7 +94,7 @@ def start_ap_mode(led=None):
     # Wait for AP to be active with high-freq LED updates
     print(f'[WiFi] Starting AP: {ap_name}...')
     for _ in range(50): # 5 seconds
-        if led: led.update_onboard_led("PAIRING")
+        if led: led.play_pairing()
         if ap.active():
             break
         time.sleep(0.1)
