@@ -14,7 +14,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 *   **IMU (6-Axis)**: BMI323 (Connected via I2C on IO21/39). Accel + Gyro. Requires High Performance Mode (Power Mode 7) for reliable gyro output.
 *   **Storage**: 
     *   **Primary**: MicroSD Card (FAT32, High-speed SPI on IO10-13).
-    *   **Fallback**: Internal 16MB Flash (if SD is missing or unmounted).
+    *   **Fallback**: Internal 16MB Flash. Sessions recorded here are **Auto-Copied** to SD on the next boot if a card is detected.
 *   **Battery**: ADC IO8 for voltage monitoring (VBAT-SENSE). Supports 1S/2S LiPo.
 *   **User Input**:
     *   **Sync Button (IO5)**: GND-button-IO5 (active LOW, internal pull-up). Determines device mode at boot.
@@ -35,10 +35,17 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 ### **Boot Sequence**
 1.  5-second safe boot window (Ctrl-C to halt via mpremote).
 2.  Hardware initialization (NeoPixels, SD, IMU, GPS, WDT).
-3.  **3 Blue Pulses** on both NeoPixels to confirm device is alive.
-4.  **10-Second Decision Window**: NeoPixels blink fast in **Green** (SD mounted) or **Red** (SD failed).
+3.  **Halt Opportunity**: 3 Blue Pulses confirm boot. (Ctrl-C via mpremote works here).
+4.  **Auto-Copy Check**: If SD is mounted AND sessions exist on Flash:
+    *   **White Flashing** LEDs.
+    *   Files are moved to `/sd/sessions/` (with collision protection: `_1.csv`).
+    *   Device reboots automatically after completion.
+5.  **10-Second Decision Window**: Granular hardware status feedback:
+    *   **Fast Green Blink**: (DECISION_ALL_OK) SD, IMU, and GPS are all OK.
+    *   **Fast Red Blink**: (DECISION_IMU_SD_FAILED) IMU or SD (or both) have failed.
+    *   **Solid Red**: (DECISION_GPS_FAIL) No NMEA detected. Device **holds** here indefinitely until GPS is recovered or SYNC button pressed.
     *   **Button pressed** during window → **SYNC MODE**.
-    *   **No press** → **LOGGING MODE**.
+    *   **Exit condition**: 10s passed AND GPS OK → **LOGGING MODE**.
 
 ### **LOGGING MODE (Default — No Radio)**
 *   All WiFi radios are killed immediately.
@@ -74,7 +81,10 @@ The `LEDManager` uses semantic methods. Direct state strings are no longer used 
 | Event / State | Method | Animation | Color |
 |---------------|--------|-----------|-------|
 | Boot | 3 pulses | Blue |
-| Decision Window | Fast blink | Green (SD ok) / Red (no SD) |
+| Decision: ALL OK | Fast blink | Green (SD+IMU+GPS ok) |
+| Decision: HW FAIL | Fast blink | Red (SD/IMU failed, GPS ok) |
+| Decision: GPS FAIL| Solid | Red (GPS module/comms failure) |
+| **AUTO_COPY** | **Fast blink (5Hz)** | **White (until reboot)** |
 | SEARCHING | Slow pulse | Yellow |
 | LOGGING (Casual) | Solid | Green |
 | **LOGGING (Racing)**| **OFF** | **None (Stealth)** |

@@ -267,81 +267,56 @@ except: pass"
 }
 
 
-# --- 4. File Explorer ---
-do_file_explorer() {
-    echo -e "${CYAN}Connecting to device filesystem...${NC}"
-    local current_path="/"
-    
-    while true; do
-        echo ""
-        echo -e "${GREEN}===========================================${NC}"
-        echo -e "${GREEN} 📂 $current_path${NC}"
-        echo -e "${GREEN}===========================================${NC}"
-        
-        # Get listing via mpremote — outputs name, type, size
-        local listing
-        local py_script="import os; path=\"${current_path}\"; path='' if path=='/' else path; items=sorted(os.listdir(path if path else '/'))"
-        py_script="${py_script}; "
-        py_script="${py_script}[print(('D|'+n) if (os.stat((path+'/'+n) if path else ('/'+n))[0]&0x4000) else ('F|'+n+'|'+str(os.stat((path+'/'+n) if path else ('/'+n))[6]))) for n in items]"
-        listing=$($MPREMOTE_CMD connect "$PORT" exec "$py_script" 2>/dev/null)
+# --- 4. Backup & Purge ---
+do_backup() {
+    local backup_root="/Users/mj/Documents/RS-core-flashtool-backups"
+    local timestamp=$(date +"%Y-%m-%d_%H%M")
+    local backup_dir="$backup_root/$timestamp"
 
-        if echo "$listing" | grep -q "^ERROR:"; then
-            echo -e "${RED}Error reading directory: $listing${NC}"
-            return
-        fi
+    echo -e "${YELLOW}Initiating Backup to $backup_dir...${NC}"
+    mkdir -p "$backup_dir"
 
-        # Parse and display
-        local dir_count=0
-        local dirs=()
+    # Step 1: Copy data from device
+    echo -e "${CYAN}Copying /data directory...${NC}"
+    $MPREMOTE_CMD connect "$PORT" cp -r :data "$backup_dir/"
+    local data_status=$?
+
+    echo -e "${CYAN}Checking for crash.log...${NC}"
+    $MPREMOTE_CMD connect "$PORT" cp :crash.log "$backup_dir/" 2>/dev/null
+    # crash.log might not exist, so we don't strictly fail on it
+
+    if [ $data_status -eq 0 ] && [ -d "$backup_dir/data" ]; then
+        echo -e "${GREEN}Backup successful! Verified at $backup_dir${NC}"
         
-        # Show parent navigation
-        if [ "$current_path" != "/" ]; then
-            echo -e "  ${YELLOW}[0]${NC}  📁 .."
-        fi
-        
-        # Process entries
-        while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            local type=$(echo "$line" | cut -d'|' -f1)
-            local name=$(echo "$line" | cut -d'|' -f2)
-            
-            if [ "$type" == "D" ]; then
-                dir_count=$((dir_count + 1))
-                dirs+=("$name")
-                echo -e "  ${YELLOW}[$dir_count]${NC}  📁 ${CYAN}${name}/${NC}"
-            else
-                local size=$(echo "$line" | cut -d'|' -f3)
-                # Human-readable size
-                if [ "$size" != "?" ] && [ "$size" -gt 1024 ] 2>/dev/null; then
-                    local kb=$((size / 1024))
-                    echo -e "       📄 ${name}  ${MAGENTA}(${kb} KB)${NC}"
-                else
-                    echo -e "       📄 ${name}  ${MAGENTA}(${size} B)${NC}"
-                fi
-            fi
-        done <<< "$listing"
-        
-        echo -e "${GREEN}===========================================${NC}"
-        echo -ne "Enter directory number (or ${YELLOW}q${NC} to quit): "
-        read nav
-        
-        if [ "$nav" == "q" ] || [ "$nav" == "Q" ]; then
-            break
-        elif [ "$nav" == "0" ] && [ "$current_path" != "/" ]; then
-            # Go up
-            current_path=$(dirname "$current_path")
-        elif [[ "$nav" =~ ^[0-9]+$ ]] && [ "$nav" -ge 1 ] && [ "$nav" -le "$dir_count" ]; then
-            local target_dir="${dirs[$((nav - 1))]}"
-            if [ "$current_path" == "/" ]; then
-                current_path="/$target_dir"
-            else
-                current_path="$current_path/$target_dir"
-            fi
-        else
-            echo -e "${RED}Invalid input.${NC}"
-            sleep 0.5
-        fi
-    done
+        # Step 2: Delete from device (Selective Purge)
+        echo -e "${RED}Purging backed-up data (keeping /data/metadata)...${NC}"
+        $MPREMOTE_CMD connect "$PORT" exec "import os
+def rmtree(d):
+    try:
+        if os.stat(d)[0] & 0x4000:
+            for f in os.listdir(d): rmtree(d+'/'+f)
+            os.rmdir(d)
+        else:
+            os.remove(d)
+    except: pass
+
+# Delete everything in /data EXCEPT metadata
+try:
+    for f in os.listdir('/data'):
+        if f != 'metadata':
+            rmtree('/data/' + f)
+except: pass
+
+# Delete top-level crash.log
+try: os.remove('/crash.log')
+except: pass
+"
+        echo -e "${GREEN}Purge complete. Storage freed (Metadata preserved).${NC}"
+    else
+        echo -e "${RED}Backup FAILED or verification failed. Device data preserved.${NC}"
+        # Cleanup empty directory if it failed
+        [ -z "$(ls -A "$backup_dir")" ] && rmdir "$backup_dir"
+    fi
 }
 
 
@@ -352,14 +327,12 @@ show_menu() {
     echo -e "${GREEN}       RS-CORE UNIFIED FLASHTOOL          ${NC}"
     echo -e "${GREEN}==========================================${NC}"
     echo "1) First Setup (Wipe + OS + Flash Blink script)"
-    echo "2) Hardware Test (Wipe + OS + Flash Full System Test)"
-    echo "3) Clean Sync (Replace firmware code, keep user data)"
-    echo "4) Nuke Sync (Full Wipe + Install OS + Sync latest)"
-    echo "5) Deploy Full System Test (No OS Wipe)"
-    echo "6) File Explorer (Browse device filesystem)"
-    echo "7) Exit"
+    echo "2) Clean Sync (Replace firmware code, keep user data)"
+    echo "3) Nuke Sync (Full Wipe + Install OS + Sync latest)"
+    echo "4) Backup & Purge Device Data (Internal flash only)"
+    echo "5) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-7]: "
+    echo -ne "Select an option [1-5]: "
 }
 
 main() {
@@ -387,29 +360,20 @@ main() {
             echo -e "${GREEN}First Setup Complete!${NC}"
             ;;
         2)
-            do_wipe
-            do_flash_os
-            do_deploy_test "$FULL_TEST_SRC" "Full System Test"
-            echo -e "${GREEN}Hardware Test Setup Complete!${NC}"
-            ;;
-        3)
             # Clean sync: do_sync_source wipes all user files then pushes fresh
             do_sync_source
             echo -e "${GREEN}Clean Sync Complete!${NC}"
             ;;
-        4)
+        3)
             do_wipe
             do_flash_os
             do_sync_source
             echo -e "${GREEN}Nuke Sync Complete!${NC}"
             ;;
+        4)
+            do_backup
+            ;;
         5)
-            do_deploy_test "$FULL_TEST_SRC" "Full System Test"
-            ;;
-        6)
-            do_file_explorer
-            ;;
-        7)
             echo "Exiting."
             exit 0
             ;;

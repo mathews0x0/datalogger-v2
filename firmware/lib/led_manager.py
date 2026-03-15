@@ -61,9 +61,15 @@ class LEDManager:
     def play_calibrating(self): self._state = "CALIBRATING"
     def play_idle(self): self._state = "IDLE"
     def play_storage_critical(self): self._state = "STORAGE_CRITICAL"
+    def play_auto_copy(self): self._state = "AUTO_COPY"; self._track_mode = False
     
-    def play_decision(self, sd_ok):
-        self._state = "DECISION_OK" if sd_ok else "DECISION_FAIL"
+    def play_decision(self, sd_ok, imu_ok, gps_ok):
+        if not gps_ok:
+            self._state = "DECISION_GPS_FAIL"
+        elif not sd_ok or not imu_ok:
+            self._state = "DECISION_IMU_SD_FAILED"
+        else:
+            self._state = "DECISION_ALL_OK"
 
     def play_sync_searching(self): self._state = "SYNC_SEARCHING"; self._track_mode = False
     def play_sync_found(self): self._state = "SYNC_FOUND"
@@ -158,13 +164,22 @@ class LEDManager:
             is_green = s in ("HB_SUCCESS", "HB_ACK", "SYNC_HEARTBEAT_GREEN")
             if is_green: self._fill(0, val, 0)
             else: self._fill(val, 0, 0) # HB_SEND, HB_ERROR, SYNC_HEARTBEAT_RED
+        elif s == "AUTO_COPY":
+            on = (now % 200 < 100)
+            val = 255 if on else 0
+            self._fill(val, val, val)
         elif s == "BOOT":
             on = (now % 400 < 200)
             self._fill(0, 0, 255 if on else 0)
         elif s.startswith("DECISION_"):
-            on = (now % 150 < 75)
-            if s == "DECISION_OK": self._fill(0, 200 if on else 0, 0)
-            else: self._fill(200 if on else 0, 0, 0)
+            if s == "DECISION_GPS_FAIL":
+                # Solid red
+                self._fill(200, 0, 0)
+            else:
+                # Fast blink (Green for ALL_OK, Red for SD/IMU fail)
+                on = (now % 150 < 75)
+                if s == "DECISION_ALL_OK": self._fill(0, 200 if on else 0, 0)
+                else: self._fill(200 if on else 0, 0, 0) # DECISION_IMU_SD_FAILED
         elif s == "PAIRING":
             val = int((math.sin(t * 2.0) + 1) / 2 * 200)
             self._fill(0, 0, val)

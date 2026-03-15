@@ -178,3 +178,64 @@ class SessionManager:
             return {'total_kb': total, 'used_kb': total - free, 'free_kb': free}
         except:
             return None
+
+    def has_flash_sessions(self):
+        """Checks if there are any session files on internal flash."""
+        try:
+            files = os.listdir(self.flash_sessions)
+            return any(f.endswith('.csv') for f in files)
+        except OSError:
+            return False
+
+    def move_flash_to_sd(self):
+        """Moves all session files from flash to SD card."""
+        if not self.sd_mounted:
+            return False
+            
+        try:
+            files = [f for f in os.listdir(self.flash_sessions) if f.endswith('.csv')]
+            if not files:
+                return False
+                
+            print(f"[Storage] Moving {len(files)} sessions to SD card...")
+            
+            for fname in files:
+                src = f"{self.flash_sessions}/{fname}"
+                dst = f"{self.active_dir}/{fname}"
+                
+                # Check if file already exists on SD (avoid overwrite)
+                existing_files = os.listdir(self.active_dir)
+                if fname in existing_files:
+                    # Robust Rename: sess_001.csv -> sess_001_1.csv
+                    base, ext = fname.rsplit('.', 1)
+                    counter = 1
+                    new_fname = f"{base}_{counter}.{ext}"
+                    while new_fname in existing_files:
+                        counter += 1
+                        new_fname = f"{base}_{counter}.{ext}"
+                    dst = f"{self.active_dir}/{new_fname}"
+                    print(f"  ! Conflict: Renaming to {new_fname}")
+                
+                print(f"  -> Copying {fname}...")
+                
+                # Chunked copy
+                with open(src, 'rb') as f_src:
+                    with open(dst, 'wb') as f_dst:
+                        while True:
+                            chunk = f_src.read(4096)
+                            if not chunk:
+                                break
+                            f_dst.write(chunk)
+                
+                # Verify size
+                if os.stat(src)[6] == os.stat(dst)[6]:
+                    os.remove(src)
+                    print(f"  ✓ Moved {fname}")
+                else:
+                    print(f"  ! Error: Size mismatch for {fname}")
+                    return False
+            
+            return True
+        except Exception as e:
+            print(f"[Storage] Move failed: {e}")
+            return False

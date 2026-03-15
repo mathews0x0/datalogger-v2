@@ -2411,4 +2411,50 @@ Fundamental shift in the uploader's networking model:
 4.  **Hardware Verification**: Confirmed live 6-axis motion via `mpremote`. Accel and Gyro now respond dynamically to physical orientation changes.
 
 **Status:** ✅ **Complete & Verified.** Gyroscope data is fluid and accurate.
--   **Phase 3.3: Data Validation & Regression Testing**s
+
+---
+
+## 17. Phase 5.1 — Hardware Health Intelligence (2026-03-16)
+
+**Objective:** Provide granular hardware status feedback to the rider before logging begins, ensuring data integrity for GPS-dependent sessions.
+
+### Decisions
+
+- **Triple-Flag Status:** Decision window now tracks SD, IMU, and GPS independently.
+- **GPS Gate:** System is now **explicitly blocked** from entering logging mode if GPS communication is not established.
+- **Visual Encoding:**
+    - **Fast Green Blink:** All systems nominal.
+    - **Fast Red Blink:** Degraded mode (SD or IMU fail). Device proceeds to logging on internal flash if possible.
+    - **Solid Red:** Critical failure (GPS communication loss). Device holds in decision window indefinitely.
+- **Dynamic Recovery:** The 10-second window is now "Active". If a disconnected GPS module is plugged in, the system detects NMEA sentences dynamically and unlocks the logging gate.
+
+### Outcome
+
+- Increased rider confidence via pre-flight checks.
+- Zero "Empty Sessions" due to forgotten GPS hardware.
+- Robust handling of internal flash fallback when SD fails.
+
+**Status:** ✅ Complete & Verified
+
+---
+
+## 51. Phase 5.2 — Automated Storage Logistics (2026-03-16)
+
+**Objective:** Eliminate manual data transfer effort for sessions recorded to internal flash.
+
+### Decisions
+
+- **Zero-Touch Migration:** If an SD card is present at boot, any sessions on flash are moved automatically before the main loop starts.
+- **Reboot-to-Clean:** Triggering a hardware reset after migration ensures the system starts with a fresh session count and primary storage handles.
+- **Visual Locking:** Dedicated white flashing LED animation (`AUTO_COPY`) signals the transfer is active.
+- **Collision Safety:** Implemented incremental numbering (e.g., `_1.csv`) if a filename collision occurs on the SD card, preventing data loss.
+
+### Outcome
+
+- Data logged in "fallback mode" (missing SD) is treated with the same permanence as primary data.
+- Seamless transition between internal and external storage without user intervention or flashtool scripts.
+
+**Status:** ✅ Complete & Verified
+
+
+---

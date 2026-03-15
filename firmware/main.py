@@ -65,6 +65,26 @@ def setup():
 
     # 5. Session Manager
     sm = SessionManager(sd_mounted=sd_mounted)
+    if sd_mounted:
+        s_info = sm.get_active_storage_info()
+        if s_info:
+            print(f"Storage: SD Total: {s_info['total_kb']/1024:.2f} MB, Used: {s_info['used_kb']/1024:.2f} MB ({s_info['used_kb']*100/s_info['total_kb']:.1f}%)")
+        
+        # --- AUTO-COPY MECHANISM ---
+        # If files exist on flash and SD is mounted, move them and reboot
+        if sm.has_flash_sessions():
+            print("\n[System] Found session files on internal flash. Moving to SD card...")
+            led.play_auto_copy()
+            # Feed WDT during potentially long copy
+            wdt = machine.WDT(timeout=20000) # Ensure WDT is active
+            
+            if sm.move_flash_to_sd():
+                print("[System] Auto-copy complete! Rebooting...")
+                time.sleep(1)
+                machine.reset()
+            else:
+                print("[System] Auto-copy failed. Continuing normal boot.")
+                led.play_booting()
     
     # 6. I2C Sensors (IMU)
     imu = None
@@ -72,6 +92,15 @@ def setup():
         i2c = machine.I2C(0, sda=machine.Pin(PIN_I2C_SDA), scl=machine.Pin(PIN_I2C_SCL), freq=400000)
         imu = BMI323(i2c, address=0x69)
         print("IMU: BMI323 Initialized Success")
+        
+        # Diagnostic: Print 5 consecutive IMU readings
+        print("IMU: Diagnostic — 5 consecutive readings:")
+        for i in range(5):
+            d = imu.get_values()
+            ax, ay, az = d["acc"]["x"]/imu.ACC_SENSITIVITY, d["acc"]["y"]/imu.ACC_SENSITIVITY, d["acc"]["z"]/imu.ACC_SENSITIVITY
+            gx, gy, gz = d["gyro"]["x"]/imu.GYR_SENSITIVITY, d["gyro"]["y"]/imu.GYR_SENSITIVITY, d["gyro"]["z"]/imu.GYR_SENSITIVITY
+            print(f"  [{i+1}] ACC: {ax:>6.3f}, {ay:>6.3f}, {az:>6.3f} | GYR: {gx:>7.2f}, {gy:>7.2f}, {gz:>7.2f}")
+            time.sleep_ms(10)
     except Exception as e:
         print(f"IMU: Failed to initialize ({e})")
 
@@ -85,6 +114,26 @@ def setup():
     gps.set_rate(10)
     print("GPS: Neo-M8N Ready at 115200 baud / 10Hz (2KB Buffer)")
 
+    # Diagnostic: Measure frequency over 5 NMEA sentences
+    print("GPS: Diagnostic — Measuring frequency (5 sentences)...")
+    sentences_received = 0
+    start_ms = time.ticks_ms()
+    timeout_ms = 2000 # 2 seconds total timeout
+    
+    while sentences_received < 5 and time.ticks_diff(time.ticks_ms(), start_ms) < timeout_ms:
+        if gps_uart.any():
+            line = gps_uart.readline()
+            if line and line.startswith(b'$'):
+                sentences_received += 1
+    
+    end_ms = time.ticks_ms()
+    duration = time.ticks_diff(end_ms, start_ms)
+    if sentences_received >= 5:
+        freq = 5 / (duration / 1000.0)
+        print(f"GPS: Received 5 sentences in {duration}ms ({freq:.2f}Hz)")
+    else:
+        print(f"GPS: Diagnostic timeout. Received only {sentences_received} sentences in {duration}ms.")
+
     # 8. Track Engine
     track_eng = TrackEngine()
     track_eng.load_track()
@@ -92,12 +141,13 @@ def setup():
     # 9. Watchdog Timer (Increase to 20s for network operations)
     wdt = machine.WDT(timeout=20000)
 
-    # 10. (Removed Duplicate Thread Start)
+    imu_ok = imu is not None
+    gps_ok = sentences_received >= 5
 
-    return led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted
+    return led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
 
 def main():
-    led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted = setup()
+    led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received = setup()
     
     # --- Sync Button (IO5) ---
     sync_btn = machine.Pin(PIN_BUTTON_SYNC, machine.Pin.IN, machine.Pin.PULL_UP)
@@ -113,18 +163,43 @@ def main():
     
     # --- 10-SECOND DECISION WINDOW ---
     print("\n[System] 10s Decision Window — Press SYNC button to enter Sync Mode")
+    if not gps_ok:
+        print("[System] GPS ERROR: No NMEA data detected. Holding in Decision Window.")
+    
     sync_requested = False
     start = time.ticks_ms()
     
-    while time.ticks_diff(time.ticks_ms(), start) < 10000:
+    while True:
+        elapsed = time.ticks_diff(time.ticks_ms(), start)
         wdt.feed()
-        led.play_decision(sd_mounted)
+        
+        # Dynamic GPS check if not already OK
+        if not gps_ok:
+            while gps_uart.any():
+                line = gps_uart.readline()
+                if line and line.startswith(b'$'):
+                    sentences_received += 1
+                    if sentences_received >= 5:
+                        gps_ok = True
+                        print("[System] GPS RECOVERED: NMEA detected. Window will now proceed.")
+                        break
+        
+        # Update LED with current health status
+        led.play_decision(sd_mounted, imu_ok, gps_ok)
         
         # Check button (active LOW — pressed when value() == 0)
         if sync_btn.value() == 0:
             sync_requested = True
             print("[System] SYNC button pressed! Entering Sync Mode.")
             break
+        
+        # Exit condition: 10s passed AND GPS is okay
+        # If GPS is NOT okay, we stay here forever (or until SYNC is pressed)
+        if gps_ok and elapsed > 10000:
+            break
+            
+        # Optional: Re-check GPS if it was previously failed? 
+        # For now, we stick to the initial check as per requirement ("stays in decision window if problem with gps")
         
         time.sleep_ms(50)
 
