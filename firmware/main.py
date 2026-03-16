@@ -241,6 +241,8 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         # No saved network — auto-enter pairing mode with rainbow animation
         print("[Sync] No WiFi credentials. Starting Pairing Mode automatically...")
         from lib.captive_portal import start_background_portal
+        gc.collect()
+        _thread.stack_size(16384) # 16KB for portal
         _thread.start_new_thread(start_background_portal, (led,))
         
         # Stay in rainbow loop — portal runs in background
@@ -276,6 +278,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         if not wifi_connected:
             print("[Sync] WiFi connection failed.")
             sta.active(False)
+            gc.collect()
     
     # --- Phase 2 & 3: Dual-Core Sync Architecture ---
     # Core 1: Background Uploader
@@ -478,7 +481,8 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         
         if hb_ok:
             print("[Sync] Handshake successful. Spawning uploader thread.")
-            _thread.stack_size(24576)
+            gc.collect()
+            _thread.stack_size(32768) # 32KB for SSL uploader
             _thread.start_new_thread(uploader_thread_func, (sm, led))
             uploader_spawned = True
         else:
@@ -532,6 +536,8 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                 time.sleep_ms(200)
                 from lib.captive_portal import start_background_portal
                 # No thread lock needed for portal since it's an exclusive mode
+                gc.collect()
+                _thread.stack_size(16384)
                 _thread.start_new_thread(start_background_portal, (led,))
                 pairing_active = True
                 press_start = 0

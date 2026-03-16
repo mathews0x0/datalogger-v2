@@ -132,6 +132,7 @@ def start_captive_portal(led=None, ap_ip='192.168.4.1'):
     import _thread
     
     # 1. Start DNS Hijack
+    _thread.stack_size(8192)
     _thread.start_new_thread(_dns_server, (ap_ip,))
     
     # 2. Start HTTP Server

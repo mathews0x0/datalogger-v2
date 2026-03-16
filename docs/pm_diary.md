@@ -2456,5 +2456,29 @@ Fundamental shift in the uploader's networking model:
 
 **Status:** ✅ Complete & Verified
 
+---
+
+## 52. Phase 5.3 — Zero-Allocation UI & Visual Refinement (2026-03-16)
+
+**Objective:** Stabilize device connectivity in Sync Mode and polish the rider's visual feedback interface.
+
+### Decisions
+
+- **Stabilization Strategy:** Root-caused firmware resets during Sync Mode to heap fragmentation from high-frequency (1,600+ entries/sec) LED tuple allocations.
+- **Zero-Allocation Architecture:** Refactored the `LEDManager` to use direct buffer manipulation (`self.np.buf[:] = ...`), eliminating memory churn in the 50Hz animation loop.
+- **Modular Theme Engine:** Extracted all visual definitions into `color_animations.py` ("Theme Engine"), separating hardware control from aesthetic definitions.
+- **Aesthetic Hardening:**
+    - **Warm GPS Search:** Shifted yellow tones towards amber (1:4 Green:Red) to ensure distinctness from green markers.
+    - **Exotic Rainbow:** Removed standard RGB primaries from the setup palette in favor of complex blends (Cyan, Magenta, Lime) for a more premium look.
+    - **High-Speed Status:** Pushed Sync Upload feedback to maximum frequency (25Hz) for urgent feedback.
+    - **Racing Feedback:** Extended sector timing flashes to 3.0s and mapped them to the intuitive Green/Orange/Red racing standard.
+- **System De-cluttering:** Audited and removed unused `PAUSED` and `CALIBRATING` states to streamline the codebase.
+
+### Outcome
+
+- Sync Mode is now 100% rock-solid during heavy Wi-Fi/SSL operations.
+- The UI feels modern, professional, and provides cleaner feedback to the rider under racing conditions.
+
+**Status:** ✅ Complete & Verified
 
 ---

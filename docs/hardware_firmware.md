@@ -58,8 +58,9 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 ### **SYNC MODE (Button Press — No Logging)**
 *   No telemetry logging occurs. No CSV files are created.
 *   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
-*   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread. This prevents SSL handshake jitter from affecting animation fluidness.
-*   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is applied to all animations, ensuring consistent intensity.
+*   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread.
+*   **Zero-Allocation Pipeline**: The system uses `color_animations.py` as a theme engine with pre-allocated GRB buffers. The `LEDManager` writes directly to the hardware buffer (`buf[:] = LOOKUP`) to prevent heap fragmentation during Wi-Fi/SSL operations.
+*   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is applied to all animations.
 *   **Long press (>3s)** on Sync Button at any time in Sync Mode → enters **Pairing Mode** (AP + Captive Portal).
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 
@@ -69,9 +70,7 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 
 ### **The State Machine (Logging Mode Only)**
 *   **SEARCHING**: GPS is looking for a lock.
-*   **PAUSED**: GPS fix valid but inside mapped Pit Area.
-*   **LOGGING**: GPS fix valid and outside Pit Area. Recording active.
-*   **CALIBRATING**: Stationary and upright for >10s in pit. Calibrates IMU offsets.
+*   **LOGGING**: GPS fix valid and recording active.
 *   **STORAGE_CRITICAL**: Storage usage > 95%.
 
 ### **LED Feedback (Method-Driven)**
@@ -85,21 +84,20 @@ The `LEDManager` uses semantic methods. Direct state strings are no longer used 
 | Decision: HW FAIL | Fast blink | Red (SD/IMU failed, GPS ok) |
 | Decision: GPS FAIL| Solid | Red (GPS module/comms failure) |
 | **AUTO_COPY** | **Fast blink (5Hz)** | **White (until reboot)** |
-| SEARCHING | Slow pulse | Yellow |
+| SEARCHING | Slow pulse | Yellow (Warm Amber) |
 | LOGGING (Casual) | Solid | Green |
 | **LOGGING (Racing)**| **OFF** | **None (Stealth)** |
-| PAUSED | Slow pulse | Amber |
-| CALIBRATING | Fast pulse | Blue |
-| **TRACK_FOUND** | **Fast blink (10Hz)** | **White (2.5s duration)** |
-| **SECTOR_FAST** | **Fast blink** | **Green (2.5s duration)** |
-| **SECTOR_NEUTRAL**| **Fast blink** | **Orange (2.5s duration)** |
-| **SECTOR_SLOW** | **Fast blink** | **Red (2.5s duration)** |
+| **TRACK_FOUND** | **Fast blink (10Hz)** | **White (3s duration)** |
+| **SECTOR_FAST** | **Fast blink** | **Green (3s duration)** |
+| **SECTOR_NEUTRAL**| **Fast blink** | **Orange (3s duration)** |
+| **SECTOR_SLOW** | **Fast blink** | **Red (3s duration)** |
 | Sync: Searching WiFi | Slow fade | Purple |
 | Sync: WiFi Found | Fast blink | Purple |
-| Sync: Uploading | Fast blink | Green |
+| Sync: Uploading | **Max Speed Flash** | **Green (25Hz)** |
 | Sync: Upload OK | Slow fade | Green |
 | Sync: Upload Failed | Slow fade | Red |
 | Pairing Mode | Breathing fade | Blue |
+| **SETUP_NEEDED** | **Balanced Rainbow**| **Complex Blends (no primary RGB)** |
 
 ### **CSV Log Format (Dual-Rate V2)**
 Logs are saved in the `/sd/learning/` or `/data/learning/` directory.
