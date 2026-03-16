@@ -156,13 +156,16 @@ def get_device_active_track():
                         with open(tbl_json_path, 'r') as f:
                             raw_tbl = json.load(f)
                             
-                        # Format TBL for ESP32 (stringified numeric keys)
-                        str_tbl = {}
-                        for idx, time_val in enumerate(raw_tbl):
-                            str_tbl[str(idx)] = time_val
-                            
-                        track_data['tbl'] = str_tbl
-                    except: pass
+                        # Format TBL for ESP32 (List of floats for sectors)
+                        # TrackEngine.py expects: tbl['sectors'] = [time1, time2, ...]
+                        sectors_data = raw_tbl.get('sectors', [])
+                        if isinstance(sectors_data, list):
+                            # Sort by index to ensure correct order
+                            sorted_sectors = sorted(sectors_data, key=lambda x: x.get('sector_index', 0))
+                            sectors_list = [s.get('best_time') for s in sorted_sectors]
+                            track_data['tbl'] = {"sectors": sectors_list}
+                    except Exception as e:
+                        print(f"[active_track] TBL extraction error: {e}")
                 
                 if track_data:
                     response_data["active_track"] = track_data

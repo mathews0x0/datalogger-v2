@@ -2482,3 +2482,23 @@ Fundamental shift in the uploader's networking model:
 **Status:** ✅ Complete & Verified
 
 ---
+
+## 53. Bugfix: Racing Sector Feedback Integrity (2026-03-16)
+
+**Objective:** Resolve the "Always Orange" feedback bug where sector indicators remained neutral regardless of performance.
+
+### 1. Diagnosis & Root Cause
+*   **Reproduction**: Identified that sectors always displayed Orange LED flashes, even during fast laps.
+*   **Device Probing**: Used `mpremote` to inspect `track.json` on the hardware. Discovered the `tbl` key was populated with a corrupted "label map" (internal JSON field names) instead of timing data.
+*   **Server Bug**: Traced the issue to `server/api/blueprints/devices.py`. The `get_device_active_track` endpoint was incorrectly using `enumerate()` on the TBL dictionary, resulting in a string-key map of metadata labels being sent to the device.
+
+### 2. Implementation & Refinement
+*   **Backend Fix**: Modified the server to correctly extract `best_time` values from the TBL `sectors` list.
+*   **Firmware Cross-Check**: Verified against `firmware/lib/track_engine.py` to ensure the specific data structure matches (ESP32 expects a simple list of floats indexed by sector number).
+*   **Data Formatting**: Implemented sorting by `sector_index` on the server before list serialization to ensure index alignment with the device's sectoral sequence.
+
+### Outcome
+*   The device now receives valid TBL data during the active track sync.
+*   Accurate Green/Orange/Red performance feedback is restored for all sessions.
+
+**Status:** ✅ **Complete.** Server-side fix live. No firmware update required.
