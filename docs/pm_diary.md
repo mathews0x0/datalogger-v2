@@ -2527,3 +2527,26 @@ Fundamental shift in the uploader's networking model:
 - Accurate battery state tracking throughout the discharge cycle.
 
 **Status:** ✅ Complete & Deployed.
+
+---
+
+## 55. Phase 5.5 — Global Sync Progress Integration (2026-03-18)
+
+**Objective:** Enhance the user interface and system feedback by providing a global, batch-aware progress indicator during file synchronization, instead of the previous per-file percentage that visually reset repeatedly.
+
+### Decisions
+
+- **Global Context First:** Shifted the definition of "progress" from the individual file level to the batch level. The user should see one continuous 0-100% sweep for a full sync operation.
+- **Hardware Pre-Calculation:** The `uploader.py` script now pre-scans the active directory to calculate the total byte size of all pending `*.csv` files before initiating the upload sequence.
+- **Cumulative Tracking:** The uploader tracks `global_current` bytes sent seamlessly across file boundaries.
+- **Header-Driven Telemetry:** Firmwares now inject `X-Global-Progress`, `X-Global-Total`, `X-Total-Files`, and `X-File-Index` into the chunk upload HTTP headers.
+- **Backward Compatibility:** Older devices that do not send global headers are gracefully handled by the frontend, which will fall back to single-file progress visualization.
+- **UI Contextualization:** Enhanced the Sync Pill in the UI to display the continuous percentage alongside a "File X of Y" contextual counter (e.g., "(1/3)").
+
+### Outcome
+
+- Drastically improved user experience during multi-file sync sets. The rider is no longer confused by a percentage that jumps to 100% and back to 0% repeatedly.
+- Maintained compatibility with legacy RS-Core firmware versions.
+- Added comprehensive unit testing to the backend file synchronization logic to ensure `is_syncing` states transition correctly for batch uploads.
+
+**Status:** ✅ Complete & Deployed.

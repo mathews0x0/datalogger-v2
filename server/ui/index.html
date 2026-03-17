@@ -67,6 +67,13 @@
           </div>
         </div>
 
+        <!-- Sync Progress (Global) -->
+        <div id="syncStatusPill" class="telemetry-item" style="display: none; align-items: center; gap: 0.5rem; background: rgba(0, 210, 106, 0.1); border: 1px solid rgba(0, 210, 106, 0.2); border-radius: 12px; padding: 2px 8px; cursor: pointer;" onclick="showView('process')" title="Syncing Sessions">
+          <i class="fas fa-sync fa-spin" style="color: var(--success); font-size: 0.75rem;"></i>
+          <span id="syncProgressText" style="color: var(--success); font-weight: 600; font-size: 0.8rem;">0%</span>
+          <span id="syncProgressFiles" style="color: var(--text-muted); font-size: 0.7rem; margin-left: -2px;"></span>
+        </div>
+
         <div id="headerTrack" class="telemetry-item" style="display: none;" title="Active Track">
           🏁 <span id="headerTrackName">--</span>
         </div>

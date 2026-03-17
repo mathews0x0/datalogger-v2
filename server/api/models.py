@@ -207,6 +207,12 @@ class DeviceToken(db.Model):
     last_sync_filename = db.Column(db.String(255), nullable=True)
     last_sync_chunk = db.Column(db.Integer, default=0)
     last_sync_total = db.Column(db.Integer, default=0)
+    
+    # Global batch tracking
+    sync_global_current = db.Column(db.BigInteger, default=0)
+    sync_global_total = db.Column(db.BigInteger, default=0)
+    sync_total_files = db.Column(db.Integer, default=0)
+    sync_current_file_index = db.Column(db.Integer, default=0)
 
     def to_dict(self):
         return {
@@ -226,7 +232,11 @@ class DeviceToken(db.Model):
             "is_syncing": self.is_syncing,
             "sync_filename": self.last_sync_filename,
             "sync_chunk": self.last_sync_chunk,
-            "sync_total": self.last_sync_total
+            "sync_total": self.last_sync_total,
+            "sync_global_current": self.sync_global_current,
+            "sync_global_total": self.sync_global_total,
+            "sync_total_files": self.sync_total_files,
+            "sync_current_file_index": self.sync_current_file_index
         }
 
 class Job(db.Model):

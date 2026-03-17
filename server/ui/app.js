@@ -6390,10 +6390,33 @@ async function pollCloudHeartbeat() {
             if (activeDevice && activeDevice.is_syncing && isOnline) {
                 if (syncPill) {
                     syncPill.style.display = 'flex';
-                    const chunk = activeDevice.sync_chunk || 0;
-                    const total = activeDevice.sync_total || 1;
-                    const pct = Math.round((chunk / total) * 100);
-                    document.getElementById('syncProgressText').textContent = `${pct}%`;
+                    
+                    // Use global progress if available, fallback to single file chunk progress
+                    let pct = 0;
+                    if (activeDevice.sync_global_total && activeDevice.sync_global_total > 0) {
+                        const current = activeDevice.sync_global_current || 0;
+                        const total = activeDevice.sync_global_total;
+                        pct = Math.round((current / total) * 100);
+                    } else {
+                        const chunk = activeDevice.sync_chunk || 0;
+                        const total = activeDevice.sync_total || 1;
+                        pct = Math.round((chunk / total) * 100);
+                    }
+                    
+                    const textEl = document.getElementById('syncProgressText');
+                    if (textEl) textEl.textContent = `${Math.min(pct, 100)}%`;
+                    
+                    const filesSpan = document.getElementById('syncProgressFiles');
+                    if (filesSpan) {
+                        if (activeDevice.sync_total_files > 0) {
+                            // File index is 0-based
+                            const currentFile = (activeDevice.sync_current_file_index || 0) + 1;
+                            filesSpan.textContent = `(${currentFile}/${activeDevice.sync_total_files})`;
+                            filesSpan.style.display = 'inline';
+                        } else {
+                            filesSpan.style.display = 'none';
+                        }
+                    }
                 }
             } else {
                 if (syncPill) syncPill.style.display = 'none';

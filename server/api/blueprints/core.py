@@ -166,6 +166,20 @@ def upload_chunk():
             total_chunks = request.headers.get('X-Total-Chunks')
             if total_chunks:
                 device_token.last_sync_total = int(total_chunks)
+                
+            # Global progress tracking
+            global_prog = request.headers.get('X-Global-Progress')
+            if global_prog:
+                device_token.sync_global_current = int(global_prog)
+            global_tot = request.headers.get('X-Global-Total')
+            if global_tot:
+                device_token.sync_global_total = int(global_tot)
+            tot_files = request.headers.get('X-Total-Files')
+            if tot_files:
+                device_token.sync_total_files = int(tot_files)
+            file_idx = request.headers.get('X-File-Index')
+            if file_idx:
+                device_token.sync_current_file_index = int(file_idx)
             
             device_token.last_sync = datetime.utcnow()
             db.session.commit()
@@ -249,6 +263,16 @@ def upload_complete():
         # Update last_sync on device token
         if device_token:
             device_token.last_sync = datetime.utcnow()
+            
+            # Reset global progress if this is the last file (or if we lost track)
+            if device_token.sync_current_file_index is not None and device_token.sync_total_files:
+                if device_token.sync_current_file_index >= device_token.sync_total_files - 1:
+                    device_token.is_syncing = False
+                    device_token.sync_global_current = 0
+                    device_token.sync_global_total = 0
+            else:
+                 device_token.is_syncing = False
+                 
             db.session.commit()
 
         return jsonify({"success": True, "filename": final_name})

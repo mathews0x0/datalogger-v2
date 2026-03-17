@@ -30,7 +30,8 @@ def _validate_session(filepath):
         return False
 
 
-def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lock=None):
+def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lock=None, 
+                         global_total=0, global_current=0, file_index=0, total_files=1):
     """
     Stream a file using a PERSISTENT SSL socket to eliminate per-chunk handshakes.
     Manually constructs HTTP POST requests.
@@ -40,7 +41,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
 
     stat = os.stat(filepath)
     total_size = stat[6]
-    if total_size == 0: return True, 0
+    if total_size == 0: return True, 0, 0
 
     # Parse URL
     try:
@@ -55,7 +56,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
         chunk_path = '/' + path.rstrip('/') + '/chunk'
     except Exception as e:
         print(f"[Sync] URL Parse Error: {e}")
-        return False, 0
+        return False, 0, 0
 
     chunk_index = 0
     bytes_sent = 0
@@ -102,6 +103,11 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
                 request += "X-Chunk-Index: " + str(chunk_index) + "\r\n"
                 request += "X-Total-Size: " + str(total_size) + "\r\n"
                 request += "X-Total-Chunks: " + str(total_chunks) + "\r\n"
+                if global_total > 0:
+                    request += "X-Global-Progress: " + str(global_current + bytes_sent) + "\r\n"
+                    request += "X-Global-Total: " + str(global_total) + "\r\n"
+                    request += "X-Total-Files: " + str(total_files) + "\r\n"
+                    request += "X-File-Index: " + str(file_index) + "\r\n"
                 request += "Connection: keep-alive\r\n\r\n"
                 request = request.encode()
 
@@ -134,23 +140,23 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
                             break
                         else:
                             print(f'[Sync] HTTP Status Error: {status_line.strip()}')
-                            return False, chunk_index
+                            return False, chunk_index, bytes_sent
                     except Exception as chunk_e:
                         print(f'[Sync] Socket Error at chunk {chunk_index}: {chunk_e}')
-                        return False, chunk_index # Socket died, abort file
+                        return False, chunk_index, bytes_sent # Socket died, abort file
                 
                 if not sent: 
-                    return False, chunk_index
+                    return False, chunk_index, bytes_sent
                 
                 bytes_sent += content_len
                 chunk_index += 1
                 gc.collect()
 
-        return True, chunk_index
+        return True, chunk_index, bytes_sent
 
     except Exception as e:
         print(f"[Sync] Persistent Conn Error: {e}")
-        return False, chunk_index
+        return False, chunk_index, bytes_sent
     finally:
         if ss: ss.close()
         if s: s.close()
@@ -196,17 +202,35 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
     if not files: return True
 
     print(f'[Sync] High-Speed Mode: {len(files)} files pending')
-    success_count = 0
     
+    # Pre-calculate global total size
+    global_total_size = 0
+    valid_files = []
     for fname in files:
+        filepath = session_mgr.active_dir + '/' + fname
+        if _validate_session(filepath):
+            try:
+                global_total_size += os.stat(filepath)[6]
+                valid_files.append(fname)
+            except:
+                pass
+        else:
+            session_mgr.delete_session(fname)
+
+    success_count = len(files) - len(valid_files)
+    global_current = 0
+    
+    for i, fname in enumerate(valid_files):
         try:
             filepath = session_mgr.active_dir + '/' + fname
-            if not _validate_session(filepath):
-                session_mgr.delete_session(fname)
-                success_count += 1
-                continue
 
-            ok, chunks_sent = _upload_file_chunked(filepath, fname, api_url, token, led, wdt, lock)
+            ok, chunks_sent, file_bytes_sent = _upload_file_chunked(
+                filepath, fname, api_url, token, led, wdt, lock,
+                global_total=global_total_size, 
+                global_current=global_current,
+                file_index=i, 
+                total_files=len(valid_files)
+            )
 
             if ok and chunks_sent > 0:
                 if _finalize_upload(fname, api_url, token, chunks_sent, led, wdt, lock):
@@ -219,6 +243,7 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
                 session_mgr.delete_session(fname)
                 success_count += 1
             
+            global_current += file_bytes_sent
             gc.collect()
         except Exception as e:
             print(f'[Sync] Error {fname}: {e}')

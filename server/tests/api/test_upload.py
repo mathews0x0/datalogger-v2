@@ -214,3 +214,41 @@ def test_complete_missing_body(upload_client, app):
                                   data=json.dumps({'total_chunks': 1}),
                                   headers=headers)
         assert resp.status_code == 400
+
+# --- Global Sync Headers ---
+
+def test_global_sync_headers(upload_client, app):
+    """Test that global sync progress tracks via headers."""
+    with app.app_context():
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_global.csv'
+        headers['X-Chunk-Index'] = '0'
+        headers['X-Total-Size'] = '100'
+        headers['X-Total-Chunks'] = '1'
+        headers['X-Global-Progress'] = '2000'
+        headers['X-Global-Total'] = '5000'
+        headers['X-Total-Files'] = '3'
+        headers['X-File-Index'] = '1'
+
+        resp = upload_client.post('/api/upload/chunk', data=b'data\n', headers=headers)
+        assert resp.status_code == 200
+
+        # Verify DB updated
+        dt = DeviceToken.query.filter_by(token='rsk_testtoken123').first()
+        assert dt.sync_global_current == 2000
+        assert dt.sync_global_total == 5000
+        assert dt.sync_total_files == 3
+        assert dt.sync_current_file_index == 1
+        assert dt.is_syncing == True
+        
+        # Test Complete clears progress
+        headers = _auth_headers(upload_client, content_type='application/json')
+        upload_client.post('/api/upload/complete',
+                           data=json.dumps({'filename': 'sess_global.csv', 'total_chunks': 1}),
+                           headers=headers)
+                           
+        # it shouldn't clear unless index >= total_files - 1 (1 >= 3 - 1 -> False)
+        # Therefore, is_syncing should remain True and progress should be kept.
+        dt = DeviceToken.query.filter_by(token='rsk_testtoken123').first()
+        assert dt.is_syncing == True
+        assert dt.sync_global_current == 2000
