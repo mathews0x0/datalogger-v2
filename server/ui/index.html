@@ -10,7 +10,8 @@
   <meta name="keywords" content="motorcycle telemetry, trackday analytics, lap timer, data logger, racing, racesense" />
   <title>RaceSense — Ride Faster. Ride Smarter.</title>
   <link rel="icon" type="image/png" href="assets/logoSmall.png" />
-  <link rel="stylesheet" href="styles.css?v=8" />
+  <link rel="stylesheet" href="styles.css?v=11" />
+  <script src="app.js?v=52"></script>
 </head>
 
 <body>
@@ -26,7 +27,7 @@
       <div id="headerStatusBadges" style="display: none; align-items: center; gap: 0.75rem;">
         <!-- Connection Status -->
         <div id="connectionStatus" class="status-badge offline">
-          <span class="status-dot"></span> <span id="connText">No Device</span>
+          <span class="status-dot" id="headerConnDot"></span> <span id="connText">No Device</span>
           <span id="versionWarning" class="badge"
             style="display: none; background: var(--error); color: white; margin-left: 0.5rem; cursor: pointer;"
             title="Firmware Mismatch: Update required">
@@ -34,22 +35,30 @@
           </span>
         </div>
 
-        <!-- Storage Indicator -->
+        <!-- Telemetry -->
+        <div id="headerBattery" class="telemetry-item" style="display: none;" title="Battery Voltage">
+          <i class="fas fa-battery-half"></i> <span id="headerVbatt">--V</span>
+        </div>
+        <div id="headerSD" class="telemetry-item" style="display: none;" title="SD Card Storage">
+          <i class="fas fa-sd-card"></i> <span id="headerSdFree">--%</span>
+        </div>
+        <div id="headerTrack" class="telemetry-item" style="display: none;" title="Active Track">
+          🏁 <span id="headerTrackName">--</span>
+        </div>
+
+        <!-- Sync Progress -->
+        <div id="syncStatusPill" class="sync-pill" style="display: none;">
+          <div class="sync-dot"></div>
+          <span>SYNCING <span id="syncProgressText">0%</span></span>
+        </div>
+
+        <!-- Storage Indicator (Legacy - can be removed later if unused) -->
         <div id="storageIndicator" class="storage-indicator" style="display: none;" title="ESP32 Flash Storage">
           <i class="fas fa-database" style="font-size: 0.75rem;"></i>
           <div class="storage-bar">
             <div id="storageBarFill" class="storage-bar-fill" style="width: 0%"></div>
           </div>
           <span id="storageText" style="font-size: 0.7rem; min-width: 30px;">0%</span>
-        </div>
-
-        <!-- Active Track Status -->
-        <div id="activeTrackBadge" class="status-badge" style="display: none;">
-          <i class="fas fa-flag-checkered" style="font-size: 0.75rem; color: var(--success);"></i>
-          <span id="activeTrackName" style="font-size: 0.75rem; font-weight: 600;">No Track</span>
-          <span id="trackIdentifiedDot" class="status-dot"
-            style="margin-left: 0.25rem; background: var(--text-muted); width: 6px; height: 6px;"
-            title="Track Identified Status"></span>
         </div>
       </div>
     </div>

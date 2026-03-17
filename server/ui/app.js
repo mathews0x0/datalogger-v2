@@ -29,6 +29,7 @@ let sessions = [];
 let activeTrackId = null;  // Track identified by ESP32 status
 let lastSyncedTrackId = null; // Track we last pushed to ESP32
 let isDeviceConnected = false; // True only when device is confirmed reachable
+let isCloudConnected = false;  // True when device is seen via Cloud Heartbeat
 
 // ============================================================================
 // INITIALIZATION
@@ -828,23 +829,27 @@ async function pollStatus() {
                 const trackNameEl = document.getElementById('activeTrackName');
                 const identDot = document.getElementById('trackIdentifiedDot');
 
-                if (espRes.active_track) {
+                if (espRes.active_track && trackBadge) {
                     trackBadge.style.display = 'flex';
                     activeTrackId = espRes.active_track;
 
                     // Track Identification Status
-                    identDot.style.background = espRes.track_identified ? 'var(--success)' : 'var(--text-muted)';
-                    identDot.title = espRes.track_identified ? 'Track Matches GPS' : 'Waiting for GPS Match';
+                    if (identDot) {
+                        identDot.style.background = espRes.track_identified ? 'var(--success)' : 'var(--text-muted)';
+                        identDot.title = espRes.track_identified ? 'Track Matches GPS' : 'Waiting for GPS Match';
+                    }
 
                     // Find track name locally
-                    const track = tracks.find(t => t.track_id == activeTrackId);
-                    trackNameEl.textContent = track ? track.track_name : `Track ${activeTrackId}`;
+                    if (trackNameEl) {
+                        const track = tracks.find(t => t.track_id == activeTrackId);
+                        trackNameEl.textContent = track ? track.track_name : `Track ${activeTrackId}`;
+                    }
 
                     // AUTO SYNC: If track is set on device but we haven't synced it yet this session
                     if (activeTrackId !== lastSyncedTrackId) {
                         ensureTrackSynced(activeTrackId, deviceIP);
                     }
-                } else {
+                } else if (trackBadge) {
                     trackBadge.style.display = 'none';
                     activeTrackId = null;
                 }
@@ -6253,7 +6258,7 @@ async function uploadOneFile(file) {
 
 async function pollCloudHeartbeat() {
     // Re-schedule first to ensure persistence
-    setTimeout(pollCloudHeartbeat, 15000);
+    setTimeout(pollCloudHeartbeat, 10000); // Increased frequency for "Live" feel
 
     if (!currentUser) return;
 
@@ -6262,38 +6267,95 @@ async function pollCloudHeartbeat() {
         if (res && res.length > 0) {
             const now = new Date();
             let isOnline = false;
+            let activeDevice = null;
 
             for (const device of res) {
                 if (device.last_sync) {
-                    // Modern ISO format from backend (with T and Z) is parsed reliably
                     const lastSyncTime = new Date(device.last_sync);
-
-                    // If device synced within last 60 seconds, it's online
-                    // We use Math.abs to handle clock skew in either direction
-                    if (Math.abs(now - lastSyncTime) < 60000) {
+                    // If device synced within last 45 seconds, it's online
+                    if (Math.abs(now - lastSyncTime) < 45000) {
                         isOnline = true;
+                        isCloudConnected = true; // Set cloud flag
+                        activeDevice = device;
                         break;
                     }
                 }
             }
+            if (!isOnline) isCloudConnected = false;
 
             const badge = document.getElementById('connectionStatus');
             const text = document.getElementById('connText');
+            const connDot = document.getElementById('headerConnDot');
 
-            if (badge && text) {
+            // 1. Connection Status & Pulse
+            if (badge && text && connDot) {
                 if (isOnline) {
                     if (!isDeviceConnected) {
-                        // Just came online
                         showToast('Heartbeat received from device', 'success');
                     }
                     badge.className = 'status-badge online';
                     text.textContent = 'RS-Core Connected';
                     isDeviceConnected = true;
+
+                    // Pulsing logic: pulse if we got a heartbeat in the last 15 seconds
+                    const lastSyncTime = new Date(activeDevice.last_sync);
+                    const isRecent = Math.abs(now - lastSyncTime) < 15000;
+                    connDot.classList.toggle('pulse', isRecent);
                 } else {
                     badge.className = 'status-badge offline';
                     text.textContent = 'Device Offline';
+                    connDot.classList.remove('pulse');
                     isDeviceConnected = false;
                 }
+            }
+
+            // 2. Header Telemetry
+            const battEl = document.getElementById('headerBattery');
+            const sdEl = document.getElementById('headerSD');
+            if (activeDevice && isOnline) {
+                if (battEl) {
+                    battEl.style.display = 'flex';
+                    const vbatt = activeDevice.vbatt_sense || 0;
+                    document.getElementById('headerVbatt').textContent = `${vbatt.toFixed(1)}V`;
+                    // Color coding for battery
+                    battEl.style.color = vbatt < 3.6 ? 'var(--error)' : (vbatt < 3.8 ? 'var(--warning)' : 'var(--text-dim)');
+                }
+                if (sdEl) {
+                    sdEl.style.display = 'flex';
+                    const sdFree = activeDevice.storage_sd_free || 0;
+                    document.getElementById('headerSdFree').textContent = `${sdFree}M`;
+                }
+                
+                // 3. Active Track
+                const trackEl = document.getElementById('headerTrack');
+                if (trackEl && activeTrackId) {
+                    const track = tracks.find(t => t.track_id == activeTrackId);
+                    if (track) {
+                        trackEl.style.display = 'flex';
+                        document.getElementById('headerTrackName').textContent = track.track_name;
+                    } else {
+                        trackEl.style.display = 'none';
+                    }
+                } else if (trackEl) {
+                    trackEl.style.display = 'none';
+                }
+            } else {
+                if (battEl) battEl.style.display = 'none';
+                if (sdEl) sdEl.style.display = 'none';
+            }
+
+            // 3. Global Sync Progress
+            const syncPill = document.getElementById('syncStatusPill');
+            if (activeDevice && activeDevice.is_syncing && isOnline) {
+                if (syncPill) {
+                    syncPill.style.display = 'flex';
+                    const chunk = activeDevice.sync_chunk || 0;
+                    const total = activeDevice.sync_total || 1;
+                    const pct = Math.round((chunk / total) * 100);
+                    document.getElementById('syncProgressText').textContent = `${pct}%`;
+                }
+            } else {
+                if (syncPill) syncPill.style.display = 'none';
             }
         }
     } catch (e) {
@@ -6518,9 +6580,9 @@ function finishScanSuccess(ip, data, btn) {
     // Update Header Status
     const badge = document.getElementById('connectionStatus');
     const text = document.getElementById('connText');
-    if (badge && text) {
+    if (badge && text && !isCloudConnected) { // Only override if not already cloud-connected
         badge.className = 'status-badge online';
-        text.textContent = 'RS-Core Online';
+        text.textContent = 'RS-Core Local';
         isDeviceConnected = true;
     }
     updateStorageIndicator(data);
