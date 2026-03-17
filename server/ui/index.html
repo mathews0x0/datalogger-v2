@@ -36,29 +36,39 @@
         </div>
 
         <!-- Telemetry -->
-        <div id="headerBattery" class="telemetry-item" style="display: none;" title="Battery Voltage">
-          <i class="fas fa-battery-half"></i> <span id="headerVbatt">--V</span>
+        <div id="headerBattery" class="telemetry-item" style="display: none;" title="Battery Status">
+          <i id="headerBatteryIcon" class="fas fa-battery-half"></i> 
+          <span id="headerVbatt">--V</span>
+          <span id="headerVbattPct" style="font-size: 0.75rem; color: var(--text-dim); margin-left: 2px;">(--%)</span>
         </div>
-        <div id="headerSD" class="telemetry-item" style="display: none;" title="SD Card Storage">
-          <i class="fas fa-sd-card"></i> <span id="headerSdFree">--%</span>
+
+        <!-- Storage Indicators -->
+        <div id="headerStorage" style="display: none; align-items: center; gap: 0.75rem; padding-left: 0.75rem; border-left: 1px solid var(--border);">
+          <!-- SD Card -->
+          <div id="sdStorageGroup" style="display: flex; align-items: center; gap: 0.4rem;" title="SD Card Storage">
+            <i class="fas fa-sd-card" style="font-size: 0.75rem; color: var(--text-dim);"></i>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div class="storage-bar" style="width: 40px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+                <div id="sdBarFill" class="storage-bar-fill" style="width: 0%; height: 100%; background: var(--primary);"></div>
+              </div>
+              <span id="sdStorageText" style="font-size: 0.65rem; color: var(--text-muted); line-height: 1;">-- GB</span>
+            </div>
+          </div>
+
+          <!-- Internal Flash -->
+          <div id="flashStorageGroup" style="display: flex; align-items: center; gap: 0.4rem;" title="Internal Flash">
+            <i class="fas fa-microchip" style="font-size: 0.75rem; color: var(--text-dim);"></i>
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <div class="storage-bar" style="width: 40px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;">
+                <div id="flashBarFill" class="storage-bar-fill" style="width: 0%; height: 100%; background: #4da6ff;"></div>
+              </div>
+              <span id="flashStorageText" style="font-size: 0.65rem; color: var(--text-muted); line-height: 1;">-- MB</span>
+            </div>
+          </div>
         </div>
+
         <div id="headerTrack" class="telemetry-item" style="display: none;" title="Active Track">
           🏁 <span id="headerTrackName">--</span>
-        </div>
-
-        <!-- Sync Progress -->
-        <div id="syncStatusPill" class="sync-pill" style="display: none;">
-          <div class="sync-dot"></div>
-          <span>SYNCING <span id="syncProgressText">0%</span></span>
-        </div>
-
-        <!-- Storage Indicator (Legacy - can be removed later if unused) -->
-        <div id="storageIndicator" class="storage-indicator" style="display: none;" title="ESP32 Flash Storage">
-          <i class="fas fa-database" style="font-size: 0.75rem;"></i>
-          <div class="storage-bar">
-            <div id="storageBarFill" class="storage-bar-fill" style="width: 0%"></div>
-          </div>
-          <span id="storageText" style="font-size: 0.7rem; min-width: 30px;">0%</span>
         </div>
       </div>
     </div>

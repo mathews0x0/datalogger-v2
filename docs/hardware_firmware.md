@@ -15,7 +15,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 *   **Storage**: 
     *   **Primary**: MicroSD Card (FAT32, High-speed SPI on IO10-13).
     *   **Fallback**: Internal 16MB Flash. Sessions recorded here are **Auto-Copied** to SD on the next boot if a card is detected.
-*   **Battery**: ADC IO8 for voltage monitoring (VBAT-SENSE). Supports 1S/2S LiPo.
+*   **Battery**: ADC **IO7** for voltage monitoring (VBAT-SENSE). Uses a 100k/100k resistor divider. Supports 1S/2S LiPo.
 *   **User Input**:
     *   **Sync Button (IO5)**: GND-button-IO5 (active LOW, internal pull-up). Determines device mode at boot.
 *   **Indicators**: 
@@ -109,6 +109,7 @@ Header: `tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,spe
 | `G` (GPS) | 10 Hz | `tick_ms`, accel, gyro, lat, lon, alt, speed, sats, vbat |
 
 **`tick_ms`**: ESP32 monotonic clock (milliseconds). Used as the master timestamp for sensor fusion alignment.
+**`vbat`**: Battery voltage (Volts). Calibrated via `read_uv()` with a 2.0x software multiplier for the 100k/100k divider.
 **Buffered writes**: ~20 rows accumulated before single SD write+flush (~200ms max data loss on power failure).
 
 ---

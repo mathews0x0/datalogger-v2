@@ -2502,3 +2502,28 @@ Fundamental shift in the uploader's networking model:
 *   Accurate Green/Orange/Red performance feedback is restored for all sessions.
 
 **Status:** ✅ **Complete.** Server-side fix live. No firmware update required.
+
+---
+
+## 54. Phase 5.4 — Power & Storage Telemetry Overhaul (2026-03-17)
+
+**Objective:** Provide riders with real-time confidence in device battery and storage health via the UI header.
+
+### Decisions
+
+- **Hardware Sensing:** Root-caused IO35 as digital-only on ESP32-S3. Migrated battery sensing to **IO7** (analog-capable).
+- **Precision Math:** Implemented `read_uv()` with 2.8x divider multiplier for calibrated voltage readings (adjusted for 100k/100k divider + ESP32 attenuation).
+- **Battery UX:** Replaced simple voltage with a non-linear LiPo discharge curve (0-100%) in the UI for intuitive monitoring.
+- **Dual-Storage Visualization:**
+    - Implemented total capacity reporting in heartbeat telemetry for both SD and Internal Flash.
+    - Designed a new "Storage Group" UI with dual progress bars for "at-a-glance" status.
+    - Added "No SD Card" state detection with visual dimming to prevent accidental unrecorded sessions.
+- **Database Schema:** Migrated `DeviceToken` to store `storage_sd_total` and `storage_flash_total` for persistence across heartbeats.
+
+### Outcome
+
+- Riders have immediate visual confirmation of battery percentage and remaining storage capacity.
+- Reduced risk of unrecorded sessions due to clear SD card presence indication.
+- Accurate battery state tracking throughout the discharge cycle.
+
+**Status:** ✅ Complete & Deployed.

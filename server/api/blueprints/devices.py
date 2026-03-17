@@ -109,8 +109,12 @@ def device_ping():
             device_token.vbatt_sense = data['vbatt_sense']
         if 'storage_sd_free' in data:
             device_token.storage_sd_free = data['storage_sd_free']
+        if 'storage_sd_total' in data:
+            device_token.storage_sd_total = data['storage_sd_total']
         if 'storage_flash_free' in data:
             device_token.storage_flash_free = data['storage_flash_free']
+        if 'storage_flash_total' in data:
+            device_token.storage_flash_total = data['storage_flash_total']
         if 'device_uid' in data:
             device_token.device_uid = str(data['device_uid'])
             

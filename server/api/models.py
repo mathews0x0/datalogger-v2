@@ -197,8 +197,10 @@ class DeviceToken(db.Model):
     # Telemetry data from heartbeat
     device_uid = db.Column(db.String(100), nullable=True)
     vbatt_sense = db.Column(db.Float, nullable=True)
-    storage_sd_free = db.Column(db.Integer, nullable=True)
-    storage_flash_free = db.Column(db.Integer, nullable=True)
+    storage_sd_free = db.Column(db.Integer, nullable=True) # MB
+    storage_sd_total = db.Column(db.Integer, nullable=True) # MB
+    storage_flash_free = db.Column(db.Integer, nullable=True) # KB
+    storage_flash_total = db.Column(db.Integer, nullable=True) # KB
 
     # Sync progress tracking
     is_syncing = db.Column(db.Boolean, default=False)
@@ -218,7 +220,9 @@ class DeviceToken(db.Model):
             "device_uid": self.device_uid,
             "vbatt_sense": self.vbatt_sense,
             "storage_sd_free": self.storage_sd_free,
+            "storage_sd_total": self.storage_sd_total,
             "storage_flash_free": self.storage_flash_free,
+            "storage_flash_total": self.storage_flash_total,
             "is_syncing": self.is_syncing,
             "sync_filename": self.last_sync_filename,
             "sync_chunk": self.last_sync_chunk,

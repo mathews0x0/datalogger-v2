@@ -32,7 +32,7 @@ PIN_SD_MOSI = 11
 PIN_SD_MISO = 13
 PIN_SD_CS = 10
 PIN_SD_CD = 3           # Card Detect
-PIN_BATTERY_ADC = 8     # VBAT-SENSE
+PIN_BATTERY_ADC = 7      # VBAT-SENSE (100k/100k divider)
 PIN_DEBUG_LED = 2       # Blue Debug LED
 
 # Sensitivity constants now handled by IMU driver class
@@ -292,8 +292,13 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
     
     # Helper function to get battery voltage
     def get_vbatt():
-        raw_v = vbat_adc.read()
-        return (raw_v / 4095.0) * 3.3 * 2.0
+        """Returns battery voltage in volts using calibrated ADC."""
+        try:
+            # read_uv() returns microvolts, divide by 1,000,000 for Volts
+            # Multiplier is 2.0 for 100k/100k divider
+            return (vbat_adc.read_uv() / 1000000.0) * 2.0
+        except:
+            return 0.0
 
     def perform_heartbeat():
         """Single heartbeat + active track pull using raw sockets for stability."""
@@ -319,18 +324,26 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         try:
             stats = os.statvfs('/sd')
             sd_free = (stats[0] * stats[3]) // (1024 * 1024)
-        except: sd_free = 0
+            sd_total = (stats[0] * stats[2]) // (1024 * 1024)
+        except: 
+            sd_free = 0
+            sd_total = 0
         try:
             f_stats = os.statvfs('/')
-            flash_free = (f_stats[0] * f_stats[3])
-        except: flash_free = 0
+            flash_free = (f_stats[0] * f_stats[3]) // 1024 # KB
+            flash_total = (f_stats[0] * f_stats[2]) // 1024 # KB
+        except: 
+            flash_free = 0
+            flash_total = 0
         
         device_uid = ubinascii.hexlify(machine.unique_id()).decode()
         telemetry = ujson.dumps({
             "device_uid": device_uid,
             "vbatt_sense": vbatt,
             "storage_sd_free": sd_free,
-            "storage_flash_free": flash_free
+            "storage_sd_total": sd_total,
+            "storage_flash_free": flash_free,
+            "storage_flash_total": flash_total
         })
 
         success = False
@@ -669,8 +682,8 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
         # ── 4. BATTERY (every 100th tick = ~1 Hz) ──
         if loop_count % 100 == 0:
             try:
-                raw_v = vbat_adc.read()
-                vbat = (raw_v / 4095.0) * 3.3 * 2.0
+                # Use calibrated microvolt reading for better accuracy
+                vbat = (vbat_adc.read_uv() / 1000000.0) * 2.0
             except:
                 vbat = 0.0
         

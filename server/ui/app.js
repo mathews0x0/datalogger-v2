@@ -6311,19 +6311,60 @@ async function pollCloudHeartbeat() {
 
             // 2. Header Telemetry
             const battEl = document.getElementById('headerBattery');
-            const sdEl = document.getElementById('headerSD');
+            const storageEl = document.getElementById('headerStorage');
+            
             if (activeDevice && isOnline) {
                 if (battEl) {
                     battEl.style.display = 'flex';
                     const vbatt = activeDevice.vbatt_sense || 0;
                     document.getElementById('headerVbatt').textContent = `${vbatt.toFixed(1)}V`;
+                    
+                    // Percentage calculation
+                    const pct = calculateBatteryPercentage(vbatt);
+                    const pctEl = document.getElementById('headerVbattPct');
+                    if (pctEl) pctEl.textContent = `(${pct}%)`;
+                    
                     // Color coding for battery
                     battEl.style.color = vbatt < 3.6 ? 'var(--error)' : (vbatt < 3.8 ? 'var(--warning)' : 'var(--text-dim)');
+                    const battIcon = document.getElementById('headerBatteryIcon');
+                    if (battIcon) {
+                        battIcon.className = pct < 20 ? 'fas fa-battery-quarter' : (pct < 60 ? 'fas fa-battery-half' : 'fas fa-battery-full');
+                    }
                 }
-                if (sdEl) {
-                    sdEl.style.display = 'flex';
+
+                if (storageEl) {
+                    storageEl.style.display = 'flex';
+                    
+                    // SD Storage
                     const sdFree = activeDevice.storage_sd_free || 0;
-                    document.getElementById('headerSdFree').textContent = `${sdFree}M`;
+                    const sdTotal = activeDevice.storage_sd_total || 0;
+                    const sdBar = document.getElementById('sdBarFill');
+                    const sdText = document.getElementById('sdStorageText');
+                    
+                    if (sdTotal > 0) {
+                        const sdUsed = sdTotal - sdFree;
+                        const sdPct = Math.round((sdUsed / sdTotal) * 100);
+                        if (sdBar) sdBar.style.width = `${sdPct}%`;
+                        if (sdText) sdText.textContent = `${(sdUsed/1024).toFixed(1)} / ${(sdTotal/1024).toFixed(1)} GB`;
+                        document.getElementById('sdStorageGroup').style.opacity = '1';
+                    } else {
+                        if (sdBar) sdBar.style.width = '0%';
+                        if (sdText) sdText.textContent = 'No SD Card';
+                        document.getElementById('sdStorageGroup').style.opacity = '0.5';
+                    }
+
+                    // Internal Flash
+                    const fFree = activeDevice.storage_flash_free || 0; // KB
+                    const fTotal = activeDevice.storage_flash_total || 0; // KB
+                    const fBar = document.getElementById('flashBarFill');
+                    const fText = document.getElementById('flashStorageText');
+                    
+                    if (fTotal > 0) {
+                        const fUsed = fTotal - fFree;
+                        const fPct = Math.round((fUsed / fTotal) * 100);
+                        if (fBar) fBar.style.width = `${fPct}%`;
+                        if (fText) fText.textContent = `${(fUsed/1024).toFixed(1)} / ${(fTotal/1024).toFixed(1)} MB`;
+                    }
                 }
                 
                 // 3. Active Track
@@ -6361,6 +6402,36 @@ async function pollCloudHeartbeat() {
     } catch (e) {
         console.warn('[Heartbeat] Failed to fetch device status', e);
     }
+}
+
+function calculateBatteryPercentage(voltage) {
+    if (voltage >= 4.2) return 100;
+    if (voltage <= 3.3) return 0;
+    
+    // Simple LiPo discharge curve approximation
+    const curve = [
+        { v: 4.2, p: 100 },
+        { v: 4.05, p: 90 },
+        { v: 3.95, p: 80 },
+        { v: 3.85, p: 60 },
+        { v: 3.75, p: 40 },
+        { v: 3.7, p: 20 },
+        { v: 3.6, p: 10 },
+        { v: 3.4, p: 5 },
+        { v: 3.3, p: 0 }
+    ];
+
+    for (let i = 0; i < curve.length - 1; i++) {
+        const high = curve[i];
+        const low = curve[i + 1];
+        if (voltage <= high.v && voltage >= low.v) {
+            const rangeV = high.v - low.v;
+            const rangeP = high.p - low.p;
+            const vOffset = voltage - low.v;
+            return Math.round(low.p + (vOffset / rangeV) * rangeP);
+        }
+    }
+    return 0;
 }
 
 // Local device connection logic has been removed in favor of Direct-To-Cloud architecture.
