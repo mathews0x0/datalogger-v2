@@ -42,8 +42,13 @@ def connect_or_ap(led=None):
         print(f'[WiFi] Connecting to: {ssid}')
         if led: led.play_wifi_connecting()
         
+        gc.collect()
         sta = network.WLAN(network.STA_IF)
         sta.active(True)
+        try:
+            sta.config(txpower=8.5)
+        except:
+            pass
         sta.connect(ssid, password)
         
         # Wait up to 30 seconds (300 * 0.1s)
@@ -87,6 +92,10 @@ def start_ap_mode(led=None):
     
     ap_name = _get_unique_ap_name()
     ap.active(True)
+    try:
+        ap.config(txpower=8.5)
+    except:
+        pass
     
     # Open AP — no password for frictionless pairing
     ap.config(essid=ap_name, authmode=0)

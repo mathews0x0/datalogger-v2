@@ -165,7 +165,7 @@ class LEDManager:
             self._fill_buf(ca.GREEN)
         elif s == "SETUP_NEEDED":
             # Balanced fluid rainbow
-            self._fill_buf(ca.RAINBOW[(idx // 30) % 8])
+            self._fill_buf(ca.RAINBOW[(idx // 30) % 7])
         else:
             # IDLE - strictly off
             self._fill_buf(ca.OFF)

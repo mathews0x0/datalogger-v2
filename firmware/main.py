@@ -256,8 +256,10 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         print(f"[Sync] Searching for WiFi: {config['ssid']}")
         led.set_state("SYNC_SEARCHING")
         
+        gc.collect()
         sta = network.WLAN(network.STA_IF)
         sta.active(True)
+        sta.config(txpower=8.5) # Prevent ESP32 brownout spikes
         sta.connect(config['ssid'], config.get('password', ''))
         
         # Wait up to 30s for connection
