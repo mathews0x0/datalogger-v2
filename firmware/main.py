@@ -18,6 +18,7 @@ from drivers.bmi323 import BMI323
 from lib.session_manager import SessionManager
 from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
+from lib import boot_diagnostics as diag
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_LED_FEEDBACK = 4    # Feedback NeoPixel (16-LED matrix)
@@ -39,8 +40,10 @@ PIN_DEBUG_LED = 2       # Blue Debug LED
 
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
+    diag.record_phase("BOOT_SETUP_START")
     
     # 1. LED Manager (Dual NeoPixel: IO4 feedback + IO6 onboard)
+    diag.record_phase("BOOT_LED_INIT")
     led = LEDManager(pin=PIN_LED_FEEDBACK, count=16, onboard_neo_pin=PIN_LED_ONBOARD, onboard_led_pin=PIN_DEBUG_LED)
     led.start_animation_thread()
     led.play_booting()
@@ -50,11 +53,13 @@ def setup():
     time.sleep_ms(1000)
     
     # 3. Battery Monitor
+    diag.record_phase("BOOT_BATTERY_INIT")
     vbat_adc = machine.ADC(machine.Pin(PIN_BATTERY_ADC))
     vbat_adc.atten(machine.ADC.ATTN_11DB)
 
     # 4. Mount SD Card (Native ESP32 SD driver — proven working in full_system_test.py)
     sd_mounted = False
+    diag.record_phase("BOOT_SD_INIT")
     try:
         sd = machine.SDCard(slot=2, width=1, sck=machine.Pin(PIN_SD_SCK), mosi=machine.Pin(PIN_SD_MOSI), miso=machine.Pin(PIN_SD_MISO), cs=machine.Pin(PIN_SD_CS))
         os.mount(sd, '/sd')
@@ -74,6 +79,7 @@ def setup():
         # If files exist on flash and SD is mounted, move them and reboot
         if sm.has_flash_sessions():
             print("\n[System] Found session files on internal flash. Moving to SD card...")
+            diag.record_phase("BOOT_AUTO_COPY")
             led.play_auto_copy()
             # Feed WDT during potentially long copy
             wdt = machine.WDT(timeout=20000) # Ensure WDT is active
@@ -81,6 +87,7 @@ def setup():
             if sm.move_flash_to_sd():
                 print("[System] Auto-copy complete! Rebooting...")
                 time.sleep(1)
+                diag.mark_expected_reset("auto_copy_complete")
                 machine.reset()
             else:
                 print("[System] Auto-copy failed. Continuing normal boot.")
@@ -88,6 +95,7 @@ def setup():
     
     # 6. I2C Sensors (IMU)
     imu = None
+    diag.record_phase("BOOT_IMU_INIT")
     try:
         i2c = machine.I2C(0, sda=machine.Pin(PIN_I2C_SDA), scl=machine.Pin(PIN_I2C_SCL), freq=400000)
         imu = BMI323(i2c, address=0x69)
@@ -105,6 +113,7 @@ def setup():
         print(f"IMU: Failed to initialize ({e})")
 
     # 7. GPS — Must start at 9600 (module default on power-up), then shift to 115200
+    diag.record_phase("BOOT_GPS_INIT")
     gps_uart = machine.UART(1, baudrate=9600, tx=machine.Pin(PIN_GPS_TX), rx=machine.Pin(PIN_GPS_RX), timeout=0, rxbuf=2048)
     gps = GPS(gps_uart)
     print("GPS: Neo-M8N — Shifting from 9600 → 115200 baud...")
@@ -135,10 +144,12 @@ def setup():
         print(f"GPS: Diagnostic timeout. Received only {sentences_received} sentences in {duration}ms.")
 
     # 8. Track Engine
+    diag.record_phase("BOOT_TRACK_INIT")
     track_eng = TrackEngine()
     track_eng.load_track()
 
     # 9. Watchdog Timer (Increase to 20s for network operations)
+    diag.record_phase("BOOT_WDT_INIT")
     wdt = machine.WDT(timeout=20000)
 
     imu_ok = imu is not None
@@ -147,6 +158,13 @@ def setup():
     return led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
 
 def main():
+    prev_state, current_state = diag.boot_start()
+    print("[Diag] Reset cause:", current_state.get("reset_cause"))
+    if prev_state:
+        print("[Diag] Previous phase:", prev_state.get("last_phase", "n/a"))
+        if prev_state.get("exception"):
+            print("[Diag] Previous exception:", prev_state.get("exception"))
+
     led, gps, imu, sm, track_eng, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received = setup()
     
     # --- Sync Button (IO5) ---
@@ -158,11 +176,13 @@ def main():
     config = load_device_config()
     if not config.get('ssid'):
         print("\n[System] No WiFi configured — First-time setup! Entering Pairing Mode.")
+        diag.record_phase("SYNC_SETUP_NEEDED")
         run_sync_mode(led, sm, sync_btn, wdt, vbat_adc)
         return  # Never reaches here (sync mode loops forever)
     
     # --- 10-SECOND DECISION WINDOW ---
     print("\n[System] 10s Decision Window — Press SYNC button to enter Sync Mode")
+    diag.record_phase("BOOT_DECISION_WINDOW")
     if not gps_ok:
         print("[System] GPS ERROR: No NMEA data detected. Holding in Decision Window.")
     
@@ -208,9 +228,11 @@ def main():
     # --- MODE SELECTION ---
     if sync_requested:
         print("\n[System] ==> SYNC MODE")
+        diag.record_phase("MODE_SYNC")
         run_sync_mode(led, sm, sync_btn, wdt, vbat_adc)
     else:
         print("\n[System] ==> LOGGING MODE")
+        diag.record_phase("MODE_LOGGING")
         # Kill all radios immediately
         from lib.wifi_manager import stop_wifi
         stop_wifi()
@@ -240,10 +262,12 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
     if needs_setup:
         # No saved network — auto-enter pairing mode with rainbow animation
         print("[Sync] No WiFi credentials. Starting Pairing Mode automatically...")
+        diag.record_phase("SYNC_PORTAL_START", "no_saved_wifi")
         from lib.captive_portal import start_background_portal
         gc.collect()
         _thread.stack_size(16384) # 16KB for portal
         _thread.start_new_thread(start_background_portal, (led,))
+        diag.mark_boot_completed("pairing_portal_running")
         
         # Stay in rainbow loop — portal runs in background
         while True:
@@ -254,12 +278,15 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
     elif config.get('ssid'):
         # --- Phase 1: Try connecting to known WiFi ---
         print(f"[Sync] Searching for WiFi: {config['ssid']}")
+        diag.record_phase("SYNC_WIFI_PREP", config.get('ssid', ''))
         led.set_state("SYNC_SEARCHING")
         
         gc.collect()
         sta = network.WLAN(network.STA_IF)
+        diag.record_phase("SYNC_WIFI_ACTIVE")
         sta.active(True)
         sta.config(txpower=8.5) # Prevent ESP32 brownout spikes
+        diag.record_phase("SYNC_WIFI_CONNECT", config.get('ssid', ''))
         sta.connect(config['ssid'], config.get('password', ''))
         
         # Wait up to 30s for connection
@@ -269,6 +296,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             if sta.isconnected():
                 wifi_connected = True
                 print(f"[Sync] WiFi Connected! IP: {sta.ifconfig()[0]}")
+                diag.record_phase("SYNC_WIFI_CONNECTED", sta.ifconfig()[0])
                 led.play_sync_found()
                 wdt.feed()
                 time.sleep(1)  # Brief visual confirmation
@@ -279,6 +307,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         
         if not wifi_connected:
             print("[Sync] WiFi connection failed.")
+            diag.record_phase("SYNC_WIFI_FAILED")
             sta.active(False)
             gc.collect()
     
@@ -355,6 +384,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         try:
             gc.collect()
             print(f"[Heartbeat] Pinging {host}:{port}{ping_path}...")
+            diag.record_phase("SYNC_SSL_HEARTBEAT", host)
             led.play_heartbeat_send()
             
             # 1. Opening Raw Socket
@@ -394,6 +424,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                 ss_tr = None
                 try:
                     gc.collect()
+                    diag.record_phase("SYNC_SSL_TRACK_PULL", host)
                     s_tr = socket.socket(ai[0], ai[1], ai[2])
                     s_tr.settimeout(5)
                     s_tr.connect(ai[-1])
@@ -496,15 +527,19 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         
         if hb_ok:
             print("[Sync] Handshake successful. Spawning uploader thread.")
+            diag.record_phase("SYNC_UPLOADER_START")
             gc.collect()
             _thread.stack_size(32768) # 32KB for SSL uploader
             _thread.start_new_thread(uploader_thread_func, (sm, led))
             uploader_spawned = True
         else:
             print("[Sync] Handshake failed. Will retry in background.")
+            diag.record_phase("SYNC_HANDSHAKE_FAILED")
 
     # --- PHASE 2: MAIN SYNC LOOP (Core 0) ---
     print("[Sync] Sync Engine Ready.")
+    diag.record_phase("SYNC_READY")
+    diag.mark_boot_completed("sync_loop_running")
     pairing_active = False
     press_start = 0
     last_ping = time.ticks_ms()
@@ -546,6 +581,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                 press_start = time.ticks_ms()
             elif time.ticks_diff(time.ticks_ms(), press_start) > 3000:
                 print("[Sync] Entering Pairing Mode...")
+                diag.record_phase("SYNC_PORTAL_START", "long_press")
                 from lib.wifi_manager import stop_wifi
                 stop_wifi()
                 time.sleep_ms(200)
@@ -555,6 +591,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                 _thread.stack_size(16384)
                 _thread.start_new_thread(start_background_portal, (led,))
                 pairing_active = True
+                diag.mark_boot_completed("pairing_portal_running")
                 press_start = 0
         else:
             press_start = 0
@@ -578,6 +615,8 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
     FLUSH_INTERVAL = 20  # rows before flushing to SD
     
     print("\n[System] Logging Active — 100Hz IMU / 10Hz GPS — All radios OFF")
+    diag.record_phase("LOGGING_START")
+    diag.mark_boot_completed("logging_loop_running")
     log_file = sm.get_log_file()
     print(f"[System] Session file: {log_file}")
     
@@ -725,10 +764,12 @@ if __name__ == "__main__":
     except Exception as e: 
         import sys
         print(f"CRITICAL SYSTEM ERROR: {e}")
+        diag.mark_exception(e)
         try:
             with open('/crash.log', 'w') as f:
                 sys.print_exception(e, f)
         except:
             pass
         time.sleep(5)
+        diag.mark_expected_reset("critical_exception")
         machine.reset()

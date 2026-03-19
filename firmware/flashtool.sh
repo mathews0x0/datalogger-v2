@@ -319,6 +319,29 @@ except: pass
     fi
 }
 
+do_view_boot_history() {
+    echo -e "${CYAN}Current Boot State:${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "
+try:
+    f=open('/data/metadata/boot_state.json','r')
+    print(f.read())
+    f.close()
+except Exception as e:
+    print('  (boot_state.json not found)')
+"
+
+    echo ""
+    echo -e "${CYAN}Recent Boot Failure History:${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "
+try:
+    f=open('/data/metadata/boot_history.json','r')
+    print(f.read())
+    f.close()
+except Exception as e:
+    print('  (boot_history.json not found)')
+"
+}
+
 
 # --- 5. Interactive Menu ---
 show_menu() {
@@ -330,17 +353,18 @@ show_menu() {
     echo "2) Clean Sync (Replace firmware code, keep user data)"
     echo "3) Nuke Sync (Full Wipe + Install OS + Sync latest)"
     echo "4) Backup & Purge Device Data (Internal flash only)"
-    echo "5) Exit"
+    echo "5) View Boot Diagnostics"
+    echo "6) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-5]: "
+    echo -ne "Select an option [1-6]: "
 }
 
 main() {
     show_menu
     read choice
     
-    # We need port for all options except 7
-    if [[ "$choice" != "7" ]]; then
+    # We need a port for all menu actions except exit
+    if [[ "$choice" != "6" ]]; then
         echo ""
         detect_port
         free_port
@@ -374,6 +398,9 @@ main() {
             do_backup
             ;;
         5)
+            do_view_boot_history
+            ;;
+        6)
             echo "Exiting."
             exit 0
             ;;
