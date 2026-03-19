@@ -151,7 +151,7 @@ async function apiCall(endpoint, options = {}) {
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${API_BASE}${endpoint}${separator}_t=${Date.now()}`;
 
-        // Ensure credentials are included for Capacitor mobile app cross-origin calls
+        // Ensure credentials are included for cross-origin or same-origin cookie based calls
         options.credentials = 'include';
 
         // Handle JWT CSRF Protection (Required for non-GET requests in production)
