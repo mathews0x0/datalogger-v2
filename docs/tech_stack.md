@@ -23,7 +23,7 @@ This document provides a deep dive into the technology stack, deployment process
     *   Local network discovery/IP scanning has been decommissioned.
 *   **Maps**: [Leaflet.js](https://leafletjs.com/) for track visualization.
 *   **Charts**: Custom SVG-based telemetry traces and [Chart.js](https://www.chartjs.org/) for interactive plots.
-*   **Mobile**: [Capacitor](https://capacitorjs.com/) bridge for iOS/Android builds.
+*   **Target**: Browser-first web app served directly from `server/ui/`.
 
 ### **Infrastructure**
 *   **Host**: Utho Cloud (VPS - Ubuntu 22.04 LTS).

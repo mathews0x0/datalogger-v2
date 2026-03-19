@@ -28,7 +28,6 @@ def create_app(config_overrides=None):
         DEFAULT_ORIGINS = [
             "http://localhost",
             "https://localhost",
-            "capacitor://localhost",
             "http://127.0.0.1",
             "http://localhost:6969",
             "http://192.168.1.35:6969"
