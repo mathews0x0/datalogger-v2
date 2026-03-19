@@ -10,8 +10,8 @@
   <meta name="keywords" content="motorcycle telemetry, trackday analytics, lap timer, data logger, racing, racesense" />
   <title>RaceSense — Ride Faster. Ride Smarter.</title>
   <link rel="icon" type="image/png" href="assets/logoSmall.png" />
-  <link rel="stylesheet" href="styles.css?v=11" />
-  <script src="app.js?v=52"></script>
+  <link rel="stylesheet" href="styles.css?v=13" />
+  <script src="app.js?v=54"></script>
 </head>
 
 <body>
@@ -19,28 +19,45 @@
   <header class="header" id="appHeader">
     <div class="app-header-main">
       <div class="app-brand-row">
-        <h1 class="app-brand" onclick="window.location.reload()">
-          <img src="assets/logoSmall.png" alt="RS"
-            class="app-brand-logo">
-          <span class="app-brand-text">RaceSense</span>
-        </h1>
+        <div class="app-brand-topbar">
+          <h1 class="app-brand" onclick="window.location.reload()">
+            <img src="assets/logoSmall.png" alt="RS" class="app-brand-logo">
+            <span class="app-brand-text">RaceSense</span>
+          </h1>
+
+          <div class="header-auth-row">
+            <div id="userProfileHeader" class="user-profile-header" style="display: none;">
+              <span id="tierBadge" class="tier-badge free">FREE</span>
+              <button class="header-avatar header-avatar-button" onclick="openProfilePanel()" title="My Account"
+                aria-label="Open account menu">
+                <img id="headerAvatarImg" src="" alt="" class="header-avatar-img" style="display: none;">
+                <i id="headerAvatarIcon" class="fas fa-user-circle"
+                  style="font-size: 1.6rem; color: var(--text-dim); cursor: pointer;"></i>
+                <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;"></span>
+              </button>
+            </div>
+            <button id="loginBtn" class="btn btn-primary btn-sm" onclick="showAuthModal()">Login / Register</button>
+          </div>
+        </div>
 
         <div id="headerStatusBadges" class="header-status-strip" style="display: none;">
           <!-- Connection Status -->
-          <div id="connectionStatus" class="status-badge offline">
+          <button id="connectionStatus" class="status-badge offline status-pill-button" onclick="toggleHeaderDeviceDetails()"
+            aria-expanded="false" aria-controls="headerDeviceDetails" title="Show device details">
             <span class="status-dot" id="headerConnDot"></span> <span id="connText">No Device</span>
+            <i id="headerStatusChevron" class="fas fa-chevron-down header-status-chevron"></i>
             <span id="versionWarning" class="badge"
               style="display: none; background: var(--error); color: white; margin-left: 0.5rem; cursor: pointer;"
               title="Firmware Mismatch: Update required">
               ⚠️ UPDATE
             </span>
-          </div>
+          </button>
 
           <!-- Telemetry -->
           <div id="headerBattery" class="telemetry-item header-status-secondary" style="display: none;" title="Battery Status">
             <i id="headerBatteryIcon" class="fas fa-battery-half"></i> 
-            <span id="headerVbatt">--V</span>
-            <span id="headerVbattPct" style="font-size: 0.75rem; color: var(--text-dim); margin-left: 2px;">(--%)</span>
+            <span id="headerVbatt">--%</span>
+            <span id="headerVbattPct" style="font-size: 0.75rem; color: var(--text-dim); margin-left: 2px;">--V</span>
           </div>
 
           <!-- Storage Indicators -->
@@ -49,6 +66,7 @@
             <div id="sdStorageGroup" class="header-storage-item" title="SD Card Storage">
               <i class="fas fa-sd-card" style="font-size: 0.75rem; color: var(--text-dim);"></i>
               <div class="header-storage-copy">
+                <span id="sdStorageShort" class="header-storage-short">SD --</span>
                 <div class="storage-bar header-storage-bar">
                   <div id="sdBarFill" class="storage-bar-fill header-storage-fill" style="width: 0%; background: var(--primary);"></div>
                 </div>
@@ -60,6 +78,7 @@
             <div id="flashStorageGroup" class="header-storage-item" title="Internal Flash">
               <i class="fas fa-microchip" style="font-size: 0.75rem; color: var(--text-dim);"></i>
               <div class="header-storage-copy">
+                <span id="flashStorageShort" class="header-storage-short">Flash --</span>
                 <div class="storage-bar header-storage-bar">
                   <div id="flashBarFill" class="storage-bar-fill header-storage-fill" style="width: 0%; background: #4da6ff;"></div>
                 </div>
@@ -79,23 +98,29 @@
             🏁 <span id="headerTrackName">--</span>
           </div>
         </div>
-      </div>
-    </div>
-    </div>
-
-    <div class="header-auth-row">
-      <div id="userProfileHeader" class="user-profile-header" style="display: none;">
-        <span id="tierBadge" class="tier-badge free">FREE</span>
-        <div class="header-avatar" onclick="openProfilePanel()" title="My Account">
-          <img id="headerAvatarImg" src="" alt="" class="header-avatar-img" style="display: none;">
-          <i id="headerAvatarIcon" class="fas fa-user-circle"
-            style="font-size: 1.6rem; color: var(--text-dim); cursor: pointer;"></i>
-          <span id="headerUserName" style="font-size: 0.85rem; font-weight: 600; cursor: pointer;"></span>
+        <div id="headerDeviceDetails" class="header-device-details">
+          <div class="header-device-detail">
+            <span class="header-device-detail-label">Status</span>
+            <strong id="headerDeviceDetailStatus">No device detected</strong>
+          </div>
+          <div class="header-device-detail">
+            <span class="header-device-detail-label">Battery</span>
+            <strong id="headerDeviceDetailBattery">--</strong>
+          </div>
+          <div class="header-device-detail">
+            <span class="header-device-detail-label">SD Card</span>
+            <strong id="headerDeviceDetailSd">--</strong>
+          </div>
+          <div class="header-device-detail">
+            <span class="header-device-detail-label">Flash</span>
+            <strong id="headerDeviceDetailFlash">--</strong>
+          </div>
+          <div id="headerDeviceTrackDetailWrap" class="header-device-detail header-device-detail-wide" style="display: none;">
+            <span class="header-device-detail-label">Active Track</span>
+            <strong id="headerDeviceDetailTrack">--</strong>
+          </div>
         </div>
-        <button class="btn btn-sm" onclick="logout()" title="Logout"
-          style="background: transparent; border: 1px solid var(--border); color: var(--text-dim); font-size: 0.8rem;">Logout</button>
       </div>
-      <button id="loginBtn" class="btn btn-primary btn-sm" onclick="showAuthModal()">Login / Register</button>
     </div>
   </header>
 
@@ -374,6 +399,9 @@
               style="font-size: 0.75rem; color: var(--text-muted); cursor: help;"></i><span
               class="info-tooltip-text">Tracks are auto-detected when you analyze your ride sessions. Each track shows
               your best lap and session history.</span></span></h2>
+        <div class="filter-bar">
+          <input type="search" id="tracksSearchInput" class="filter-select search-input" placeholder="Search tracks by name" oninput="handleTrackSearchInput()">
+        </div>
         <div id="tracksList" class="tracks-grid">
           <div class="loading">Loading tracks...</div>
         </div>
@@ -402,6 +430,7 @@
         <!-- Sessions Panel -->
         <div id="sessionsPanel">
           <div class="filter-bar">
+            <input type="search" id="sessionSearchInput" class="filter-select search-input" placeholder="Search sessions by track name" oninput="handleSessionSearchInput()">
             <select id="trackFilter" class="filter-select">
               <option value="">All Tracks</option>
             </select>
@@ -444,6 +473,7 @@
         <!-- Explore Panel -->
         <div id="explorePanel">
           <div class="filter-bar">
+            <input type="search" id="communitySearchInput" class="filter-select search-input" placeholder="Search public sessions by track or rider" oninput="handleCommunitySearchInput()">
             <select id="communityTrackFilter" class="filter-select" onchange="loadCommunitySessions()">
               <option value="">All Tracks</option>
             </select>
@@ -517,17 +547,25 @@
                 <span class="toggle-slider"></span>
               </div>
             </label>
-            <button class="btn btn-secondary btn-sm" onclick="triggerFileUpload()" title="Upload CSV files manually">
-              <i class="fas fa-file-upload"></i> Upload CSV
-            </button>
-            <input type="file" id="manualCsvUpload" style="display: none;" multiple accept=".csv"
-              onchange="handleManualUpload(event)">
             <button class="btn btn-primary btn-sm" onclick="loadLearningFiles()"
               title="Check for newly uploaded files from your RS-Core">
               <i class="fas fa-sync-alt"></i> Refresh
             </button>
           </div>
         </div>
+        <div class="manual-upload-card">
+          <div class="manual-upload-card-copy">
+            <div class="manual-upload-card-title"><i class="fas fa-file-csv"></i> Manual CSV Import</div>
+            <p>Use this only for backfilling or support cases. Your normal ride flow should come from RS-Core auto-sync.</p>
+          </div>
+          <button class="btn btn-secondary btn-sm manual-upload-btn" onclick="triggerFileUpload()"
+            title="Upload CSV files manually">
+            <i class="fas fa-file-upload"></i> Choose CSV Files
+          </button>
+          <input type="file" id="manualCsvUpload" style="display: none;" multiple accept=".csv"
+            onchange="handleManualUpload(event)">
+        </div>
+        <div id="processSummary" class="process-summary-card" style="display: none;"></div>
         <div id="learningFilesList" class="files-list">
           <div class="loading">Loading files...</div>
         </div>
@@ -547,6 +585,33 @@
               style="font-size: 0.75rem; color: var(--text-muted); cursor: help;"></i><span
               class="info-tooltip-text">Manage your RS-Core connection, check firmware versions, and generate device
               tokens for new units.</span></span></h2>
+
+        <div id="deviceSetupChecklist" class="device-setup-checklist card">
+          <h3><i class="fas fa-list-check"></i> Quick Setup Checklist</h3>
+          <div class="checklist-items">
+            <div class="checklist-item" id="checklistHeartbeat">
+              <span class="checklist-dot"></span>
+              <div>
+                <strong>Device seen by cloud</strong>
+                <span>Heartbeat confirms your RS-Core has checked in.</span>
+              </div>
+            </div>
+            <div class="checklist-item" id="checklistToken">
+              <span class="checklist-dot"></span>
+              <div>
+                <strong>Device token created</strong>
+                <span>Create a token and paste it into the captive portal during setup.</span>
+              </div>
+            </div>
+            <div class="checklist-item" id="checklistSync">
+              <span class="checklist-dot"></span>
+              <div>
+                <strong>Sync path ready</strong>
+                <span>Once connected to known WiFi, your RS-Core can auto-upload sessions.</span>
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div class="settings-grid">
           <!-- DEVICE STATUS -->
@@ -748,6 +813,13 @@
               <i class="fas fa-lock"></i> Change Password
             </button>
           </div>
+
+          <div class="profile-section">
+            <div class="profile-section-title"><i class="fas fa-right-from-bracket"></i> Session</div>
+            <button class="btn btn-sm logout-panel-btn" onclick="logout()" style="width: 100%;">
+              <i class="fas fa-sign-out-alt"></i> Logout
+            </button>
+          </div>
         </div>
       </div>
 
@@ -783,7 +855,7 @@
         </div>
 
         <!-- Users Table -->
-        <div class="card" style="padding: 0; overflow: hidden; border: 1px solid var(--border);">
+        <div class="card admin-users-table" style="padding: 0; overflow: hidden; border: 1px solid var(--border);">
           <div style="overflow-x: auto;">
             <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
               <thead style="background: rgba(255,255,255,0.03); border-bottom: 1px solid var(--border);">
@@ -805,6 +877,7 @@
             </table>
           </div>
         </div>
+        <div id="adminUsersCards" class="admin-users-cards"></div>
 
         <!-- Pagination -->
         <div id="adminPagination" style="display: flex; justify-content: center; gap: 0.5rem; margin-top: 1.5rem;">

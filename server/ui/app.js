@@ -30,6 +30,32 @@ let activeTrackId = null;  // Track identified by ESP32 status
 let lastSyncedTrackId = null; // Track we last pushed to ESP32
 let isDeviceConnected = false; // True only when device is confirmed reachable
 let isCloudConnected = false;  // True when device is seen via Cloud Heartbeat
+let currentView = localStorage.getItem('ui:lastView') || 'home';
+let currentSessionTab = localStorage.getItem('ui:sessionTab') || 'sessions';
+let currentCommunityTab = localStorage.getItem('ui:communityTab') || 'explore';
+let trackSearchQuery = localStorage.getItem('ui:tracksSearch') || '';
+let sessionSearchQuery = localStorage.getItem('ui:sessionSearch') || '';
+let communitySearchQuery = localStorage.getItem('ui:communitySearch') || '';
+let adminUsersData = [];
+let adminCurrentPage = 1;
+let adminPerPage = 50;
+let deviceTokensCache = [];
+let hasRestoredInitialView = false;
+let processUploadSummary = null;
+let isHeaderDeviceDetailsOpen = false;
+
+function saveUiState(key, value) {
+    if (value === undefined || value === null || value === '') {
+        localStorage.removeItem(key);
+        return;
+    }
+    localStorage.setItem(key, String(value));
+}
+
+function readUiState(key, fallback = '') {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value;
+}
 
 // ============================================================================
 // INITIALIZATION
@@ -40,6 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateResponsiveChromeMetrics();
     window.addEventListener('resize', updateResponsiveChromeMetrics);
+    initUiAccessibility();
 
     // Start cloud heartbeat polling
     pollCloudHeartbeat();
@@ -80,6 +107,62 @@ function updateResponsiveChromeMetrics() {
     document.documentElement.style.setProperty('--header-offset', `${headerHeight}px`);
 }
 
+function initUiAccessibility() {
+    document.querySelectorAll('.modal-close').forEach(el => {
+        el.setAttribute('role', 'button');
+        el.setAttribute('tabindex', '0');
+        if (!el.getAttribute('aria-label')) el.setAttribute('aria-label', 'Close dialog');
+        el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                el.click();
+            }
+        });
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        const activeModal = document.querySelector('.modal.active');
+        if (activeModal) {
+            activeModal.classList.remove('active');
+            return;
+        }
+
+        const overlay = document.getElementById('profilePanelOverlay');
+        const panel = document.getElementById('profilePanel');
+        if (overlay?.classList.contains('active') || panel?.classList.contains('active')) {
+            closeProfilePanel();
+        }
+    });
+}
+
+function formatStorageCompact(kbValue, unit) {
+    if (!kbValue || kbValue <= 0) return `${unit} --`;
+    if (unit === 'SD') {
+        return `SD ${(kbValue / 1024).toFixed(1)}G`;
+    }
+    return `Flash ${(kbValue / 1024).toFixed(1)}M`;
+}
+
+function formatStorageDetail(usedKb, totalKb, unit) {
+    if (!totalKb || totalKb <= 0) return unit === 'SD' ? 'No SD card detected' : 'Flash details unavailable';
+    const divisor = 1024;
+    const suffix = unit === 'SD' ? 'GB' : 'MB';
+    return `${(usedKb / divisor).toFixed(1)} / ${(totalKb / divisor).toFixed(1)} ${suffix} used`;
+}
+
+function toggleHeaderDeviceDetails(forceOpen = null) {
+    const details = document.getElementById('headerDeviceDetails');
+    const trigger = document.getElementById('connectionStatus');
+    if (!details || !trigger) return;
+
+    const nextState = typeof forceOpen === 'boolean' ? forceOpen : !isHeaderDeviceDetailsOpen;
+    isHeaderDeviceDetailsOpen = nextState;
+    details.classList.toggle('is-open', nextState);
+    trigger.setAttribute('aria-expanded', nextState ? 'true' : 'false');
+    requestAnimationFrame(updateResponsiveChromeMetrics);
+}
+
 // ============================================================================
 // NAVIGATION
 // ============================================================================
@@ -109,6 +192,7 @@ function showView(viewName) {
     if (targetView) {
         targetView.classList.add('active');
         currentView = viewName;
+        saveUiState('ui:lastView', viewName);
 
         // Load data for view
         switch (viewName) {
@@ -119,10 +203,10 @@ function showView(viewName) {
                 loadTracks();
                 break;
             case 'sessions':
-                loadSessions();
+                switchSessionTab(currentSessionTab);
                 break;
             case 'community':
-                loadCommunitySessions();
+                switchCommunityTab(currentCommunityTab);
                 break;
             case 'teams':
                 loadTeams();
@@ -283,6 +367,14 @@ function updateAuthUI() {
         // My Devices section visibility
         const myDevicesCard = document.getElementById('myDevicesCard');
         if (myDevicesCard) myDevicesCard.style.display = 'block';
+
+        if (!hasRestoredInitialView) {
+            hasRestoredInitialView = true;
+            const initialView = readUiState('ui:lastView', 'home');
+            if (initialView && initialView !== 'home') {
+                requestAnimationFrame(() => showView(initialView));
+            }
+        }
     } else {
         // Show landing page, hide app
         if (landingPage) landingPage.style.display = 'block';
@@ -291,12 +383,14 @@ function updateAuthUI() {
 
         if (loginBtn) loginBtn.style.display = 'block';
         if (userProfileHeader) userProfileHeader.style.display = 'none';
+        toggleHeaderDeviceDetails(false);
 
         // Hide devices card
         const myDevicesCard = document.getElementById('myDevicesCard');
         if (myDevicesCard) myDevicesCard.style.display = 'none';
     }
 
+    updateDeviceSetupChecklist();
     requestAnimationFrame(updateResponsiveChromeMetrics);
 }
 
@@ -550,6 +644,8 @@ async function loadDeviceTokens() {
 
     try {
         const devices = await apiCall('/api/devices');
+        deviceTokensCache = devices || [];
+        updateDeviceSetupChecklist();
         if (!devices || devices.length === 0) {
             container.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No devices registered. Generate a token above.</span>';
             return;
@@ -584,8 +680,25 @@ async function loadDeviceTokens() {
             `;
         }).join('');
     } catch (e) {
+        deviceTokensCache = [];
+        updateDeviceSetupChecklist();
         container.innerHTML = '<span style="color: var(--error); font-size: 0.85rem;">Failed to load devices.</span>';
     }
+}
+
+function updateDeviceSetupChecklist() {
+    const heartbeatEl = document.getElementById('checklistHeartbeat');
+    const tokenEl = document.getElementById('checklistToken');
+    const syncEl = document.getElementById('checklistSync');
+    if (!heartbeatEl || !tokenEl || !syncEl) return;
+
+    const hasHeartbeat = !!isCloudConnected;
+    const hasToken = Array.isArray(deviceTokensCache) && deviceTokensCache.some(device => !device.revoked);
+    const hasSyncPath = hasToken && (!!localStorage.getItem('lastDeviceIP') || hasHeartbeat);
+
+    heartbeatEl.classList.toggle('is-complete', hasHeartbeat);
+    tokenEl.classList.toggle('is-complete', hasToken);
+    syncEl.classList.toggle('is-complete', hasSyncPath);
 }
 
 async function generateDeviceToken() {
@@ -621,6 +734,8 @@ async function generateDeviceToken() {
 
             nameInput.value = '';
             showToast('Device token generated!', 'success');
+            deviceTokensCache = [{ id: 'new', revoked: false }, ...deviceTokensCache];
+            updateDeviceSetupChecklist();
             loadDeviceTokens();
         }
     } catch (e) {
@@ -807,76 +922,9 @@ async function logout() {
         await apiCall('/api/auth/logout', { method: 'POST' });
     } catch (e) { }
     currentUser = null;
+    closeProfilePanel();
     updateAuthUI();
     showToast('Logged out', 'info');
-}
-// Deleted legacy checkConnection and updateConnectionStatus
-async function pollStatus() {
-    try {
-        // 1. Get Pi Status (Recording, Storage, etc)
-        const res = await apiCall('/api/status', { displayError: false });
-        // Update Recording Dot
-        const recEl = document.getElementById('recordingStatus');
-        if (recEl) {
-            recEl.style.display = (res.is_recording) ? 'flex' : 'none';
-        }
-
-        // 2. Get Device (ESP32) Status if IP is known
-        const deviceIP = localStorage.getItem('lastDeviceIP');
-        if (deviceIP) {
-            try {
-                const espRes = await fetch(`http://${deviceIP}/status?_t=${Date.now()}`).then(r => r.json());
-
-                // Update Storage Bar
-                const storageEl = document.getElementById('storageIndicator');
-                if (storageEl) {
-                    storageEl.style.display = 'flex';
-                    const fill = document.getElementById('storageBarFill');
-                    const text = document.getElementById('storageText');
-                    const pct = espRes.storage_used_pct || 0;
-                    fill.style.width = pct + '%';
-                    text.textContent = pct + '%';
-                    fill.style.background = pct > 90 ? 'var(--error)' : (pct > 70 ? 'var(--warning)' : 'var(--success)');
-                }
-
-                // Update Active Track Badge
-                const trackBadge = document.getElementById('activeTrackBadge');
-                const trackNameEl = document.getElementById('activeTrackName');
-                const identDot = document.getElementById('trackIdentifiedDot');
-
-                if (espRes.active_track && trackBadge) {
-                    trackBadge.style.display = 'flex';
-                    activeTrackId = espRes.active_track;
-
-                    // Track Identification Status
-                    if (identDot) {
-                        identDot.style.background = espRes.track_identified ? 'var(--success)' : 'var(--text-muted)';
-                        identDot.title = espRes.track_identified ? 'Track Matches GPS' : 'Waiting for GPS Match';
-                    }
-
-                    // Find track name locally
-                    if (trackNameEl) {
-                        const track = tracks.find(t => t.track_id == activeTrackId);
-                        trackNameEl.textContent = track ? track.track_name : `Track ${activeTrackId}`;
-                    }
-
-                    // AUTO SYNC: If track is set on device but we haven't synced it yet this session
-                    if (activeTrackId !== lastSyncedTrackId) {
-                        ensureTrackSynced(activeTrackId, deviceIP);
-                    }
-                } else if (trackBadge) {
-                    trackBadge.style.display = 'none';
-                    activeTrackId = null;
-                }
-
-            } catch (espErr) {
-                document.getElementById('storageIndicator').style.display = 'none';
-            }
-        }
-
-    } catch (e) {
-        // Ignore errors during poll
-    }
 }
 
 /**
@@ -903,7 +951,10 @@ async function ensureTrackSynced(trackId, deviceIP) {
 // SOCIAL & COMMUNITY FEATURES
 // ============================================================================
 
-function switchCommunityTab(tab) {
+function switchCommunityTab(tab, skipViewLoad = false) {
+    currentCommunityTab = tab;
+    saveUiState('ui:communityTab', tab);
+
     // Update tab buttons
     document.querySelectorAll('[data-comm-tab]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.commTab === tab);
@@ -918,13 +969,17 @@ function switchCommunityTab(tab) {
     if (followingPanel) followingPanel.style.display = tab === 'following' ? 'block' : 'none';
     if (leaderboardsPanel) leaderboardsPanel.style.display = tab === 'leaderboards' ? 'block' : 'none';
 
+    if (skipViewLoad) return;
+
     // Load data
     if (tab === 'explore') {
         loadCommunitySessions();
     } else if (tab === 'following') {
         loadFollowingFeed();
     } else if (tab === 'leaderboards') {
-        loadLeaderboardTracks();
+        loadLeaderboardTracks().then(() => {
+            if (readUiState('ui:leaderboardTrack', '')) loadLeaderboard();
+        });
     }
 }
 
@@ -975,12 +1030,19 @@ async function loadFollowingFeed() {
 
 async function loadLeaderboardTracks() {
     const select = document.getElementById('lbTrackSelect');
-    if (!select || select.options.length > 1) return; // Already loaded
+    if (!select) return;
 
     try {
-        const data = await apiCall('/api/tracks');
-        select.innerHTML = '<option value="">Select Track...</option>' +
-            data.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
+        if (select.options.length <= 1) {
+            const data = await apiCall('/api/tracks');
+            select.innerHTML = '<option value="">Select Track...</option>' +
+                data.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
+        }
+        const savedTrackId = readUiState('ui:leaderboardTrack', '');
+        const savedPeriod = readUiState('ui:leaderboardPeriod', 'all');
+        if (savedTrackId) select.value = savedTrackId;
+        const periodSelect = document.getElementById('lbPeriodSelect');
+        if (periodSelect) periodSelect.value = savedPeriod;
     } catch (e) { }
 }
 
@@ -988,6 +1050,8 @@ async function loadLeaderboard() {
     const trackId = document.getElementById('lbTrackSelect').value;
     const period = document.getElementById('lbPeriodSelect').value;
     const container = document.getElementById('leaderboardContent');
+    saveUiState('ui:leaderboardTrack', trackId || '');
+    saveUiState('ui:leaderboardPeriod', period || 'all');
 
     if (!trackId) {
         container.innerHTML = renderEmptyState(
@@ -1013,7 +1077,7 @@ async function loadLeaderboard() {
         }
 
         container.innerHTML = `
-            <div class="table-responsive">
+            <div class="table-responsive leaderboard-table">
                 <table class="data-table">
                     <thead>
                         <tr>
@@ -1048,9 +1112,31 @@ async function loadLeaderboard() {
                     </tbody>
                 </table>
             </div>
+            <div class="leaderboard-cards">
+                ${leaderboard.map(entry => {
+                    let rankDisplay = entry.rank;
+                    if (entry.rank === 1) rankDisplay = '🥇';
+                    else if (entry.rank === 2) rankDisplay = '🥈';
+                    else if (entry.rank === 3) rankDisplay = '🥉';
+
+                    return `
+                        <div class="leaderboard-card" onclick="viewSession('${entry.session_id}', true)">
+                            <div class="card-head-inline">
+                                <span class="leaderboard-rank">${rankDisplay}</span>
+                                <span class="leaderboard-time">${formatTime(entry.lap_time)}</span>
+                            </div>
+                            <div class="leaderboard-rider" onclick="event.stopPropagation(); showUserProfile(${entry.user_id})">${entry.user_name}</div>
+                            <div class="leaderboard-meta">
+                                <span>${entry.bike_info || 'Bike not set'}</span>
+                                <span>${formatDateShort(entry.date)}</span>
+                            </div>
+                        </div>
+                    `;
+                }).join('')}
+            </div>
         `;
     } catch (error) {
-        container.innerHTML = '<p class="help-text">Failed to load leaderboard</p>';
+        container.innerHTML = renderErrorState('Failed to load leaderboard.');
     }
 }
 
@@ -1720,6 +1806,37 @@ function formatTime24h(dateStr) {
     return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+function normalizeQuery(value) {
+    return (value || '').trim().toLowerCase();
+}
+
+function handleTrackSearchInput() {
+    const input = document.getElementById('tracksSearchInput');
+    trackSearchQuery = input ? input.value : '';
+    saveUiState('ui:tracksSearch', trackSearchQuery);
+    renderTracksGrid(tracks);
+}
+
+function handleSessionSearchInput() {
+    const input = document.getElementById('sessionSearchInput');
+    sessionSearchQuery = input ? input.value : '';
+    saveUiState('ui:sessionSearch', sessionSearchQuery);
+    renderSessionsList(sessions);
+}
+
+function handleCommunitySearchInput() {
+    const input = document.getElementById('communitySearchInput');
+    communitySearchQuery = input ? input.value : '';
+    saveUiState('ui:communitySearch', communitySearchQuery);
+    const trackId = document.getElementById('communityTrackFilter')?.value || '';
+    saveUiState('ui:communityTrackFilter', trackId);
+    loadCommunitySessions();
+}
+
+function renderErrorState(message) {
+    return `<div class="empty-state"><div class="empty-state-icon">!</div><div class="empty-state-title">Something went wrong</div><div class="empty-state-message">${message}</div></div>`;
+}
+
 async function loadHomeData() {
     try {
         // Load tracks and sessions
@@ -1903,6 +2020,7 @@ function renderRecentSessions(recentSessions) {
                 </div>
                 ${session.tbl_improved ? '<span class="badge success"><i class="fas fa-rocket"></i> New TBL!</span>' : ''}
             </div>
+            ${renderSessionQuickActions(session)}
         </div>
     `).join('');
 }
@@ -1913,59 +2031,82 @@ function renderRecentSessions(recentSessions) {
 
 async function loadTracks() {
     const container = document.getElementById('tracksList');
+    const searchInput = document.getElementById('tracksSearchInput');
+    if (searchInput) searchInput.value = trackSearchQuery;
     container.innerHTML = renderSkeletonCards(4, 'track');
 
     try {
         const data = await apiCall('/api/tracks');
         tracks = data.tracks || [];
+        renderTracksGrid(tracks);
+    } catch (error) {
+        container.innerHTML = renderErrorState('Failed to load tracks.');
+    }
+}
 
-        if (tracks.length === 0) {
-            container.innerHTML = renderEmptyState(
-                '🗺️',
-                'No tracks yet',
-                'Tracks are auto-detected when you analyze ride sessions. Head to Sync Data to import your first ride.',
-                'Go to Sync Data',
-                "showView('process')"
-            );
-            return;
-        }
+function renderTracksGrid(trackList) {
+    const container = document.getElementById('tracksList');
+    if (!container) return;
 
-        container.innerHTML = tracks.map(track => {
-            const isActive = activeTrackId == track.track_id;
-            return `
-            <div class="track-card ${isActive ? 'active' : ''}" onclick="viewTrack(${track.track_id})">
-                <img src="${API_BASE}/api/tracks/${track.track_id}/map" 
-                     alt="${track.track_name}" 
-                     class="track-map"
-                     onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%232a2a2a%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23666%22 text-anchor=%22middle%22%3ENo Map%3C/text%3E%3C/svg%3E'">
-                <div class="track-info">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-                        <div class="track-name">${track.track_name}</div>
-                        ${isActive ? '<span class="badge success" style="font-size: 0.6rem;">ACTIVE</span>' : ''}
-                    </div>
-                    <div class="track-meta">
-                        <span><i class="fas fa-history"></i> ${track.sessions_count || 0} sessions</span>
-                        <span><i class="fas fa-vector-square"></i> 7 sectors</span>
-                    </div>
-                    <div class="track-actions">
-                        ${!isActive ? `
-                        <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTrack(${track.track_id})">
-                            <i class="fas fa-bolt"></i> Set Active
-                        </button>` : ''}
-                        <button class="btn small" onclick="event.stopPropagation(); renameTrack(${track.track_id}, '${track.track_name}')">
-                            <i class="fas fa-edit"></i>
-                        </button>
-                        <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteTrack(${track.track_id}, '${track.track_name}')">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </div>
+    const query = normalizeQuery(trackSearchQuery);
+    const filteredTracks = (trackList || []).filter(track => {
+        if (!query) return true;
+        return `${track.track_name || ''} ${track.location || ''}`.toLowerCase().includes(query);
+    });
+
+    if (!trackList || trackList.length === 0) {
+        container.innerHTML = renderEmptyState(
+            '🗺️',
+            'No tracks yet',
+            'Tracks are auto-detected when you analyze ride sessions. Head to Sync Data to import your first ride.',
+            'Go to Sync Data',
+            "showView('process')"
+        );
+        return;
+    }
+
+    if (filteredTracks.length === 0) {
+        container.innerHTML = renderEmptyState(
+            '🔎',
+            'No matching tracks',
+            'Try a different track name or clear the search.'
+        );
+        return;
+    }
+
+    container.innerHTML = filteredTracks.map(track => {
+        const isActive = activeTrackId == track.track_id;
+        return `
+        <div class="track-card ${isActive ? 'active' : ''}" onclick="viewTrack(${track.track_id})">
+            <img src="${API_BASE}/api/tracks/${track.track_id}/map" 
+                 alt="${track.track_name}" 
+                 class="track-map"
+                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%232a2a2a%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23666%22 text-anchor=%22middle%22%3ENo Map%3C/text%3E%3C/svg%3E'">
+            <div class="track-info">
+                <div class="card-head-inline">
+                    <div class="track-name">${track.track_name}</div>
+                    ${isActive ? '<span class="badge success compact-badge">ACTIVE</span>' : ''}
+                </div>
+                <div class="track-meta">
+                    <span><i class="fas fa-history"></i> ${track.sessions_count || 0} sessions</span>
+                    <span><i class="fas fa-vector-square"></i> 7 sectors</span>
+                </div>
+                <div class="track-actions">
+                    ${!isActive ? `
+                    <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTrack(${track.track_id})">
+                        <i class="fas fa-bolt"></i> Set Active
+                    </button>` : ''}
+                    <button class="btn small" onclick="event.stopPropagation(); renameTrack(${track.track_id}, '${track.track_name}')">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteTrack(${track.track_id}, '${track.track_name}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
                 </div>
             </div>
-            `;
-        }).join('');
-    } catch (error) {
-        container.innerHTML = '<p class="help-text">Failed to load tracks</p>';
-    }
+        </div>
+        `;
+    }).join('');
 }
 
 /**
@@ -2059,6 +2200,9 @@ async function viewTrack(trackId) {
 }
 
 function viewTrackSessions(trackId) {
+    saveUiState('ui:sessionTrackFilter', String(trackId));
+    currentSessionTab = 'sessions';
+    saveUiState('ui:sessionTab', 'sessions');
     showView('sessions');
     switchSessionTab('sessions');
     loadSessions(trackId);
@@ -2071,6 +2215,8 @@ function viewTrackSessions(trackId) {
 async function loadSessions(filterTrackId = null) {
     const container = document.getElementById('sessionsList');
     const filterSelect = document.getElementById('trackFilter');
+    const searchInput = document.getElementById('sessionSearchInput');
+    if (searchInput) searchInput.value = sessionSearchQuery;
 
     container.innerHTML = renderSkeletonCards(3, 'session');
 
@@ -2085,27 +2231,73 @@ async function loadSessions(filterTrackId = null) {
             filterSelect.innerHTML = '<option value="">All Tracks</option>' +
                 tracksData.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
 
+            const savedTrackId = readUiState('ui:sessionTrackFilter', '');
+            if (savedTrackId) filterSelect.value = savedTrackId;
+
             filterSelect.onchange = (e) => {
                 const trackId = e.target.value ? parseInt(e.target.value) : null;
+                saveUiState('ui:sessionTrackFilter', e.target.value || '');
                 loadSessions(trackId);
             };
         }
+        renderSessionsList(sessions);
 
-        if (sessions.length === 0) {
-            container.innerHTML = renderEmptyState(
-                '📊',
-                'No sessions yet',
-                'Upload a CSV from your RS-Core in the Sync Data tab, then analyze it to see your sessions here.',
-                'Go to Sync Data',
-                "showView('process')"
-            );
-            return;
-        }
+    } catch (error) {
+        container.innerHTML = renderErrorState('Failed to load sessions.');
+    }
+}
 
-        // Group by date
-        const grouped = groupSessionsByDate(sessions);
+function renderSessionQuickActions(session, isPublicView = false) {
+    if (isPublicView) {
+        return '';
+    }
 
-        container.innerHTML = Object.entries(grouped).map(([date, dateSessions]) => `
+    return `
+        <div class="session-quick-actions">
+            <button class="btn small" onclick="event.stopPropagation(); openPlayback('${session.session_id}')">
+                <i class="fas fa-play"></i> Playback
+            </button>
+            <button class="btn small secondary" onclick="event.stopPropagation(); shareSession('${session.session_id}')">
+                <i class="fas fa-share-alt"></i> Share
+            </button>
+        </div>
+    `;
+}
+
+function renderSessionsList(sessionList) {
+    const container = document.getElementById('sessionsList');
+    if (!container) return;
+
+    if (!sessionList || sessionList.length === 0) {
+        container.innerHTML = renderEmptyState(
+            '📊',
+            'No sessions yet',
+            'Upload a CSV from your RS-Core in the Sync Data tab, then analyze it to see your sessions here.',
+            'Go to Sync Data',
+            "showView('process')"
+        );
+        return;
+    }
+
+    const query = normalizeQuery(sessionSearchQuery);
+    const filteredSessions = sessionList.filter(session => {
+        if (!query) return true;
+        return `${session.track_name || ''} ${formatDateTimeAbbreviated(session.start_time)}`.toLowerCase().includes(query);
+    });
+
+    if (filteredSessions.length === 0) {
+        container.innerHTML = renderEmptyState(
+            '🔎',
+            'No matching sessions',
+            'Try a different track name or clear the search.'
+        );
+        return;
+    }
+
+    const grouped = groupSessionsByDate(filteredSessions);
+
+    container.innerHTML = Object.entries(grouped).map(([date, dateSessions]) => `
+        <div class="session-date-group">
             <h3>${date}</h3>
             ${dateSessions.map(session => `
                 <div class="session-card" onclick="viewSession('${session.session_id}')">
@@ -2115,27 +2307,25 @@ async function loadSessions(filterTrackId = null) {
                     </div>
                     <div class="session-stats">
                         <div class="session-stat">
-                            <span>Laps:</span>
+                            <span>Laps</span>
                             <strong>${session.total_laps}</strong>
                         </div>
                         <div class="session-stat">
-                            <span>Best:</span>
+                            <span>Best</span>
                             <strong>${formatTime(session.best_lap_time)}</strong>
                         </div>
                         <div class="session-stat">
-                            <span>Duration:</span>
+                            <span>Duration</span>
                             <strong>${formatDuration(session.duration_sec)}</strong>
                         </div>
-                        ${session.is_public ? '<span class="badge" style="background: var(--primary); color: white;"><i class="fas fa-globe"></i> Public</span>' : ''}
+                        ${session.is_public ? '<span class="badge status-pill-public"><i class="fas fa-globe"></i> Public</span>' : ''}
                         ${session.tbl_improved ? '<span class="badge success">New TBL!</span>' : ''}
                     </div>
+                    ${renderSessionQuickActions(session)}
                 </div>
             `).join('')}
-        `).join('');
-
-    } catch (error) {
-        container.innerHTML = '<p class="help-text">Failed to load sessions</p>';
-    }
+        </div>
+    `).join('');
 }
 
 // ============================================================================
@@ -2145,20 +2335,24 @@ async function loadSessions(filterTrackId = null) {
 async function loadCommunitySessions() {
     const container = document.getElementById('communitySessionsList');
     const filterSelect = document.getElementById('communityTrackFilter');
+    const searchInput = document.getElementById('communitySearchInput');
+    if (searchInput) searchInput.value = communitySearchQuery;
 
     container.innerHTML = renderSkeletonCards(3, 'session');
 
     try {
-        const trackId = filterSelect.value ? parseInt(filterSelect.value) : null;
-        const endpoint = trackId ? `/api/public/sessions?track_id=${trackId}` : '/api/public/sessions';
-        const publicSessions = await apiCall(endpoint);
-
         // Populate filter dropdown if empty
         if (filterSelect.options.length <= 1) {
             const tracksData = await apiCall('/api/tracks');
             filterSelect.innerHTML = '<option value="">All Tracks</option>' +
                 tracksData.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
+            const savedTrackId = readUiState('ui:communityTrackFilter', '');
+            if (savedTrackId) filterSelect.value = savedTrackId;
         }
+
+        const trackId = filterSelect.value ? parseInt(filterSelect.value) : null;
+        const endpoint = trackId ? `/api/public/sessions?track_id=${trackId}` : '/api/public/sessions';
+        const publicSessions = await apiCall(endpoint);
 
         if (publicSessions.length === 0) {
             container.innerHTML = renderEmptyState(
@@ -2171,7 +2365,24 @@ async function loadCommunitySessions() {
             return;
         }
 
-        container.innerHTML = publicSessions.map(session => `
+        const query = normalizeQuery(communitySearchQuery);
+        const filteredSessions = publicSessions.filter(session => {
+            if (!query) return true;
+            return `${session.track_name || ''} ${session.owner_name || ''}`.toLowerCase().includes(query);
+        });
+
+        if (filteredSessions.length === 0) {
+            container.innerHTML = renderEmptyState(
+                '🔎',
+                'No matching public sessions',
+                'Try a different rider or track search.'
+            );
+            return;
+        }
+
+        saveUiState('ui:communityTrackFilter', filterSelect.value || '');
+
+        container.innerHTML = filteredSessions.map(session => `
             <div class="session-card" onclick="viewSession('${session.session_id}', true)">
                 <div class="session-header">
                     <div>
@@ -2194,11 +2405,12 @@ async function loadCommunitySessions() {
                         <strong>${formatDuration(session.duration_sec)}</strong>
                     </div>
                 </div>
+                ${renderSessionQuickActions(session, true)}
             </div>
         `).join('');
 
     } catch (error) {
-        container.innerHTML = '<p class="help-text">Failed to load community sessions</p>';
+        container.innerHTML = renderErrorState('Failed to load community sessions.');
     }
 }
 
@@ -2293,8 +2505,11 @@ function closeActionsDropdownOnOutsideClick(e) {
 let currentTaggingSessionId = null;
 
 function switchSessionTab(tab) {
+    currentSessionTab = tab;
+    saveUiState('ui:sessionTab', tab);
+
     // Update tab buttons
-    document.querySelectorAll('.session-tab').forEach(btn => {
+    document.querySelectorAll('[data-tab]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
     });
 
@@ -2305,6 +2520,9 @@ function switchSessionTab(tab) {
     // Load data
     if (tab === 'trackdays') {
         loadTrackdays();
+    } else {
+        const savedTrackId = readUiState('ui:sessionTrackFilter', '');
+        loadSessions(savedTrackId ? parseInt(savedTrackId, 10) : null);
     }
 }
 
@@ -3287,12 +3505,16 @@ function toggleArchivesView() {
     const toggle = document.getElementById('showArchivesToggle');
     if (toggle) {
         isArchivesView = toggle.checked;
+        saveUiState('ui:archivesView', toggle.checked ? '1' : '');
         loadLearningFiles();
     }
 }
 
 async function loadLearningFiles() {
     const container = document.getElementById('learningFilesList');
+    const toggle = document.getElementById('showArchivesToggle');
+    if (toggle) toggle.checked = readUiState('ui:archivesView', '') === '1';
+    isArchivesView = !!toggle?.checked;
     container.innerHTML = '<div class="loading">Loading files...</div>';
 
     try {
@@ -3305,10 +3527,51 @@ async function loadLearningFiles() {
         window.currentFiles = files;
         window.processedFiles = new Set(processedList);
         window.sessionLimit = limitInfo;
+        updateProcessSummary({
+            totalFiles: files.length,
+            processedFiles: processedList.length,
+            archivedView: isArchivesView,
+            message: isArchivesView
+                ? 'Viewing archived files. Restore anything you want back in the active analyze queue.'
+                : 'RS-Core uploads land here automatically. Manual CSV import is available only when you need a backfill.'
+        });
         renderFileTable();
     } catch (error) {
+        updateProcessSummary({
+            totalFiles: 0,
+            processedFiles: 0,
+            archivedView: isArchivesView,
+            isError: true,
+            message: 'We could not load the analyze queue right now.'
+        });
         container.innerHTML = '<p class="help-text">Failed to load files</p>';
     }
+}
+
+function updateProcessSummary(summary) {
+    processUploadSummary = summary;
+    const container = document.getElementById('processSummary');
+    if (!container) return;
+
+    const toneClass = summary?.isError ? 'is-error' : (summary?.archivedView ? 'is-archive' : 'is-ready');
+    container.className = `process-summary-card ${toneClass}`;
+    container.style.display = 'block';
+    container.innerHTML = `
+        <div class="process-summary-grid">
+            <div class="process-summary-stat">
+                <span>Files</span>
+                <strong>${summary?.totalFiles ?? 0}</strong>
+            </div>
+            <div class="process-summary-stat">
+                <span>Analyzed</span>
+                <strong>${summary?.processedFiles ?? 0}</strong>
+            </div>
+            <div class="process-summary-copy">
+                <strong>${summary?.archivedView ? 'Archive View' : 'Analyze Queue'}</strong>
+                <span>${summary?.message || ''}</span>
+            </div>
+        </div>
+    `;
 }
 
 function renderFileTable() {
@@ -3318,7 +3581,13 @@ function renderFileTable() {
     const limit = window.sessionLimit;
 
     if (files.length === 0) {
-        container.innerHTML = '<p class="help-text">No files found. Upload a CSV or sync from your RS-Core to get started.</p>';
+        container.innerHTML = renderEmptyState(
+            '📁',
+            isArchivesView ? 'No archived files' : 'No files found',
+            isArchivesView
+                ? 'Archived files will appear here when you move them out of the active queue.'
+                : 'Your RS-Core uploads will appear here. You can also import a CSV manually if you need to backfill data.'
+        );
         return;
     }
 
@@ -3594,6 +3863,12 @@ async function processFile(filename) {
     }
 
     showToast('Queuing session...', 'info');
+    updateProcessSummary({
+        totalFiles: window.currentFiles?.length || 0,
+        processedFiles: window.processedFiles?.size || 0,
+        archivedView: isArchivesView,
+        message: `Queued ${filename} for analysis.`
+    });
 
     try {
         const result = await apiCall('/api/process', {
@@ -3619,9 +3894,22 @@ async function processFile(filename) {
                     if (statusRes.status === 'complete') {
                         isComplete = true;
                         showToast('Session processed successfully!', 'success');
+                        updateProcessSummary({
+                            totalFiles: window.currentFiles?.length || 0,
+                            processedFiles: (window.processedFiles?.size || 0) + 1,
+                            archivedView: isArchivesView,
+                            message: `${filename} finished analyzing successfully.`
+                        });
                     } else if (statusRes.status === 'failed') {
                         isComplete = true;
                         showToast('Analysis failed: ' + statusRes.error, 'error');
+                        updateProcessSummary({
+                            totalFiles: window.currentFiles?.length || 0,
+                            processedFiles: window.processedFiles?.size || 0,
+                            archivedView: isArchivesView,
+                            isError: true,
+                            message: `${filename} failed to analyze. Please retry.`
+                        });
                     }
                 } catch (e) {
                     console.error("Polling error", e);
@@ -6208,10 +6496,16 @@ function triggerFileUpload() {
 }
 
 async function handleManualUpload(event) {
-    const files = event.target.files;
+    const files = Array.from(event.target.files || []);
     if (!files || files.length === 0) return;
 
     showToast(`Uploading ${files.length} file(s)...`, 'info');
+    updateProcessSummary({
+        totalFiles: window.currentFiles?.length || 0,
+        processedFiles: window.processedFiles?.size || 0,
+        archivedView: isArchivesView,
+        message: `Uploading ${files.length} CSV file${files.length === 1 ? '' : 's'}...`
+    });
 
     let successCount = 0;
     let failCount = 0;
@@ -6229,12 +6523,25 @@ async function handleManualUpload(event) {
 
     if (successCount > 0) {
         showToast(`Successfully uploaded ${successCount} file(s)`, 'success');
+        updateProcessSummary({
+            totalFiles: (window.currentFiles?.length || 0) + successCount,
+            processedFiles: window.processedFiles?.size || 0,
+            archivedView: isArchivesView,
+            message: `${successCount} file${successCount === 1 ? '' : 's'} uploaded and ready to analyze.`
+        });
         if (typeof loadLearningFiles === 'function') {
             loadLearningFiles();
         }
     }
     if (failCount > 0) {
         showToast(`Failed to upload ${failCount} file(s)`, 'error');
+        updateProcessSummary({
+            totalFiles: window.currentFiles?.length || 0,
+            processedFiles: window.processedFiles?.size || 0,
+            archivedView: isArchivesView,
+            isError: true,
+            message: `${failCount} upload${failCount === 1 ? '' : 's'} failed.`
+        });
     }
 
     // Clear the input so the same files can be selected again
@@ -6297,10 +6604,17 @@ async function pollCloudHeartbeat() {
                 }
             }
             if (!isOnline) isCloudConnected = false;
+            const headerDevice = activeDevice || res[0] || null;
 
             const badge = document.getElementById('connectionStatus');
             const text = document.getElementById('connText');
             const connDot = document.getElementById('headerConnDot');
+            const detailStatus = document.getElementById('headerDeviceDetailStatus');
+            const detailBattery = document.getElementById('headerDeviceDetailBattery');
+            const detailSd = document.getElementById('headerDeviceDetailSd');
+            const detailFlash = document.getElementById('headerDeviceDetailFlash');
+            const detailTrackWrap = document.getElementById('headerDeviceTrackDetailWrap');
+            const detailTrack = document.getElementById('headerDeviceDetailTrack');
 
             // 1. Connection Status & Pulse
             if (badge && text && connDot) {
@@ -6308,39 +6622,41 @@ async function pollCloudHeartbeat() {
                     if (!isDeviceConnected) {
                         showToast('Heartbeat received from device', 'success');
                     }
-                    badge.className = 'status-badge online';
-                    text.textContent = 'RS-Core Connected';
+                    badge.className = 'status-badge online status-pill-button';
+                    text.textContent = 'Connected';
+                    badge.title = 'RS-Core Connected. Tap for full device details.';
                     isDeviceConnected = true;
+                    if (detailStatus) detailStatus.textContent = 'RS-Core Connected';
 
                     // Pulsing logic: pulse if we got a heartbeat in the last 15 seconds
                     const lastSyncTime = new Date(activeDevice.last_sync);
                     const isRecent = Math.abs(now - lastSyncTime) < 15000;
                     connDot.classList.toggle('pulse', isRecent);
                 } else {
-                    badge.className = 'status-badge offline';
-                    text.textContent = 'Device Offline';
+                    badge.className = 'status-badge offline status-pill-button';
+                    text.textContent = res.length > 0 ? 'Offline' : 'No Device';
+                    badge.title = res.length > 0 ? 'RS-Core offline. Tap for last known device details.' : 'No RS-Core detected yet.';
                     connDot.classList.remove('pulse');
                     isDeviceConnected = false;
+                    if (detailStatus) detailStatus.textContent = res.length > 0 ? 'RS-Core Offline' : 'No device detected';
                 }
             }
+            updateDeviceSetupChecklist();
 
             // 2. Header Telemetry
             const battEl = document.getElementById('headerBattery');
             const storageEl = document.getElementById('headerStorage');
             
-            if (activeDevice && isOnline) {
+            if (headerDevice && isOnline) {
                 if (battEl) {
                     battEl.style.display = 'flex';
-                    const vbatt = activeDevice.vbatt_sense || 0;
-                    document.getElementById('headerVbatt').textContent = `${vbatt.toFixed(1)}V`;
-                    
-                    // Percentage calculation
+                    const vbatt = headerDevice.vbatt_sense || 0;
                     const pct = calculateBatteryPercentage(vbatt);
+                    document.getElementById('headerVbatt').textContent = `${pct}%`;
                     const pctEl = document.getElementById('headerVbattPct');
-                    if (pctEl) pctEl.textContent = `(${pct}%)`;
-                    
-                    // Color coding for battery
+                    if (pctEl) pctEl.textContent = `${vbatt.toFixed(1)}V`;
                     battEl.style.color = vbatt < 3.6 ? 'var(--error)' : (vbatt < 3.8 ? 'var(--warning)' : 'var(--text-dim)');
+                    if (detailBattery) detailBattery.textContent = `${pct}% • ${vbatt.toFixed(1)}V`;
                     const battIcon = document.getElementById('headerBatteryIcon');
                     if (battIcon) {
                         battIcon.className = pct < 20 ? 'fas fa-battery-quarter' : (pct < 60 ? 'fas fa-battery-half' : 'fas fa-battery-full');
@@ -6351,34 +6667,47 @@ async function pollCloudHeartbeat() {
                     storageEl.style.display = 'flex';
                     
                     // SD Storage
-                    const sdFree = activeDevice.storage_sd_free || 0;
-                    const sdTotal = activeDevice.storage_sd_total || 0;
+                    const sdFree = headerDevice.storage_sd_free || 0;
+                    const sdTotal = headerDevice.storage_sd_total || 0;
                     const sdBar = document.getElementById('sdBarFill');
                     const sdText = document.getElementById('sdStorageText');
+                    const sdShort = document.getElementById('sdStorageShort');
                     
                     if (sdTotal > 0) {
                         const sdUsed = sdTotal - sdFree;
                         const sdPct = Math.round((sdUsed / sdTotal) * 100);
                         if (sdBar) sdBar.style.width = `${sdPct}%`;
                         if (sdText) sdText.textContent = `${(sdUsed/1024).toFixed(1)} / ${(sdTotal/1024).toFixed(1)} GB`;
+                        if (sdShort) sdShort.textContent = formatStorageCompact(sdFree, 'SD');
                         document.getElementById('sdStorageGroup').style.opacity = '1';
+                        if (detailSd) detailSd.textContent = formatStorageDetail(sdUsed, sdTotal, 'SD');
                     } else {
                         if (sdBar) sdBar.style.width = '0%';
                         if (sdText) sdText.textContent = 'No SD Card';
+                        if (sdShort) sdShort.textContent = 'SD --';
                         document.getElementById('sdStorageGroup').style.opacity = '0.5';
+                        if (detailSd) detailSd.textContent = 'No SD card detected';
                     }
 
                     // Internal Flash
-                    const fFree = activeDevice.storage_flash_free || 0; // KB
-                    const fTotal = activeDevice.storage_flash_total || 0; // KB
+                    const fFree = headerDevice.storage_flash_free || 0; // KB
+                    const fTotal = headerDevice.storage_flash_total || 0; // KB
                     const fBar = document.getElementById('flashBarFill');
                     const fText = document.getElementById('flashStorageText');
+                    const fShort = document.getElementById('flashStorageShort');
                     
                     if (fTotal > 0) {
                         const fUsed = fTotal - fFree;
                         const fPct = Math.round((fUsed / fTotal) * 100);
                         if (fBar) fBar.style.width = `${fPct}%`;
                         if (fText) fText.textContent = `${(fUsed/1024).toFixed(1)} / ${(fTotal/1024).toFixed(1)} MB`;
+                        if (fShort) fShort.textContent = formatStorageCompact(fFree, 'Flash');
+                        if (detailFlash) detailFlash.textContent = formatStorageDetail(fUsed, fTotal, 'Flash');
+                    } else {
+                        if (fBar) fBar.style.width = '0%';
+                        if (fText) fText.textContent = 'Flash --';
+                        if (fShort) fShort.textContent = 'Flash --';
+                        if (detailFlash) detailFlash.textContent = 'Flash details unavailable';
                     }
                 }
                 
@@ -6389,15 +6718,23 @@ async function pollCloudHeartbeat() {
                     if (track) {
                         trackEl.style.display = 'flex';
                         document.getElementById('headerTrackName').textContent = track.track_name;
+                        if (detailTrackWrap) detailTrackWrap.style.display = 'block';
+                        if (detailTrack) detailTrack.textContent = track.track_name;
                     } else {
                         trackEl.style.display = 'none';
+                        if (detailTrackWrap) detailTrackWrap.style.display = 'none';
                     }
                 } else if (trackEl) {
                     trackEl.style.display = 'none';
+                    if (detailTrackWrap) detailTrackWrap.style.display = 'none';
                 }
             } else {
                 if (battEl) battEl.style.display = 'none';
-                if (sdEl) sdEl.style.display = 'none';
+                if (storageEl) storageEl.style.display = 'none';
+                if (detailBattery) detailBattery.textContent = '--';
+                if (detailSd) detailSd.textContent = '--';
+                if (detailFlash) detailFlash.textContent = '--';
+                if (detailTrackWrap) detailTrackWrap.style.display = 'none';
             }
 
             // 3. Global Sync Progress
@@ -6850,18 +7187,27 @@ function updateLastSyncDisplay() {
 // ADMIN USER MANAGEMENT
 // ============================================================================
 
-let adminUsersData = [];
-let adminCurrentPage = 1;
-let adminPerPage = 50;
-
 async function loadAdminUsers(page = 1, query = '', tier = '', approval = '') {
     const searchInput = document.getElementById('adminSearchInput');
     const tierFilter = document.getElementById('adminTierFilter');
     const approvalFilter = document.getElementById('adminApprovalFilter');
 
+    if (searchInput && !searchInput.value && readUiState('ui:adminQuery', '')) {
+        searchInput.value = readUiState('ui:adminQuery', '');
+    }
+    if (tierFilter && !tierFilter.value && readUiState('ui:adminTier', '')) {
+        tierFilter.value = readUiState('ui:adminTier', '');
+    }
+    if (approvalFilter && !approvalFilter.value && readUiState('ui:adminApproval', '')) {
+        approvalFilter.value = readUiState('ui:adminApproval', '');
+    }
+
     query = query || (searchInput ? searchInput.value : '');
     tier = tier || (tierFilter ? tierFilter.value : '');
     approval = approval || (approvalFilter ? approvalFilter.value : '');
+    saveUiState('ui:adminQuery', query);
+    saveUiState('ui:adminTier', tier);
+    saveUiState('ui:adminApproval', approval);
 
     try {
         let url = `/api/admin/users?page=${page}&per_page=${adminPerPage}`;
@@ -6899,6 +7245,7 @@ function renderAdminStats(data) {
 
 function renderAdminUsersTable(data) {
     const tbody = document.getElementById('adminUsersBody');
+    const cards = document.getElementById('adminUsersCards');
     if (!tbody) return;
 
     if (data.users.length === 0) {
@@ -6910,10 +7257,17 @@ function renderAdminUsersTable(data) {
                 </td>
             </tr>
         `;
+        if (cards) {
+            cards.innerHTML = renderEmptyState(
+                '👤',
+                'No matching users',
+                'Adjust your search or filters and try again.'
+            );
+        }
         return;
     }
 
-    tbody.innerHTML = data.users.map(user => {
+    const rowsHtml = data.users.map(user => {
         const joinDate = user.created_at
             ? new Date(user.created_at).toLocaleDateString()
             : 'N/A';
@@ -6958,7 +7312,7 @@ function renderAdminUsersTable(data) {
                             <option value="pro" ${user.subscription_tier === 'pro' ? 'selected' : ''}>Pro</option>
                             <option value="team" ${user.subscription_tier === 'team' ? 'selected' : ''}>Team</option>
                         </select>
-                        ${(currentUser.id === 1 && user.id !== 1) ? `
+                        ${(currentUser && currentUser.id === 1 && user.id !== 1) ? `
                             <button class="btn-icon" onclick="adminToggleAdmin(${user.id}, ${!user.is_admin})" title="${user.is_admin ? 'Revoke Admin' : 'Grant Admin'}">
                                 <i class="fas ${user.is_admin ? 'fa-user-minus' : 'fa-user-shield'}"></i>
                             </button>
@@ -6968,6 +7322,48 @@ function renderAdminUsersTable(data) {
             </tr>
         `;
     }).join('');
+
+    tbody.innerHTML = rowsHtml;
+
+    if (cards) {
+        cards.innerHTML = data.users.map(user => {
+            const joinDate = user.created_at
+                ? new Date(user.created_at).toLocaleDateString()
+                : 'N/A';
+
+            const approvalBadge = user.is_approved
+                ? '<span class="badge success compact-badge">Approved</span>'
+                : '<span class="badge warning compact-badge">Pending</span>';
+
+            return `
+                <div class="admin-user-card">
+                    <div class="card-head-inline">
+                        <div>
+                            <div class="admin-user-name">${user.name || 'Unnamed Rider'}</div>
+                            <div class="admin-user-email">${user.email}</div>
+                        </div>
+                        ${approvalBadge}
+                    </div>
+                    <div class="admin-user-meta">
+                        <span><strong>ID:</strong> #${user.id}</span>
+                        <span><strong>Tier:</strong> ${user.subscription_tier}</span>
+                        <span><strong>Sessions:</strong> ${user.session_count || 0}</span>
+                        <span><strong>Joined:</strong> ${joinDate}</span>
+                    </div>
+                    <div class="admin-actions">
+                        <select onchange="adminSetUserTier(${user.id}, this.value)" class="filter-select admin-tier-select">
+                            <option value="free" ${user.subscription_tier === 'free' ? 'selected' : ''}>Free</option>
+                            <option value="pro" ${user.subscription_tier === 'pro' ? 'selected' : ''}>Pro</option>
+                            <option value="team" ${user.subscription_tier === 'team' ? 'selected' : ''}>Team</option>
+                        </select>
+                        ${!user.is_approved
+                            ? `<button class="btn btn-sm" onclick="adminApproveUser(${user.id}, true)" style="background: var(--success); color: #000;"><i class="fas fa-check"></i> Approve</button>`
+                            : `<button class="btn btn-sm secondary" onclick="adminApproveUser(${user.id}, false)"><i class="fas fa-ban"></i> Revoke</button>`}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
 }
 
 function renderAdminPagination(data) {
