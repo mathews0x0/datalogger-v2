@@ -190,6 +190,7 @@ class DeviceToken(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     device_name = db.Column(db.String(100), default='RS-Core')
     revoked = db.Column(db.Boolean, default=False)
+    revoked_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=True)  # Optional expiration
     last_sync = db.Column(db.DateTime, nullable=True)
@@ -220,6 +221,7 @@ class DeviceToken(db.Model):
             "token": self.token,
             "device_name": self.device_name,
             "revoked": self.revoked,
+            "revoked_at": self.revoked_at.isoformat() + 'Z' if self.revoked_at else None,
             "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
             "last_sync": self.last_sync.isoformat() + 'Z' if self.last_sync else None,
             "expires_at": self.expires_at.isoformat() + 'Z' if self.expires_at else None,
@@ -266,4 +268,3 @@ class Job(db.Model):
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "error": self.error
         }
-

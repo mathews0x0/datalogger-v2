@@ -11,6 +11,20 @@ import json
 
 devices_bp = Blueprint('devices', __name__)
 
+
+def _prune_revoked_tokens(user_id, keep=3):
+    """Keep only the most recently revoked device tokens for a user."""
+    revoked_tokens = (
+        DeviceToken.query
+        .filter_by(user_id=user_id, revoked=True)
+        .order_by(DeviceToken.revoked_at.desc(), DeviceToken.id.desc())
+        .all()
+    )
+    stale_tokens = revoked_tokens[keep:]
+    for stale_token in stale_tokens:
+        db.session.delete(stale_token)
+    return len(stale_tokens)
+
 @devices_bp.route('/api/devices/token', methods=['POST'])
 @jwt_required()
 def create_device_token():
@@ -31,6 +45,8 @@ def create_device_token():
 def list_device_tokens():
     """List all device tokens for the current user with live status"""
     user_id = get_jwt_identity()
+    _prune_revoked_tokens(user_id)
+    db.session.commit()
     tokens = DeviceToken.query.filter_by(user_id=user_id).order_by(DeviceToken.created_at.desc()).all()
     # to_dict now includes sync_filename, sync_chunk, sync_total, etc.
     return jsonify([t.to_dict() for t in tokens])
@@ -56,6 +72,8 @@ def revoke_device_token(token_id):
     if not dt:
         return jsonify({"error": "Token not found"}), 404
     dt.revoked = True
+    dt.revoked_at = datetime.utcnow()
+    _prune_revoked_tokens(user_id)
     db.session.commit()
     return jsonify({"success": True})
 
@@ -444,4 +462,3 @@ def device_update_ota():
     print(f"[OTA] Result: {result}")
     
     return jsonify(result)
-

@@ -16,7 +16,7 @@
 
 <body>
   <!-- Header -->
-  <header class="header" id="appHeader">
+  <header class="header" id="appHeader" data-stable-height="128">
     <div class="app-header-main">
       <div class="app-brand-row">
         <div class="app-brand-topbar">
@@ -540,6 +540,10 @@
                 class="info-tooltip-text">Files uploaded directly from your RS-Core will appear here. You can also
                 upload CSV files manually.</span></span></h2>
           <div class="view-actions">
+            <div id="processQueueCount" class="process-queue-pill" style="display: none;">
+              <span class="process-queue-pill-label">Processing now</span>
+              <strong id="processQueueCountValue">0</strong>
+            </div>
             <label class="archive-toggle-label">
               <span>Archives</span>
               <div class="toggle-switch">
@@ -547,25 +551,18 @@
                 <span class="toggle-slider"></span>
               </div>
             </label>
+            <button class="btn btn-secondary btn-sm" onclick="triggerFileUpload()"
+              title="Upload CSV files manually">
+              <i class="fas fa-file-upload"></i> Upload CSV
+            </button>
             <button class="btn btn-primary btn-sm" onclick="loadLearningFiles()"
               title="Check for newly uploaded files from your RS-Core">
               <i class="fas fa-sync-alt"></i> Refresh
             </button>
           </div>
         </div>
-        <div class="manual-upload-card">
-          <div class="manual-upload-card-copy">
-            <div class="manual-upload-card-title"><i class="fas fa-file-csv"></i> Manual CSV Import</div>
-            <p>Use this only for backfilling or support cases. Your normal ride flow should come from RS-Core auto-sync.</p>
-          </div>
-          <button class="btn btn-secondary btn-sm manual-upload-btn" onclick="triggerFileUpload()"
-            title="Upload CSV files manually">
-            <i class="fas fa-file-upload"></i> Choose CSV Files
-          </button>
-          <input type="file" id="manualCsvUpload" style="display: none;" multiple accept=".csv"
-            onchange="handleManualUpload(event)">
-        </div>
-        <div id="processSummary" class="process-summary-card" style="display: none;"></div>
+        <input type="file" id="manualCsvUpload" style="display: none;" multiple accept=".csv"
+          onchange="handleManualUpload(event)">
         <div id="learningFilesList" class="files-list">
           <div class="loading">Loading files...</div>
         </div>
@@ -583,113 +580,81 @@
       <div class="view" id="settingsView">
         <h2>Device Settings <span class="info-tooltip" tabindex="0"><i class="fas fa-info-circle"
               style="font-size: 0.75rem; color: var(--text-muted); cursor: help;"></i><span
-              class="info-tooltip-text">Manage your RS-Core connection, check firmware versions, and generate device
+              class="info-tooltip-text">Manage RS-Core setup, track cloud heartbeat status, and generate device
               tokens for new units.</span></span></h2>
-
-        <div id="deviceSetupChecklist" class="device-setup-checklist card">
-          <h3><i class="fas fa-list-check"></i> Quick Setup Checklist</h3>
-          <div class="checklist-items">
-            <div class="checklist-item" id="checklistHeartbeat">
-              <span class="checklist-dot"></span>
-              <div>
-                <strong>Device seen by cloud</strong>
-                <span>Heartbeat confirms your RS-Core has checked in.</span>
-              </div>
-            </div>
-            <div class="checklist-item" id="checklistToken">
-              <span class="checklist-dot"></span>
-              <div>
-                <strong>Device token created</strong>
-                <span>Create a token and paste it into the captive portal during setup.</span>
-              </div>
-            </div>
-            <div class="checklist-item" id="checklistSync">
-              <span class="checklist-dot"></span>
-              <div>
-                <strong>Sync path ready</strong>
-                <span>Once connected to known WiFi, your RS-Core can auto-upload sessions.</span>
-              </div>
-            </div>
-          </div>
-        </div>
 
         <div class="settings-grid">
           <!-- DEVICE STATUS -->
           <div class="card" style="border-left: 4px solid #9C27B0">
             <h3><i class="fas fa-satellite-dish"></i> Device Status</h3>
-            <p class="help-text">Your RS-Core auto-uploads sessions when it connects to your WiFi network.</p>
 
             <div
               style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-secondary); padding: 0.75rem; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 1rem;">
               <div style="display: flex; align-items: center; gap: 1rem;">
                 <div id="deviceStatusDot" class="status-dot" style="background: var(--error);"></div>
                 <div style="display: flex; flex-direction: column;">
-                  <span id="deviceStatusText" style="font-weight: 600;">Searching...</span>
-                  <span id="deviceStatusIP"
-                    style="font-size: 0.8rem; color: var(--text-muted); font-family: monospace;">---</span>
+                  <span id="deviceStatusText" style="font-weight: 600;">Waiting for heartbeat...</span>
+                  <span id="deviceStatusDetail"
+                    style="font-size: 0.8rem; color: var(--text-muted);">No RS-Core has checked in yet.</span>
                 </div>
               </div>
-              <button class="btn btn-primary btn-sm" onclick="scanForDevice()" id="scanBtn">
-                <i class="fas fa-search"></i> Scan
-              </button>
             </div>
-
-            <!-- Hidden input for logic compatibility -->
-            <input type="text" id="devConfigIP" style="display: none;"
-              onchange="localStorage.setItem('lastDeviceIP', this.value)" />
 
             <div id="lastSyncInfo" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
-              <i class="fas fa-clock"></i> Last sync: <span id="lastSyncTime">Never</span>
+              <i class="fas fa-clock"></i> Last heartbeat: <span id="lastSyncTime">Never</span>
             </div>
 
-            <p class="help-text"
-              style="font-size: 0.75rem; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.05);">
-              <i class="fas fa-info-circle"></i> <strong>First-time setup:</strong> Connect your phone to your device's
-              WiFi (RS-Core-XXXX, password: racesense), then enter your WiFi credentials and device token in the captive
-              portal.
-            </p>
+            <div
+              style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0.75rem; margin-top: 1rem;">
+              <div style="padding: 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Battery</div>
+                <strong id="deviceStatusBattery" style="display: block; margin-top: 0.25rem;">--</strong>
+              </div>
+              <div style="padding: 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">SD Card</div>
+                <strong id="deviceStatusSd" style="display: block; margin-top: 0.25rem;">--</strong>
+              </div>
+              <div style="padding: 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Flash</div>
+                <strong id="deviceStatusFlash" style="display: block; margin-top: 0.25rem;">--</strong>
+              </div>
+              <div style="padding: 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Active Track</div>
+                <strong id="deviceStatusTrack" style="display: block; margin-top: 0.25rem;">--</strong>
+              </div>
+              <div style="padding: 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Device UID</div>
+                <strong id="deviceStatusUid" style="display: block; margin-top: 0.25rem; font-family: monospace; font-size: 0.8rem;">--</strong>
+              </div>
+              <div style="padding: 0.85rem; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,0.03);">
+                <div style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase;">Sync State</div>
+                <strong id="deviceStatusSync" style="display: block; margin-top: 0.25rem;">Idle</strong>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 1rem; padding-top: 0.85rem; border-top: 1px solid rgba(255,255,255,0.05);">
+              <button class="btn secondary btn-sm" id="deviceStatusSetupTutorialBtn" type="button" onclick="openPairingTutorial(false)">
+                <i class="fas fa-compass"></i> Setup Tutorial
+              </button>
+              <button class="btn secondary btn-sm" id="deviceStatusLedTutorialBtn" type="button" onclick="openLedTutorial(false)">
+                <i class="fas fa-lightbulb"></i> LED Tutorial
+              </button>
+            </div>
           </div>
 
-          <!-- ESP32 FIRMWARE -->
-          <div class="card" style="border-left: 4px solid var(--success)">
-            <h3><i class="fas fa-microchip"></i> Firmware Updates</h3>
-            <p class="help-text">Check and update your RS-Core firmware over WiFi</p>
-
-            <div id="espFirmwareStatus" class="input-group"
-              style="padding: 1rem; background: rgba(255,255,255,0.03); border-radius: 8px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
-                <span style="font-size: 0.9rem; color: var(--text-muted);">Current Version</span>
-                <strong id="espCurrentVersion" style="font-family: monospace;">Checking...</strong>
+          <div class="settings-hints-stack">
+            <div class="card settings-hint-card settings-hint-card-setup" id="setupTutorialCard" role="button" tabindex="0" onclick="openPairingTutorial(false)">
+              <div class="settings-hint-head">
+                <h3><i class="fas fa-compass"></i> How To Setup</h3>
               </div>
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-                <span style="font-size: 0.9rem; color: var(--text-muted);">Server Version</span>
-                <strong id="espServerVersion" style="font-family: monospace;">---</strong>
-              </div>
-
-              <button class="btn btn-secondary btn-sm" onclick="checkEspVersionManual()" style="width: 100%;">
-                <i class="fas fa-sync"></i> Refresh Version Status
-              </button>
+              <p class="settings-hint-copy">Pairing, network choice, magic link, and re-setup.</p>
             </div>
 
-            <div id="espUpdateArea"
-              style="display: none; border-top: 1px solid var(--border); padding-top: 1rem; margin-top: 1rem;">
-              <div id="espUpdateWarning" style="color: var(--warning); font-size: 0.85rem; margin-bottom: 1rem;">
-                <i class="fas fa-exclamation-triangle"></i> Hardware version mismatch detected.
+            <div class="card settings-hint-card settings-hint-card-led" id="ledTutorialCard" role="button" tabindex="0" onclick="openLedTutorial(false)">
+              <div class="settings-hint-head">
+                <h3><i class="fas fa-lightbulb"></i> Understand LED Behaviours</h3>
               </div>
-
-              <button class="btn btn-primary" id="btnEspUpdate" onclick="flashLatestEspWifi()" style="width: 100%;">
-                <i class="fas fa-bolt"></i> Flash Latest (WiFi OTA)
-              </button>
-
-              <div id="espOtaProgress" style="display: none; margin-top: 1rem;">
-                <div style="height: 6px; background: #333; width: 100%; border-radius: 3px; overflow: hidden;">
-                  <div id="espOtaBar"
-                    style="height: 100%; background: var(--primary); width: 0%; transition: width 0.3s;"></div>
-                </div>
-                <div id="espOtaStatus"
-                  style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem; text-align: center;">Starting
-                  upload...</div>
-              </div>
+              <p class="settings-hint-copy">Boot, logging, sync, pairing, and warning colors.</p>
             </div>
           </div>
 
@@ -1108,46 +1073,29 @@
 
   <!-- Playback Modal -->
   <div class="modal" id="playbackModal">
-    <div class="modal-content" style="
-          max-width: 1200px;
-          width: 95%;
-          height: 90vh;
-          display: flex;
-          flex-direction: column;
-          background: #080808;
-          border: 1px solid rgba(255,255,255,0.1);
-        ">
+    <div class="modal-content playback-shell">
       <span class="modal-close" onclick="closePlaybackModal()">&times;</span>
 
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
-        <h3 style="margin: 0; color: var(--primary); display: flex; align-items: center; gap: 0.75rem;">
+      <div class="playback-header">
+        <h3 class="playback-title">
           <i class="fas fa-play-circle"></i> Telemetry Analysis
         </h3>
-        <div id="pbLapNumber"
-          style="font-weight: 700; color: var(--text-dim); background: rgba(255,255,255,0.05); padding: 4px 12px; border-radius: 20px; font-size: 0.8rem;">
+        <div id="pbLapNumber" class="playback-lap-chip">
           LAP -/-</div>
       </div>
 
       <!-- Top Controls -->
-      <div class="playback-controls" style="
-            display: flex;
-            gap: 1rem;
-            align-items: center;
-            margin-bottom: 1rem;
-          ">
-        <button class="btn" id="pbPlayPause" onclick="togglePlayback()"
-          style="width: 44px; height: 44px; padding: 0; border-radius: 50%;">
+      <div class="playback-controls playback-toolbar">
+        <button class="btn playback-play-btn" id="pbPlayPause" onclick="togglePlayback()">
           <i class="fas fa-play"></i>
         </button>
-        <span id="pbTime"
-          style="font-family: 'JetBrains Mono', monospace; font-size: 1.25rem; color: #fff; min-width: 100px;">00:00.00</span>
-        <input type="range" id="pbSeek" min="0" max="100" value="0" style="flex: 1; accent-color: var(--primary);"
+        <span id="pbTime" class="playback-time">00:00.00</span>
+        <input type="range" id="pbSeek" min="0" max="100" value="0" class="playback-seek"
           oninput="seekPlayback(this.value)" />
-        <select id="pbLapSelect" class="filter-select" onchange="jumpToLap(this.value)"
-          style="min-width: 160px; padding: 0.5rem;">
+        <select id="pbLapSelect" class="filter-select playback-lap-select" onchange="jumpToLap(this.value)">
           <option value="all">Session Overview</option>
         </select>
-        <button class="btn secondary" onclick="nextLapPlay()">
+        <button class="btn secondary playback-next-btn" onclick="nextLapPlay()">
           Next Lap <i class="fas fa-forward"></i>
         </button>
       </div>
@@ -1155,11 +1103,11 @@
       <!-- Dashboard Grid -->
       <div class="playback-grid">
         <!-- Map Container -->
-        <div class="glass playback-map-container">
+        <div class="glass playback-map-container playback-map-panel">
           <canvas id="pbTrackCanvas"></canvas>
 
           <!-- Map Layer Controls -->
-          <div class="map-controls">
+          <div class="map-controls playback-map-controls">
             <label><input type="radio" name="pbMapMode" value="speed" checked onchange="updateHeatmapMode()" />
               Speed</label>
             <label><input type="radio" name="pbMapMode" value="accel" onchange="updateHeatmapMode()" />
@@ -1169,127 +1117,127 @@
         </div>
 
         <!-- Widgets Column -->
-        <div style="
-              display: flex;
-              flex-direction: column;
-              gap: 1rem;
-              overflow-y: auto;
-              padding-right: 5px;
-            ">
+        <div class="playback-sidebar">
           <!-- LAP TIME + DELTA -->
-          <div class="card" style="padding: 1.25rem; border-left: 4px solid var(--primary);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+          <div class="card playback-card playback-hero-card">
+            <div class="playback-card-head">
               <div class="stat-label">Lap Time</div>
               <i class="fas fa-stopwatch" style="color: var(--primary);"></i>
             </div>
-            <div id="pbLapTime"
-              style="font-size: 2.5rem; font-weight: 800; font-family: 'JetBrains Mono', monospace; letter-spacing: -1px;">
+            <div id="pbLapTime" class="playback-hero-time">
               --:--.---</div>
 
             <!-- Delta Bar -->
-            <div id="pbDeltaBar"
-              style="height: 32px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-top: 1rem; position: relative; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);">
-              <div
-                style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.2); z-index: 1;">
+            <div id="pbDeltaBar" class="playback-delta-bar">
+              <div class="playback-delta-center">
               </div>
-              <div id="pbDeltaFill"
-                style="position: absolute; top: 0; bottom: 0; width: 0; left: 50%; background: var(--success); transition: all 0.1s ease;">
+              <div id="pbDeltaFill" class="playback-delta-fill">
               </div>
-              <span id="pbDeltaText"
-                style="position: absolute; width: 100%; text-align: center; line-height: 32px; font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; z-index: 2; text-shadow: 0 1px 4px rgba(0,0,0,0.5);">+0.000s</span>
+              <span id="pbDeltaText" class="playback-delta-text">+0.000s</span>
             </div>
           </div>
 
           <!-- SECTOR TIMES -->
-          <div class="card" style="padding: 1rem;">
-            <div style="display: flex; justify-content: space-between; gap: 0.5rem;">
-              <div id="pbS1" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
-                <div class="stat-label" style="font-size: 0.6rem;">SEC 1</div>
-                <div id="pbS1Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">
+          <div class="card playback-card playback-sectors-card">
+            <div class="playback-card-head">
+              <div class="stat-label">Sectors</div>
+            </div>
+            <div class="playback-sector-grid">
+              <div id="pbS1" class="sector-box playback-sector-box">
+                <div class="stat-label playback-sector-label">SEC 1</div>
+                <div id="pbS1Time" class="playback-sector-time">
                   --.-</div>
               </div>
-              <div id="pbS2" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
-                <div class="stat-label" style="font-size: 0.6rem;">SEC 2</div>
-                <div id="pbS2Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">
+              <div id="pbS2" class="sector-box playback-sector-box">
+                <div class="stat-label playback-sector-label">SEC 2</div>
+                <div id="pbS2Time" class="playback-sector-time">
                   --.-</div>
               </div>
-              <div id="pbS3" class="sector-box" style="flex: 1; text-align: center; padding: 0.75rem 0.25rem;">
-                <div class="stat-label" style="font-size: 0.6rem;">SEC 3</div>
-                <div id="pbS3Time" style="font-weight: 700; font-family: 'JetBrains Mono', monospace; font-size: 1rem;">
+              <div id="pbS3" class="sector-box playback-sector-box">
+                <div class="stat-label playback-sector-label">SEC 3</div>
+                <div id="pbS3Time" class="playback-sector-time">
                   --.-</div>
               </div>
             </div>
           </div>
 
-          <!-- Speed -->
-          <div class="card" style="padding: 1.25rem;">
-            <div class="stat-label">Current Speed</div>
-            <div style="display: flex; align-items: baseline; gap: 0.5rem; margin: 0.25rem 0;">
-              <span id="pbSpeed"
-                style="font-size: 2.5rem; font-weight: 800; color: var(--primary); font-family: 'JetBrains Mono', monospace;">0</span>
-              <span style="font-size: 0.9rem; color: var(--text-dim); font-weight: 600;">KM/H</span>
-            </div>
-            <div style="height: 4px; background: rgba(255,255,255,0.05); border-radius: 2px; overflow: hidden;">
-              <div id="pbSpeedBar"
-                style="height: 100%; width: 0%; background: var(--primary); box-shadow: 0 0 10px var(--primary-glow);">
+          <div class="playback-metrics-grid">
+            <!-- Speed -->
+            <div class="card playback-card playback-metric-card">
+              <div class="stat-label">Current Speed</div>
+              <div class="playback-metric-value-row">
+                <span id="pbSpeed" class="playback-metric-value playback-speed-value">0</span>
+                <span class="playback-metric-unit">KM/H</span>
               </div>
-            </div>
-          </div>
-
-          <!-- Lean Angle -->
-          <div class="card" style="padding: 1.25rem;">
-            <div class="stat-label">Lean Angle</div>
-            <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
-              <div
-                style="position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
-                <div style="position: absolute; width: 100%; height: 1px; background: rgba(255,255,255,0.1);"></div>
-                <div id="pbLeanBike"
-                  style="width: 3px; height: 40px; background: var(--primary); border-radius: 4px; transform-origin: center; transition: transform 0.05s linear; box-shadow: 0 0 15px var(--primary-glow);">
+              <div class="playback-meter-track">
+                <div id="pbSpeedBar" class="playback-meter-fill playback-speed-fill">
                 </div>
               </div>
-              <div style="font-size: 2rem; font-weight: 800; font-family: 'JetBrains Mono', monospace;"><span
-                  id="pbLean">0</span>°</div>
+            </div>
+
+            <!-- Lean Angle -->
+            <div class="card playback-card playback-metric-card">
+              <div class="stat-label">Lean Angle</div>
+              <div class="playback-lean-layout">
+                <div class="playback-lean-gauge">
+                  <div class="playback-lean-horizon"></div>
+                  <div id="pbLeanBike" class="playback-lean-bike">
+                  </div>
+                </div>
+                <div class="playback-lean-value"><span id="pbLean">0</span></div>
+              </div>
             </div>
           </div>
 
           <!-- G-Force -->
-          <div class="card" style="padding: 1.25rem;">
-            <div class="stat-label">Acceleration G's</div>
-            <div style="display: flex; align-items: center; justify-content: center; gap: 1.5rem; margin-top: 1rem;">
-              <div
-                style="position: relative; width: 80px; height: 80px; border: 1px solid rgba(255,255,255,0.1); border-radius: 50%; background: radial-gradient(circle, rgba(255,255,255,0.02) 0%, transparent 100%);">
-                <div
-                  style="position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.05);">
+          <div class="card playback-card playback-gforce-card">
+            <div class="playback-card-head">
+              <div class="stat-label">Acceleration G's</div>
+            </div>
+            <div class="playback-gforce-layout">
+              <div class="playback-gforce-dial">
+                <div class="playback-gforce-v-axis">
                 </div>
-                <div
-                  style="position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: rgba(255,255,255,0.05);">
+                <div class="playback-gforce-h-axis">
                 </div>
-                <div id="pbGDot"
-                  style="position: absolute; top: 50%; left: 50%; width: 8px; height: 8px; background: var(--error); border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 10px var(--error);">
+                <div id="pbGDot" class="playback-gforce-dot">
                 </div>
               </div>
-              <div style="font-family: 'JetBrains Mono', monospace; font-size: 0.8rem; color: var(--text-dim);">
-                <div style="margin-bottom: 4px;">LAT <span id="pbGY" style="color: #fff; font-weight: 700;">0.0</span>G
+              <div class="playback-gforce-stats">
+                <div>LAT <span id="pbGY" class="playback-gforce-number">0.0</span>G
                 </div>
-                <div>LON <span id="pbGX" style="color: #fff; font-weight: 700;">0.0</span>G</div>
+                <div>LON <span id="pbGX" class="playback-gforce-number">0.0</span>G</div>
               </div>
             </div>
           </div>
 
           <!-- SESSION ANNOTATIONS -->
-          <div class="card"
-            style="padding: 1.25rem; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <div class="card playback-card playback-notes-card">
+            <div class="playback-card-head">
               <div class="stat-label">Coach Notes</div>
               <button class="btn btn-primary btn-sm" onclick="showAddAnnotationModal()" title="Add Note">
                 <i class="fas fa-plus"></i>
               </button>
             </div>
-            <div id="pbAnnotationsList" style="flex: 1; overflow-y: auto; font-size: 0.85rem;">
+            <div id="pbAnnotationsList" class="playback-notes-list">
               <div class="empty-state" style="padding: 1rem 0;">
                 <p style="font-size: 0.75rem; color: var(--text-muted);">No notes for this session</p>
               </div>
             </div>
+          </div>
+        </div>
+
+        <div class="playback-mobile-dock">
+          <div class="card playback-card playback-metric-card">
+            <div class="stat-label">Current Speed</div>
+            <div class="playback-metric-value-row">
+              <span id="pbSpeedDock" class="playback-metric-value playback-speed-value">0</span>
+              <span class="playback-metric-unit">KM/H</span>
+            </div>
+          </div>
+          <div class="card playback-card playback-metric-card">
+            <div class="stat-label">Lean Angle</div>
+            <div class="playback-lean-value playback-lean-dock"><span id="pbLeanDock">0</span></div>
           </div>
         </div>
       </div>
@@ -1534,7 +1482,7 @@
         <i class="fas fa-magic"></i> Auto-Setup Device
       </h3>
       <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1.5rem;">
-        Provision your RS-Core via your phone's hotspot in 30 seconds.
+        Provision your RS-Core via the captive portal using your phone's hotspot in 30 seconds.
       </p>
 
       <!-- Step 1: Prep -->
@@ -1566,7 +1514,7 @@
           <div style="font-size: 2rem; margin-bottom: 1rem;">📱 &harr; 🏎️</div>
           <p style="font-weight: 700; margin-bottom: 0.5rem;">SWITCH NOW</p>
           <p style="font-size: 0.85rem; color: var(--text-muted);">
-            Open your phone's <strong>WiFi Settings</strong> and join the network named:<br>
+            Open your phone's <strong>WiFi Settings</strong> and join the open network named:<br>
             <span style="color: var(--primary); font-family: monospace; font-size: 1rem;">RS-Core-XXXX</span>
           </p>
         </div>
@@ -1583,6 +1531,267 @@
         <button class="btn-link" onclick="resetProvisioningUI()" style="color: var(--text-muted); font-size: 0.75rem;">
           ← Go Back / Change Settings
         </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="pairingTutorialModal">
+    <div class="modal-content pairing-tutorial-shell">
+      <span class="modal-close" onclick="closePairingTutorial()">&times;</span>
+      <div class="pairing-tutorial-head">
+        <div>
+          <div class="pairing-tutorial-kicker">Quick Tutorial</div>
+          <h3>How To Pair Your RS-Core</h3>
+          <p>Four short cards to get your device paired, syncing, and easy to reconfigure later.</p>
+        </div>
+        <div class="pairing-tutorial-progress">
+          <span class="pairing-progress-dot active" data-pairing-dot="0"></span>
+          <span class="pairing-progress-dot" data-pairing-dot="1"></span>
+          <span class="pairing-progress-dot" data-pairing-dot="2"></span>
+          <span class="pairing-progress-dot" data-pairing-dot="3"></span>
+        </div>
+      </div>
+
+      <div class="pairing-tutorial-track" id="pairingTutorialTrack">
+        <section class="pairing-slide is-active">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-box-open"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 1</div>
+              <h4>What Happens On First Setup</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid">
+            <article class="pairing-info-card">
+              <strong>1. Boot Into Pairing</strong>
+              <p>If the device has no saved WiFi, it enters pairing mode automatically. Otherwise, hold the sync button to enter sync mode, then long-press to start pairing.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>2. Join RS-Core WiFi</strong>
+              <p>The device creates an open network named <code>RS-Core-XXXX</code>. Join it and your phone should land in the captive portal.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>3. Save Credentials</strong>
+              <p>Enter a device token plus the WiFi or hotspot credentials you want the device to use later for syncing.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="pairing-slide">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-wifi"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 2</div>
+              <h4>Where Will You Sync?</h4>
+            </div>
+          </div>
+          <p class="pairing-slide-copy">Choose the network style you plan to use most often. You can change it later any time.</p>
+          <div class="pairing-choice-grid">
+            <button class="pairing-choice-card is-selected" id="pairingModeHotspot" onclick="selectPairingMode('hotspot')">
+              <span class="pairing-choice-badge">Recommended for trackdays</span>
+              <strong>Phone Hotspot</strong>
+              <p>You control the network, so the device can sync anywhere you ride.</p>
+              <div class="pairing-choice-note">Tradeoff: you need to turn your hotspot on when you want uploads.</div>
+            </button>
+            <button class="pairing-choice-card" id="pairingModeWifi" onclick="selectPairingMode('wifi')">
+              <span class="pairing-choice-badge pairing-choice-badge-alt">Best for fixed locations</span>
+              <strong>Track / Home WiFi</strong>
+              <p>Great when you return to the same paddock, garage, or workshop network.</p>
+              <div class="pairing-choice-note">Tradeoff: once you leave that WiFi range, syncing stops until you pair a new network.</div>
+            </button>
+          </div>
+          <div class="pairing-choice-summary" id="pairingModeSummary">
+            <div class="pairing-summary-head">Phone hotspot keeps things portable.</div>
+            <div class="pairing-summary-body">Use this if you travel often, want the same setup everywhere, and don’t mind enabling hotspot only when you want sessions uploaded.</div>
+          </div>
+        </section>
+
+        <section class="pairing-slide">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-magic"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 3</div>
+              <h4>Use The Magic Link</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid pairing-slide-grid-tight">
+            <article class="pairing-info-card pairing-info-card-highlight">
+              <strong>Generate a token first</strong>
+              <p>Create one token per physical RS-Core in Device Settings. That token identifies which account should receive uploads.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Open Auto-Setup Device</strong>
+              <p>Enter the hotspot or WiFi name you chose, plus its password. The app builds a setup link that opens the captive portal with those details prefilled.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Tap the sync link while on RS-Core WiFi</strong>
+              <p>The magic link fills the captive portal automatically, writes the config, then the device reboots and later syncs through the saved network.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="pairing-slide">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-repeat"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 4</div>
+              <h4>How To Re-Setup Later</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid pairing-slide-grid-tight">
+            <article class="pairing-info-card">
+              <strong>How to re-enter pairing with saved WiFi</strong>
+              <p>Power on the device, press the sync button during the boot decision window to enter sync mode, then long-press the same button for about 3 seconds to start pairing mode and bring back <code>RS-Core-XXXX</code>.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Switching to another hotspot or WiFi</strong>
+              <p>Once pairing mode is back, join <code>RS-Core-XXXX</code> again and run Auto-Setup with the new SSID and password. This overwrites the saved sync network on the device.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Do you need a new token?</strong>
+              <p>Usually no. Reusing the same magic link token is fine when the same device stays connected to the same account. Create a new token only if the old one was revoked or you want a different device/account mapping.</p>
+            </article>
+          </div>
+          <div class="pairing-tutorial-footer-note">
+            Device behavior reminder: logging happens with radios off, then sync happens later when you intentionally bring the device into sync mode and back into a saved network.
+          </div>
+        </section>
+      </div>
+
+      <div class="pairing-tutorial-actions">
+        <button class="btn secondary" id="pairingTutorialPrev" onclick="stepPairingTutorial(-1)">Previous</button>
+        <div class="pairing-tutorial-actions-right">
+          <button class="btn secondary pairing-tutorial-close-action" onclick="closePairingTutorial()">Close</button>
+          <button class="btn btn-primary" id="pairingTutorialNext" onclick="stepPairingTutorial(1)">Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="ledTutorialModal">
+    <div class="modal-content pairing-tutorial-shell">
+      <span class="modal-close" onclick="closeLedTutorial()">&times;</span>
+      <div class="pairing-tutorial-head">
+        <div>
+          <div class="pairing-tutorial-kicker">Quick Tutorial</div>
+          <h3>Understand RS-Core LED Behaviours</h3>
+          <p>Use these four cards to tell normal behavior from setup prompts or real hardware issues.</p>
+        </div>
+        <div class="pairing-tutorial-progress">
+          <span class="pairing-progress-dot active" data-led-dot="0"></span>
+          <span class="pairing-progress-dot" data-led-dot="1"></span>
+          <span class="pairing-progress-dot" data-led-dot="2"></span>
+          <span class="pairing-progress-dot" data-led-dot="3"></span>
+        </div>
+      </div>
+
+      <div class="pairing-tutorial-track" id="ledTutorialTrack">
+        <section class="pairing-slide is-active">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-power-off"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 1</div>
+              <h4>Boot And Decision Window</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid pairing-slide-grid-tight">
+            <article class="pairing-info-card">
+              <strong>Blue pulses</strong>
+              <p>Normal boot confirmation. The device has powered up and is stepping through initialization.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Fast green blink</strong>
+              <p>Good news: SD, IMU, and GPS all look healthy. If you do nothing, the device will continue toward logging mode.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Fast red blink or solid red</strong>
+              <p>Fast red usually means SD or IMU trouble. Solid red means GPS is not healthy yet, so the device waits here until GPS recovers or you press sync.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="pairing-slide">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-flag-checkered"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 2</div>
+              <h4>Logging And Track Feedback</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid pairing-slide-grid-tight">
+            <article class="pairing-info-card">
+              <strong>Yellow pulse</strong>
+              <p>The device is searching for a valid GPS fix before it can log properly.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Solid green or lights off</strong>
+              <p>Solid green means normal logging. If the lights go mostly dark while riding, that can also be normal stealth track mode after track detection.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Track and sector flashes</strong>
+              <p>White means track found. Green, orange, and red flashes give sector feedback against your best sector data.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="pairing-slide">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-cloud-upload-alt"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 3</div>
+              <h4>Sync And Pairing Colors</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid pairing-slide-grid-tight">
+            <article class="pairing-info-card">
+              <strong>Purple</strong>
+              <p>Purple indicates sync-mode WiFi work. It may be searching for your saved network or confirming that WiFi was found.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Green flashing or fading</strong>
+              <p>Fast green flashing means uploads are happening. A calmer green afterward usually means heartbeat or sync succeeded.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>Blue breathing or rainbow</strong>
+              <p>Blue breathing means pairing mode is live. Rainbow means setup is needed, usually because there is no saved WiFi yet.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="pairing-slide">
+          <div class="pairing-slide-hero">
+            <div class="pairing-slide-icon"><i class="fas fa-tools"></i></div>
+            <div>
+              <div class="pairing-slide-step">Slide 4</div>
+              <h4>What Should You Do?</h4>
+            </div>
+          </div>
+          <div class="pairing-slide-grid pairing-slide-grid-tight">
+            <article class="pairing-info-card">
+              <strong>If you see solid red</strong>
+              <p>Give the GPS a better sky view, wait for recovery, or press sync if your goal is to pair or upload instead of ride immediately.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>If you see blue breathing</strong>
+              <p>Join <code>RS-Core-XXXX</code> on your phone and continue with the captive portal or magic-link setup flow.</p>
+            </article>
+            <article class="pairing-info-card">
+              <strong>If you are unsure</strong>
+              <p>Open Device Settings, check heartbeat status, and use the setup tutorial again. Most “strange” LED behavior is actually expected state feedback, not failure.</p>
+            </article>
+          </div>
+          <div class="pairing-tutorial-footer-note">
+            The LEDs are state-driven. Different colors in boot, logging, sync, and pairing are intentional and help you tell whether the device is ready, waiting, uploading, or needs attention.
+          </div>
+        </section>
+      </div>
+
+      <div class="pairing-tutorial-actions">
+        <button class="btn secondary" id="ledTutorialPrev" onclick="stepLedTutorial(-1)">Previous</button>
+        <div class="pairing-tutorial-actions-right">
+          <button class="btn secondary pairing-tutorial-close-action" onclick="closeLedTutorial()">Close</button>
+          <button class="btn btn-primary" id="ledTutorialNext" onclick="stepLedTutorial(1)">Next</button>
+        </div>
       </div>
     </div>
   </div>

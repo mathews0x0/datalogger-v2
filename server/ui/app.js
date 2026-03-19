@@ -43,6 +43,12 @@ let deviceTokensCache = [];
 let hasRestoredInitialView = false;
 let processUploadSummary = null;
 let isHeaderDeviceDetailsOpen = false;
+let playbackResizeHandler = null;
+let pairingTutorialCurrentSlide = 0;
+let pairingTutorialMode = 'hotspot';
+let ledTutorialCurrentSlide = 0;
+let onboardingTutorialFlow = false;
+let headerMetricsObserver = null;
 
 function saveUiState(key, value) {
     if (value === undefined || value === null || value === '') {
@@ -65,8 +71,15 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('Datalogger Companion App loaded');
 
     updateResponsiveChromeMetrics();
+    const header = document.getElementById('appHeader');
+    if (header && 'ResizeObserver' in window) {
+        headerMetricsObserver?.disconnect?.();
+        headerMetricsObserver = new ResizeObserver(() => updateResponsiveChromeMetrics());
+        headerMetricsObserver.observe(header);
+    }
     window.addEventListener('resize', updateResponsiveChromeMetrics);
     initUiAccessibility();
+    bindTutorialTriggers();
 
     // Start cloud heartbeat polling
     pollCloudHeartbeat();
@@ -136,6 +149,39 @@ function initUiAccessibility() {
     });
 }
 
+function bindTutorialTriggers() {
+    const tutorialTriggers = [
+        { id: 'deviceStatusSetupTutorialBtn', action: () => openPairingTutorial(false) },
+        { id: 'deviceStatusLedTutorialBtn', action: () => openLedTutorial(false) },
+        { id: 'setupTutorialCard', action: () => openPairingTutorial(false) },
+        { id: 'ledTutorialCard', action: () => openLedTutorial(false) }
+    ];
+
+    tutorialTriggers.forEach(({ id, action }) => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.boundTutorialTrigger === 'true') return;
+
+        el.addEventListener('click', (event) => {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            action();
+        });
+
+        if (el.getAttribute('role') === 'button') {
+            el.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    action();
+                }
+            });
+        }
+
+        el.dataset.boundTutorialTrigger = 'true';
+    });
+}
+
 function formatStorageCompact(kbValue, unit) {
     if (!kbValue || kbValue <= 0) return `${unit} --`;
     if (unit === 'SD') {
@@ -160,7 +206,6 @@ function toggleHeaderDeviceDetails(forceOpen = null) {
     isHeaderDeviceDetailsOpen = nextState;
     details.classList.toggle('is-open', nextState);
     trigger.setAttribute('aria-expanded', nextState ? 'true' : 'false');
-    requestAnimationFrame(updateResponsiveChromeMetrics);
 }
 
 // ============================================================================
@@ -661,9 +706,10 @@ async function loadDeviceTokens() {
                 }
             }
 
+            const uidText = d.device_uid ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem; font-family: monospace;">UID ${d.device_uid.slice(-6)}</span>` : '';
             const batteryText = d.vbatt_sense ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-battery-half"></i> ${d.vbatt_sense.toFixed(2)}V</span>` : '';
-            const sdText = d.storage_sd_free !== null && d.storage_sd_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-sd-card"></i> ${d.storage_sd_free}M free</span>` : '';
-            const flashText = d.storage_flash_free !== null && d.storage_flash_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-microchip"></i> ${(d.storage_flash_free / 1024).toFixed(1)}k free</span>` : '';
+            const sdText = d.storage_sd_free !== null && d.storage_sd_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-sd-card"></i> ${d.storage_sd_free} MB free</span>` : '';
+            const flashText = d.storage_flash_free !== null && d.storage_flash_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-microchip"></i> ${d.storage_flash_free} KB free</span>` : '';
 
             return `
             <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--border);">
@@ -672,7 +718,7 @@ async function loadDeviceTokens() {
                     <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem; font-family: monospace;">rsk_••••${d.token ? d.token.slice(-4) : '????'}</span>
                     ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : (isOnline ? '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ONLINE</span>' : '<span style="color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem;">OFFLINE</span>')}
                     <div style="margin-top: 0.25rem;">
-                        ${batteryText}${sdText}${flashText}
+                        ${uidText}${batteryText}${sdText}${flashText}
                     </div>
                 </div>
                 ${!d.revoked ? `<button class="btn btn-danger btn-sm" onclick="revokeDeviceToken(${d.id})" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">Revoke</button>` : ''}
@@ -694,7 +740,7 @@ function updateDeviceSetupChecklist() {
 
     const hasHeartbeat = !!isCloudConnected;
     const hasToken = Array.isArray(deviceTokensCache) && deviceTokensCache.some(device => !device.revoked);
-    const hasSyncPath = hasToken && (!!localStorage.getItem('lastDeviceIP') || hasHeartbeat);
+    const hasSyncPath = hasToken;
 
     heartbeatEl.classList.toggle('is-complete', hasHeartbeat);
     tokenEl.classList.toggle('is-complete', hasToken);
@@ -817,6 +863,243 @@ function generateMagicLink() {
 function resetProvisioningUI() {
     document.getElementById('hotspotPrepSection').style.display = 'block';
     document.getElementById('hotspotLinkSection').style.display = 'none';
+}
+
+function getPairingTutorialSeenKey() {
+    return currentUser ? `pairingTutorialSeen:${currentUser.id}` : 'pairingTutorialSeen:guest';
+}
+
+function getLedTutorialSeenKey() {
+    return currentUser ? `ledTutorialSeen:${currentUser.id}` : 'ledTutorialSeen:guest';
+}
+
+function shouldRunFirstTimeTutorials(sessionCount) {
+    const hasKnownDevice = Array.isArray(deviceTokensCache) && deviceTokensCache.some(device => !device.revoked);
+    return !!currentUser && sessionCount === 0 && !hasKnownDevice;
+}
+
+function maybeOpenPairingTutorial(sessionCount) {
+    if (!shouldRunFirstTimeTutorials(sessionCount)) return;
+    if (localStorage.getItem(getPairingTutorialSeenKey()) === 'true') return;
+    onboardingTutorialFlow = true;
+    openPairingTutorial(true);
+}
+
+function openPairingTutorial(markSeen = false) {
+    const modal = document.getElementById('pairingTutorialModal');
+    const track = document.getElementById('pairingTutorialTrack');
+    if (!modal || !track) return;
+
+    if (markSeen && currentUser) {
+        localStorage.setItem(getPairingTutorialSeenKey(), 'true');
+    }
+
+    modal.classList.add('active');
+    pairingTutorialCurrentSlide = 0;
+    selectPairingMode(pairingTutorialMode, false);
+
+    if (!track.dataset.bound) {
+        track.addEventListener('scroll', handlePairingTutorialScroll, { passive: true });
+        track.dataset.bound = 'true';
+    }
+
+    goToPairingTutorialSlide(0, 'auto');
+}
+
+function closePairingTutorial() {
+    const modal = document.getElementById('pairingTutorialModal');
+    if (modal) modal.classList.remove('active');
+    if (currentUser) {
+        localStorage.setItem(getPairingTutorialSeenKey(), 'true');
+    }
+    if (onboardingTutorialFlow && localStorage.getItem(getLedTutorialSeenKey()) !== 'true') {
+        setTimeout(() => openLedTutorial(true), 120);
+    } else {
+        onboardingTutorialFlow = false;
+    }
+}
+
+function handlePairingTutorialScroll() {
+    const track = document.getElementById('pairingTutorialTrack');
+    if (!track) return;
+    const slideWidth = track.clientWidth || 1;
+    const nextIndex = Math.round(track.scrollLeft / slideWidth);
+    if (nextIndex !== pairingTutorialCurrentSlide) {
+        pairingTutorialCurrentSlide = nextIndex;
+        updatePairingTutorialUI();
+    }
+}
+
+function goToPairingTutorialSlide(index, behavior = 'smooth') {
+    const track = document.getElementById('pairingTutorialTrack');
+    if (!track) return;
+    const slides = track.querySelectorAll('.pairing-slide');
+    const clampedIndex = Math.max(0, Math.min(index, slides.length - 1));
+    pairingTutorialCurrentSlide = clampedIndex;
+    track.scrollTo({
+        left: track.clientWidth * clampedIndex,
+        behavior
+    });
+    updatePairingTutorialUI();
+}
+
+function stepPairingTutorial(direction) {
+    const track = document.getElementById('pairingTutorialTrack');
+    if (!track) return;
+    const slides = track.querySelectorAll('.pairing-slide');
+    if (!slides.length) return;
+
+    if (pairingTutorialCurrentSlide >= slides.length - 1 && direction > 0) {
+        closePairingTutorial();
+        return;
+    }
+
+    goToPairingTutorialSlide(pairingTutorialCurrentSlide + direction);
+}
+
+function updatePairingTutorialUI() {
+    const track = document.getElementById('pairingTutorialTrack');
+    if (!track) return;
+
+    const slides = Array.from(track.querySelectorAll('.pairing-slide'));
+    slides.forEach((slide, index) => {
+        slide.classList.toggle('is-active', index === pairingTutorialCurrentSlide);
+    });
+
+    document.querySelectorAll('[data-pairing-dot]').forEach((dot, index) => {
+        dot.classList.toggle('active', index === pairingTutorialCurrentSlide);
+    });
+
+    const prevBtn = document.getElementById('pairingTutorialPrev');
+    const nextBtn = document.getElementById('pairingTutorialNext');
+    if (prevBtn) prevBtn.disabled = pairingTutorialCurrentSlide === 0;
+    if (nextBtn) {
+        nextBtn.textContent = pairingTutorialCurrentSlide === slides.length - 1 ? 'Done' : 'Next';
+    }
+}
+
+function selectPairingMode(mode, jumpToSlide = true) {
+    pairingTutorialMode = mode === 'wifi' ? 'wifi' : 'hotspot';
+
+    const hotspotCard = document.getElementById('pairingModeHotspot');
+    const wifiCard = document.getElementById('pairingModeWifi');
+    hotspotCard?.classList.toggle('is-selected', pairingTutorialMode === 'hotspot');
+    wifiCard?.classList.toggle('is-selected', pairingTutorialMode === 'wifi');
+
+    const summary = document.getElementById('pairingModeSummary');
+    if (summary) {
+        if (pairingTutorialMode === 'wifi') {
+            summary.innerHTML = `
+                <div class="pairing-summary-head">Track or home WiFi works best when you return to the same place.</div>
+                <div class="pairing-summary-body">Use this if the device usually comes back to one paddock, garage, or workshop network. The downside is that once you leave that WiFi range, sync stops until you pair another network.</div>
+            `;
+        } else {
+            summary.innerHTML = `
+                <div class="pairing-summary-head">Phone hotspot keeps things portable.</div>
+                <div class="pairing-summary-body">Use this if you travel often, want the same setup everywhere, and don’t mind enabling hotspot only when you want sessions uploaded.</div>
+            `;
+        }
+    }
+
+    if (jumpToSlide) {
+        goToPairingTutorialSlide(1);
+    }
+}
+
+function maybeOpenLedTutorial(sessionCount) {
+    if (!shouldRunFirstTimeTutorials(sessionCount)) return;
+    if (localStorage.getItem(getPairingTutorialSeenKey()) !== 'true') return;
+    if (localStorage.getItem(getLedTutorialSeenKey()) === 'true') return;
+    onboardingTutorialFlow = true;
+    openLedTutorial(true);
+}
+
+function openLedTutorial(markSeen = false) {
+    const modal = document.getElementById('ledTutorialModal');
+    const track = document.getElementById('ledTutorialTrack');
+    if (!modal || !track) return;
+
+    if (markSeen && currentUser) {
+        localStorage.setItem(getLedTutorialSeenKey(), 'true');
+    }
+
+    modal.classList.add('active');
+    ledTutorialCurrentSlide = 0;
+
+    if (!track.dataset.bound) {
+        track.addEventListener('scroll', handleLedTutorialScroll, { passive: true });
+        track.dataset.bound = 'true';
+    }
+
+    goToLedTutorialSlide(0, 'auto');
+}
+
+function closeLedTutorial() {
+    const modal = document.getElementById('ledTutorialModal');
+    if (modal) modal.classList.remove('active');
+    if (currentUser) {
+        localStorage.setItem(getLedTutorialSeenKey(), 'true');
+    }
+    onboardingTutorialFlow = false;
+}
+
+function handleLedTutorialScroll() {
+    const track = document.getElementById('ledTutorialTrack');
+    if (!track) return;
+    const slideWidth = track.clientWidth || 1;
+    const nextIndex = Math.round(track.scrollLeft / slideWidth);
+    if (nextIndex !== ledTutorialCurrentSlide) {
+        ledTutorialCurrentSlide = nextIndex;
+        updateLedTutorialUI();
+    }
+}
+
+function goToLedTutorialSlide(index, behavior = 'smooth') {
+    const track = document.getElementById('ledTutorialTrack');
+    if (!track) return;
+    const slides = track.querySelectorAll('.pairing-slide');
+    const clampedIndex = Math.max(0, Math.min(index, slides.length - 1));
+    ledTutorialCurrentSlide = clampedIndex;
+    track.scrollTo({
+        left: track.clientWidth * clampedIndex,
+        behavior
+    });
+    updateLedTutorialUI();
+}
+
+function stepLedTutorial(direction) {
+    const track = document.getElementById('ledTutorialTrack');
+    if (!track) return;
+    const slides = track.querySelectorAll('.pairing-slide');
+    if (!slides.length) return;
+
+    if (ledTutorialCurrentSlide >= slides.length - 1 && direction > 0) {
+        closeLedTutorial();
+        return;
+    }
+
+    goToLedTutorialSlide(ledTutorialCurrentSlide + direction);
+}
+
+function updateLedTutorialUI() {
+    const track = document.getElementById('ledTutorialTrack');
+    if (!track) return;
+
+    const slides = Array.from(track.querySelectorAll('.pairing-slide'));
+    slides.forEach((slide, index) => {
+        slide.classList.toggle('is-active', index === ledTutorialCurrentSlide);
+    });
+
+    document.querySelectorAll('[data-led-dot]').forEach((dot, index) => {
+        dot.classList.toggle('active', index === ledTutorialCurrentSlide);
+    });
+
+    const prevBtn = document.getElementById('ledTutorialPrev');
+    const nextBtn = document.getElementById('ledTutorialNext');
+    if (prevBtn) prevBtn.disabled = ledTutorialCurrentSlide === 0;
+    if (nextBtn) {
+        nextBtn.textContent = ledTutorialCurrentSlide === slides.length - 1 ? 'Done' : 'Next';
+    }
 }
 
 function showAuthModal(mode) {
@@ -1837,6 +2120,10 @@ function renderErrorState(message) {
     return `<div class="empty-state"><div class="empty-state-icon">!</div><div class="empty-state-title">Something went wrong</div><div class="empty-state-message">${message}</div></div>`;
 }
 
+function refreshHomeContextBanner() {
+    updateHomeContextBanner(Array.isArray(sessions) ? sessions.length : 0);
+}
+
 async function loadHomeData() {
     try {
         // Load tracks and sessions
@@ -1852,7 +2139,9 @@ async function loadHomeData() {
         updateHomeGreeting();
 
         // === CONTEXT BANNER ===
-        updateHomeContextBanner(sessions.length);
+        refreshHomeContextBanner();
+        maybeOpenPairingTutorial(sessions.length);
+        maybeOpenLedTutorial(sessions.length);
 
         // === STATS with count-up animation ===
         animateCountUp('totalTracks', tracks.length);
@@ -1925,16 +2214,16 @@ function updateHomeContextBanner(sessionCount) {
     const action = document.getElementById('contextBannerAction');
     if (!banner) return;
 
-    const deviceIP = localStorage.getItem('lastDeviceIP');
     const isConnected = isDeviceConnected;
+    const hasKnownDevice = Array.isArray(deviceTokensCache) && deviceTokensCache.some(device => !device.revoked);
 
-    if (isConnected && deviceIP) {
+    if (isConnected) {
         // Device is connected
         banner.style.display = 'block';
         banner.className = 'home-context-banner context-connected';
         icon.innerHTML = '<i class="fas fa-satellite-dish"></i>';
         title.textContent = 'RS-Core Online';
-        detail.textContent = 'Your device is connected. Sync your latest sessions.';
+        detail.textContent = 'Your device is connected. Recent sync telemetry is available.';
         action.innerHTML = '<button class="btn btn-sm" onclick="triggerBrowserSync()" style="background: var(--success); color: #000;"><i class="fas fa-cloud-upload-alt"></i> Sync Now</button>';
     } else if (sessionCount === 0) {
         // Brand new user
@@ -1942,18 +2231,18 @@ function updateHomeContextBanner(sessionCount) {
         banner.className = 'home-context-banner context-welcome';
         icon.innerHTML = '<i class="fas fa-rocket"></i>';
         title.textContent = 'Welcome to RaceSense!';
-        detail.textContent = 'Upload or sync your first session to get started.';
-        action.innerHTML = '<button class="btn btn-sm btn-primary" onclick="showView(\'process\')"><i class="fas fa-upload"></i> Sync Data</button>';
-    } else if (!deviceIP) {
-        // Has sessions but no device configured
+        detail.textContent = 'Pair your RS-Core first, then your first synced session will show up here.';
+        action.innerHTML = '<button class="btn btn-sm btn-primary" onclick="openPairingTutorial(true)"><i class="fas fa-link"></i> How To Pair</button>';
+    } else if (!hasKnownDevice) {
+        // Has sessions but no device token configured
         banner.style.display = 'block';
         banner.className = 'home-context-banner context-nodevice';
         icon.innerHTML = '<i class="fas fa-plug"></i>';
         title.textContent = 'No RS-Core detected';
-        detail.textContent = 'Connect your module to sync new sessions.';
+        detail.textContent = 'Generate a device token and complete pairing to sync new sessions.';
         action.innerHTML = '<button class="btn btn-sm secondary" onclick="showView(\'settings\')"><i class="fas fa-cog"></i> Device Settings</button>';
     } else {
-        // Has IP but device is offline
+        // Device token exists but no recent heartbeat
         banner.style.display = 'block';
         banner.className = 'home-context-banner context-offline';
         icon.innerHTML = '<i class="fas fa-wifi" style="opacity: 0.5;"></i>';
@@ -3527,51 +3816,37 @@ async function loadLearningFiles() {
         window.currentFiles = files;
         window.processedFiles = new Set(processedList);
         window.sessionLimit = limitInfo;
-        updateProcessSummary({
+        updateProcessQueueCount({
             totalFiles: files.length,
             processedFiles: processedList.length,
-            archivedView: isArchivesView,
-            message: isArchivesView
-                ? 'Viewing archived files. Restore anything you want back in the active analyze queue.'
-                : 'RS-Core uploads land here automatically. Manual CSV import is available only when you need a backfill.'
+            archivedView: isArchivesView
         });
         renderFileTable();
     } catch (error) {
-        updateProcessSummary({
+        updateProcessQueueCount({
             totalFiles: 0,
             processedFiles: 0,
-            archivedView: isArchivesView,
-            isError: true,
-            message: 'We could not load the analyze queue right now.'
+            archivedView: isArchivesView
         });
-        container.innerHTML = '<p class="help-text">Failed to load files</p>';
+        container.innerHTML = renderEmptyState(
+            '📁',
+            isArchivesView ? 'No archived files found' : 'No files found',
+            isArchivesView
+                ? 'Archived files will appear here when you move items out of the active queue.'
+                : 'Uploaded CSV files will appear here when they are ready to analyze.'
+        );
     }
 }
 
-function updateProcessSummary(summary) {
+function updateProcessQueueCount(summary) {
     processUploadSummary = summary;
-    const container = document.getElementById('processSummary');
-    if (!container) return;
+    const pill = document.getElementById('processQueueCount');
+    const value = document.getElementById('processQueueCountValue');
+    if (!pill || !value) return;
 
-    const toneClass = summary?.isError ? 'is-error' : (summary?.archivedView ? 'is-archive' : 'is-ready');
-    container.className = `process-summary-card ${toneClass}`;
-    container.style.display = 'block';
-    container.innerHTML = `
-        <div class="process-summary-grid">
-            <div class="process-summary-stat">
-                <span>Files</span>
-                <strong>${summary?.totalFiles ?? 0}</strong>
-            </div>
-            <div class="process-summary-stat">
-                <span>Analyzed</span>
-                <strong>${summary?.processedFiles ?? 0}</strong>
-            </div>
-            <div class="process-summary-copy">
-                <strong>${summary?.archivedView ? 'Archive View' : 'Analyze Queue'}</strong>
-                <span>${summary?.message || ''}</span>
-            </div>
-        </div>
-    `;
+    pill.style.display = 'inline-flex';
+    pill.classList.toggle('is-archive', !!summary?.archivedView);
+    value.textContent = String(summary?.totalFiles ?? 0);
 }
 
 function renderFileTable() {
@@ -3583,7 +3858,7 @@ function renderFileTable() {
     if (files.length === 0) {
         container.innerHTML = renderEmptyState(
             '📁',
-            isArchivesView ? 'No archived files' : 'No files found',
+            isArchivesView ? 'No archived files found' : 'No files found',
             isArchivesView
                 ? 'Archived files will appear here when you move them out of the active queue.'
                 : 'Your RS-Core uploads will appear here. You can also import a CSV manually if you need to backfill data.'
@@ -5947,6 +6222,15 @@ async function openPlayback(sessionId, shareToken = null) {
 
         // 5. Pre-calculate Map
         fitTrackMap();
+        if (playbackResizeHandler) {
+            window.removeEventListener('resize', playbackResizeHandler);
+        }
+        playbackResizeHandler = () => {
+            if (!pbState.active) return;
+            fitTrackMap();
+            drawFrame();
+        };
+        window.addEventListener('resize', playbackResizeHandler);
 
         // 6. Ready
         togglePlayback(true);
@@ -5961,6 +6245,10 @@ async function openPlayback(sessionId, shareToken = null) {
 function closePlaybackModal() {
     pbState.active = false;
     pbState.playing = false;
+    if (playbackResizeHandler) {
+        window.removeEventListener('resize', playbackResizeHandler);
+        playbackResizeHandler = null;
+    }
     document.getElementById('playbackModal').classList.remove('active');
 }
 
@@ -6387,6 +6675,8 @@ function drawFrame() {
     const speedVal = Math.round(speed);
     const speedEl = document.getElementById('pbSpeed');
     if (speedEl) speedEl.textContent = speedVal;
+    const speedDockEl = document.getElementById('pbSpeedDock');
+    if (speedDockEl) speedDockEl.textContent = speedVal;
 
     // Lean Angle
     // Priority: Explicit Lean > Roll > Derived from Gyro/Speed > 0
@@ -6421,6 +6711,11 @@ function drawFrame() {
         // Show lean with direction indicator
         const leanDir = lean > 0 ? 'R' : (lean < 0 ? 'L' : '');
         leanEl.textContent = `${Math.abs(Math.round(lean))}° ${leanDir}`;
+    }
+    const leanDockEl = document.getElementById('pbLeanDock');
+    if (leanDockEl) {
+        const leanDir = lean > 0 ? 'R' : (lean < 0 ? 'L' : '');
+        leanDockEl.textContent = `${Math.abs(Math.round(lean))}° ${leanDir}`;
     }
 
     const bikeEl = document.getElementById('pbLeanBike');
@@ -6587,6 +6882,7 @@ async function pollCloudHeartbeat() {
     try {
         const res = await apiCall('/api/devices', { displayError: false });
         if (res && res.length > 0) {
+            deviceTokensCache = res;
             const now = new Date();
             let isOnline = false;
             let activeDevice = null;
@@ -6774,10 +7070,28 @@ async function pollCloudHeartbeat() {
                 if (syncPill) syncPill.style.display = 'none';
             }
 
+            updateDeviceStatus(
+                isOnline,
+                isOnline ? 'online' : (res.length > 0 ? 'offline' : 'waiting'),
+                isOnline ? headerDevice : null
+            );
+            updateLastSyncDisplay(headerDevice?.last_sync || null);
+            refreshHomeContextBanner();
+
             requestAnimationFrame(updateResponsiveChromeMetrics);
+        } else if (res && Array.isArray(res)) {
+            deviceTokensCache = res;
+            updateDeviceSetupChecklist();
+            isCloudConnected = false;
+            isDeviceConnected = false;
+            refreshHomeContextBanner();
         }
     } catch (e) {
         console.warn('[Heartbeat] Failed to fetch device status', e);
+        updateDeviceStatus(false, 'offline', null);
+        isCloudConnected = false;
+        isDeviceConnected = false;
+        refreshHomeContextBanner();
     }
 }
 
@@ -6847,330 +7161,81 @@ function updateStorageIndicator(data) {
 }
 
 // ============================================================================
-// ESP32 WIFI MANAGEMENT - Direct Communication
-// ============================================================================
-
-// Get device IP from input or localStorage
-function getDeviceIP() {
-    const ipInput = document.getElementById('devConfigIP');
-    return ipInput ? ipInput.value.trim() : localStorage.getItem('lastDeviceIP') || '192.168.4.1';
-}
-
-// Test connection to device
-async function testDeviceConnection() {
-    const ip = getDeviceIP();
-    showToast(`Testing connection to ${ip}...`, 'info');
-
-    try {
-        const response = await fetch(`http://${ip}/status`, {
-            method: 'GET',
-            mode: 'cors',
-            signal: AbortSignal.timeout(3000)
-        });
-
-        if (response.ok) {
-            const data = await response.json();
-            showToast(`✓ Connected! Mode: ${data.wifi_mode || 'Unknown'}, Networks: ${data.networks_stored || 0}`, 'success');
-            localStorage.setItem('lastDeviceIP', ip);
-            return data;
-        } else {
-            showToast(`Device responded with error ${response.status}`, 'error');
-            return null;
-        }
-    } catch (e) {
-        showToast(`Cannot reach ${ip}. Check connection.`, 'error');
-        console.error('[Test]', e);
-        return null;
-    }
-}
-
-// Scan state
-let scanInProgress = false;
-
-// Show persistent scan toast with progress bar
-function showScanProgress(message, progress) {
-    const toast = document.getElementById('toast');
-    if (!toast) return;
-
-    let html = `<i class="fas fa-spinner fa-spin" style="margin-right: 0.5rem;"></i>${message}`;
-    if (progress !== null && progress !== undefined) {
-        html += `<div style="margin-top: 0.5rem; background: rgba(255,255,255,0.2); height: 4px; border-radius: 2px; overflow: hidden;">
-            <div style="width: ${progress}%; height: 100%; background: var(--primary); transition: width 0.3s;"></div>
-        </div>`;
-    }
-
-    toast.innerHTML = html;
-    toast.className = 'toast active info';
-}
-
-function hideScanProgress() {
-    const toast = document.getElementById('toast');
-    if (toast) toast.className = 'toast';
-}
-
-// Scan for ESP32 device with progress feedback
-async function scanForDevice() {
-    if (scanInProgress) {
-        showToast('Scan already running', 'warning');
-        return;
-    }
-
-    scanInProgress = true;
-    const btn = document.getElementById('scanBtn');
-    if (btn) {
-        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
-        btn.disabled = true;
-    }
-
-    // Phase 1: Check last known IP (fastest)
-    const lastIP = localStorage.getItem('lastDeviceIP');
-    if (lastIP) {
-        showScanProgress(`Checking ${lastIP}...`, 10);
-        try {
-            const response = await fetch(`http://${lastIP}/status`, {
-                mode: 'cors',
-                signal: AbortSignal.timeout(2000)
-            });
-            if (response.ok) {
-                const data = await response.json();
-                finishScanSuccess(lastIP, data, btn);
-                return;
-            }
-        } catch (e) {
-            console.log('[Scan] Last IP not responding');
-        }
-    }
-
-    // Phase 2: Check AP mode IP
-    showScanProgress('Checking AP mode (192.168.4.1)...', 25);
-    try {
-        const apResponse = await fetch('http://192.168.4.1/status', {
-            mode: 'cors',
-            signal: AbortSignal.timeout(2000)
-        });
-        if (apResponse.ok) {
-            const data = await apResponse.json();
-            finishScanSuccess('192.168.4.1', data, btn);
-            return;
-        }
-    } catch (e) {
-        console.log('[Scan] AP mode not available');
-    }
-
-    // Phase 3: Backend network scan
-    showScanProgress('Scanning network...', 50);
-    try {
-        const res = await apiCall('/api/device/scan');
-        const devices = res.devices || [];
-
-        if (devices.length === 1) {
-            const ip = devices[0].ip;
-            const info = devices[0].info;
-            finishScanSuccess(ip, info, btn);
-            return;
-        } else if (devices.length > 1) {
-            hideScanProgress();
-            // Show selection dialog
-            const ips = devices.map(d => d.ip);
-            const selection = prompt(`Multiple devices found:\n${ips.join('\n')}\n\nEnter the IP to connect to:`, ips[0]);
-            if (selection && ips.includes(selection)) {
-                const device = devices.find(d => d.ip === selection);
-                finishScanSuccess(device.ip, device.info, btn);
-            } else {
-                finishScan(btn);
-            }
-            return;
-        }
-    } catch (e) {
-        console.log('[Scan] Backend scan error:', e);
-    }
-
-    // Phase 4: Quick subnet scan
-    showScanProgress('Deep scan (common IPs)...', 80);
-    const commonIPs = ['192.168.1.2', '192.168.1.100', '192.168.0.2', '192.168.0.100'];
-    for (const ip of commonIPs) {
-        try {
-            const response = await fetch(`http://${ip}/status`, {
-                mode: 'cors',
-                signal: AbortSignal.timeout(1000)
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data.storage_used_pct !== undefined || data.status === 'running') {
-                    finishScanSuccess(ip, data, btn);
-                    return;
-                }
-            }
-        } catch (e) { }
-    }
-
-    // Scan complete - no device found
-    hideScanProgress();
-    showToast('No Datalogger found. Is it powered on?', 'warning');
-
-    updateDeviceStatus(false, null);
-
-    finishScan(btn);
-}
-
-function finishScanSuccess(ip, data, btn) {
-    hideScanProgress();
-    showToast(`✓ Found at ${ip}`, 'success');
-
-    // Update hidden input for compatibility
-    const hiddenInput = document.getElementById('devConfigIP');
-    if (hiddenInput) hiddenInput.value = ip;
-    localStorage.setItem('lastDeviceIP', ip);
-
-    // Update Scan Card UI
-    updateDeviceStatus(true, ip);
-
-    // Update Header Status
-    const badge = document.getElementById('connectionStatus');
-    const text = document.getElementById('connText');
-    if (badge && text && !isCloudConnected) { // Only override if not already cloud-connected
-        badge.className = 'status-badge online';
-        text.textContent = 'RS-Core Local';
-        isDeviceConnected = true;
-    }
-    updateStorageIndicator(data);
-    finishScan(btn);
-}
-
-function finishScan(btn) {
-    scanInProgress = false;
-    if (btn) {
-        btn.innerHTML = '<i class="fas fa-search"></i> Scan';
-        btn.disabled = false;
-    }
-}
-
-
-
-
-// ============================================================================
-// ESP32 FIRMWARE MANAGEMENT
-// ============================================================================
-
-async function checkEspVersionManual() {
-    const ip = localStorage.getItem('lastDeviceIP');
-    if (!ip) {
-        document.getElementById('espCurrentVersion').textContent = 'No Device IP';
-        return;
-    }
-
-    try {
-        const res = await apiCall(`/api/device/version-check?ip=${ip}`);
-        if (res.error) throw new Error(res.error);
-
-        document.getElementById('espCurrentVersion').textContent = `v${res.device_version}`;
-        document.getElementById('espServerVersion').textContent = `v${res.server_version}`;
-
-        const updateArea = document.getElementById('espUpdateArea');
-        if (res.update_available) {
-            updateArea.style.display = 'block';
-            document.getElementById('espUpdateMsg').innerHTML = `<i class="fas fa-exclamation-triangle"></i> Update Available: v${res.server_version}`;
-        } else {
-            updateArea.style.display = 'none';
-        }
-    } catch (e) {
-        console.error('Failed to check version:', e);
-        document.getElementById('espCurrentVersion').textContent = 'Offline?';
-    }
-}
-
-async function flashLatestEspWifi() {
-    const ip = localStorage.getItem('lastDeviceIP');
-    if (!ip) return;
-
-    if (!confirm("Are you sure you want to flash the latest firmware over WiFi?\n\nThe device will reboot after completion.")) {
-        return;
-    }
-
-    const btn = document.getElementById('btnEspUpdate');
-    const progressBar = document.getElementById('espOtaProgress');
-    const barFill = document.getElementById('espOtaBar');
-    const statusText = document.getElementById('espOtaStatus');
-
-    btn.disabled = true;
-    progressBar.style.display = 'block';
-    barFill.style.width = '0%';
-    statusText.textContent = 'Preparing files...';
-
-    try {
-        statusText.textContent = 'Uploading firmware files...';
-        // Give some visual feedback earlier
-        setTimeout(() => { if (barFill.style.width === '0%') barFill.style.width = '15%'; }, 500);
-
-        const res = await apiCall('/api/device/update-ota', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ip })
-        });
-
-        if (res.success) {
-            barFill.style.width = '100%';
-            statusText.textContent = 'Update Complete! Device rebooting...';
-            showToast('Firmware pushed successfully!', 'success');
-
-            // Wait for reboot
-            setTimeout(() => {
-                progressBar.style.display = 'none';
-                btn.disabled = false;
-                checkDeviceConnection();
-                checkEspVersionManual();
-            }, 6000);
-        } else {
-            throw new Error(res.failed ? res.failed.join(', ') : 'Unknown error');
-        }
-    } catch (e) {
-        btn.disabled = false;
-        statusText.textContent = 'Update Failed';
-        showToast(`Flash Failed: ${e.message}`, 'error');
-    }
-}
-
-
-// ============================================================================
 // DEVICE STATUS & AUTO-SYNC
 // ============================================================================
 
 /**
  * Update device status in settings and home sync banner
  */
-function updateDeviceStatus(connected, ip) {
+function updateDeviceStatus(connected, state = 'waiting', device = null) {
     const dot = document.getElementById('deviceStatusDot');
     const text = document.getElementById('deviceStatusText');
-    const ipEl = document.getElementById('deviceStatusIP');
+    const detailEl = document.getElementById('deviceStatusDetail');
     const banner = document.getElementById('deviceSyncBanner');
+    const batteryEl = document.getElementById('deviceStatusBattery');
+    const sdEl = document.getElementById('deviceStatusSd');
+    const flashEl = document.getElementById('deviceStatusFlash');
+    const trackEl = document.getElementById('deviceStatusTrack');
+    const uidEl = document.getElementById('deviceStatusUid');
+    const syncEl = document.getElementById('deviceStatusSync');
 
-    if (connected && ip) {
+    if (connected && device) {
         if (dot) dot.style.background = 'var(--success)';
         if (text) text.textContent = 'Online';
-        if (ipEl) ipEl.textContent = ip;
+        if (detailEl) detailEl.textContent = 'Cloud heartbeat received recently.';
         if (banner) {
             banner.style.display = 'block';
             const title = document.getElementById('syncBannerTitle');
             const detail = document.getElementById('syncBannerDetail');
             if (title) title.textContent = 'RS-Core Connected';
-            if (detail) detail.textContent = 'Auto-sync active';
+            if (detail) detail.textContent = device.is_syncing ? 'Uploading sessions' : 'Auto-sync active';
         }
+        if (batteryEl) {
+            const vbatt = Number(device.vbatt_sense || 0);
+            batteryEl.textContent = vbatt > 0 ? `${calculateBatteryPercentage(vbatt)}% • ${vbatt.toFixed(1)}V` : '--';
+        }
+        if (sdEl) {
+            const total = Number(device.storage_sd_total || 0);
+            const free = Number(device.storage_sd_free || 0);
+            sdEl.textContent = total > 0 ? formatStorageDetail(total - free, total, 'SD') : 'No SD card';
+        }
+        if (flashEl) {
+            const total = Number(device.storage_flash_total || 0);
+            const free = Number(device.storage_flash_free || 0);
+            flashEl.textContent = total > 0 ? formatStorageDetail(total - free, total, 'Flash') : 'Flash unavailable';
+        }
+        if (trackEl) {
+            const track = activeTrackId ? tracks.find(t => t.track_id == activeTrackId) : null;
+            trackEl.textContent = track?.track_name || 'Not set';
+        }
+        if (uidEl) uidEl.textContent = device.device_uid || '--';
+        if (syncEl) syncEl.textContent = device.is_syncing ? 'Uploading' : 'Idle';
     } else {
         if (dot) dot.style.background = 'var(--error)';
-        if (text) text.textContent = 'Not detected';
-        if (ipEl) ipEl.textContent = '---';
+        if (text) text.textContent = state === 'offline' ? 'Offline' : 'Waiting for heartbeat';
+        if (detailEl) {
+            detailEl.textContent = state === 'offline'
+                ? 'A registered RS-Core exists, but no recent heartbeat is available.'
+                : 'No RS-Core has checked in yet.';
+        }
         if (banner) banner.style.display = 'none';
+        if (batteryEl) batteryEl.textContent = '--';
+        if (sdEl) sdEl.textContent = '--';
+        if (flashEl) flashEl.textContent = '--';
+        if (trackEl) {
+            const track = activeTrackId ? tracks.find(t => t.track_id == activeTrackId) : null;
+            trackEl.textContent = track?.track_name || '--';
+        }
+        if (uidEl) uidEl.textContent = '--';
+        if (syncEl) syncEl.textContent = 'Idle';
     }
-
-    updateLastSyncDisplay();
 }
 
-function updateLastSyncDisplay() {
+function updateLastSyncDisplay(lastSyncIso) {
     const el = document.getElementById('lastSyncTime');
     if (!el) return;
-    const lastSync = localStorage.getItem('lastSyncTime');
-    if (lastSync) {
-        const d = new Date(lastSync);
+    if (lastSyncIso) {
+        const d = new Date(lastSyncIso);
         const now = new Date();
         const diff = Math.floor((now - d) / 60000);
         if (diff < 1) el.textContent = 'Just now';

@@ -53,3 +53,33 @@ def test_delete_device(client, app):
     with app.app_context():
         d = DeviceToken.query.get(1)
         assert d.revoked is True
+        assert d.revoked_at is not None
+
+
+def test_prune_old_revoked_tokens(client, app):
+    with app.app_context():
+        user = User.query.filter_by(email='dev@racesense.in').first()
+        for idx in range(4):
+            db.session.add(DeviceToken(
+                token=f'rsk_old_{idx}',
+                user_id=user.id,
+                device_name=f'Old Device {idx}',
+                revoked=True
+            ))
+        db.session.commit()
+
+        revoked_tokens = DeviceToken.query.filter_by(user_id=user.id, revoked=True).order_by(DeviceToken.id.asc()).all()
+        for revoked_token in revoked_tokens:
+            revoked_token.revoked_at = revoked_token.created_at
+        db.session.commit()
+
+        active_token = DeviceToken.query.filter_by(user_id=user.id, revoked=False).first()
+        active_token_id = active_token.id
+
+    resp = client.delete(f'/api/devices/{active_token_id}')
+    assert resp.status_code == 200
+
+    with app.app_context():
+        revoked_tokens = DeviceToken.query.filter_by(user_id=user.id, revoked=True).order_by(DeviceToken.revoked_at.desc(), DeviceToken.id.desc()).all()
+        assert len(revoked_tokens) == 3
+        assert revoked_tokens[0].id == active_token_id

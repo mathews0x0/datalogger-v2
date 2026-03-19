@@ -1,5 +1,7 @@
 # 📋 ESP32-S3 Motorcycle Datalogger - Schematic QA Report
 
+> Note: This QA report predates the current RS-Core V2 firmware bring-up. Use `docs/hardware_firmware.md` and the current firmware pin map as the source of truth for runtime behavior.
+
 **Project:** ESP32-S3 Motorcycle Datalogger  
 **Date:** 2026-02-07  
 **Schematic Version:** Final (Post-fixes)  

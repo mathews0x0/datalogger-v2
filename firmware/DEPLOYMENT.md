@@ -6,7 +6,7 @@ This guide is updated for the **ESP32-S3** based Racesense V2 hardware.
 - **ESP32-S3-WROOM-1**: Faster processor, more IO, native USB.
 - **MicroSD Support**: High-speed logging to SD card.
 - **Native USB**: Programming and debugging via the USB-C port (IO19/20).
-- **Battery Monitoring**: Integrated ADC for voltage tracking (IO35).
+- **Battery Monitoring**: Integrated ADC for voltage tracking (IO7).
 - **I2C IMU**: BMI323 on IO21/39.
 - **GNSS**: Neo-M8N on IO17/18.
 
@@ -34,7 +34,9 @@ Your ESP32-S3 should have the following structure:
 /
 ├── boot.py             # Internal bootstrapper
 ├── main.py             # Entry point (Starts Heartbeat thread)
-├── device.json         # (Auto-generated) WiFi & API credentials
+├── data/
+│   └── metadata/
+│       └── device.json # (Auto-generated) WiFi & API credentials
 ├── drivers/
 │   ├── gps.py          # Neo-M8N driver
 │   ├── bmi323.py       # IMU driver
@@ -55,11 +57,11 @@ Your ESP32-S3 should have the following structure:
 1. **Magic Link Provisioning**:
     *   Flash the device and reboot.
     *   Connect your phone to the `RS-Core-XXXX` hotspot.
-    *   Navigate back to the web app (`racesense.in`) and click **"Set up Device"**.
-    *   The web app will automatically push the `device.json` credentials to the device.
+    *   Navigate back to the web app (`racesense.in`) and use **Auto-Setup Device** or the captive portal.
+    *   The captive portal stores `/data/metadata/device.json` on the device and then reboots.
 2. **Manual Config**: (Fallback) You can manually create `/data/metadata/device.json` with the following structure:
     ```json
-    {"ssid": "...", "pass": "...", "api_url": "https://racesense.in/api/upload", "token": "rsk_..."}
+    {"ssid": "...", "password": "...", "api_url": "https://racesense.in/api/upload", "token": "rsk_..."}
     ```
 
 ---
@@ -68,9 +70,10 @@ Your ESP32-S3 should have the following structure:
 
 Racesense V2 utilizes both cores of the ESP32-S3:
 - **Core 0**: Handles time-critical tasks (GPS updates, IMU sampling, SD logging).
-- **Core 1**: Handles background IoT services:
-    - **Heartbeat Thread**: POSTs every 15s to the cloud.
+- **Sync Mode**: Handles background IoT services:
+    - **Heartbeat**: POSTs every 15s to the cloud.
     - **Session Streamer**: Automatically uploads CSV logs to the cloud.
+- **Logging Mode**: Runs with WiFi disabled and writes telemetry locally.
 
 This ensures that network activity does not cause "gaps" in your high-frequency telemetry data.
 

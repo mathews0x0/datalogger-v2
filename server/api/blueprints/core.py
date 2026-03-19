@@ -14,6 +14,33 @@ import traceback
 
 core_bp = Blueprint('core_bp', __name__)
 
+
+def _pick_session_name(content, learning_dir):
+    """Name sessions using current server time once the CSV matches the current firmware shape."""
+    try:
+        for raw_line in content.splitlines()[1:]:
+            parts = raw_line.split(',')
+            if len(parts) < 13:
+                continue
+
+            row_type = parts[1].strip()
+            lat = parts[8].strip()
+            lon = parts[9].strip()
+            if row_type == 'G' and lat and lon:
+                break
+    except Exception:
+        pass
+
+    session_ts = int(datetime.utcnow().timestamp())
+
+    base_name = f"sess_{session_ts}"
+    candidate = f"{base_name}.csv"
+    counter = 1
+    while (learning_dir / candidate).exists():
+        candidate = f"{base_name}_{counter}.csv"
+        counter += 1
+    return candidate
+
 @core_bp.route('/')
 @core_bp.route('/shared/<token>')
 @core_bp.route('/community')
@@ -82,27 +109,14 @@ def upload_file():
         with open(save_path, 'w') as f:
             f.write(content)
 
-        # Server-side rename: extract first GPS timestamp from CSV data
-        # Device sends simple counter names (sess_001.csv), server renames
-        # to sess_<unix_timestamp>.csv using the first GPS timestamp
         final_name = safe_name
         try:
-            lines = content.strip().split('\n')
-            if len(lines) >= 2:
-                first_data = lines[1].split(',')
-                gps_ts = first_data[0]  # e.g., "070226_123519" (ddmmyy_HHMMSS)
-                if '_' in gps_ts and len(gps_ts) >= 13:
-                    dd, mm, yy = int(gps_ts[0:2]), int(gps_ts[2:4]), int(gps_ts[4:6])
-                    hh, mi, ss = int(gps_ts[7:9]), int(gps_ts[9:11]), int(gps_ts[11:13])
-                    year = 2000 + yy
-                    dt = datetime(year, mm, dd, hh, mi, ss)
-                    unix_ts = int(dt.timestamp())
-                    new_name = f"sess_{unix_ts}.csv"
-                    new_path = config.get_user_learning_dir(user_id) / new_name
-                    if not new_path.exists():
-                        os.rename(str(save_path), str(new_path))
-                        final_name = new_name
-                        print(f"[Upload] Renamed {safe_name} -> {new_name}")
+            new_name = _pick_session_name(content, config.get_user_learning_dir(user_id))
+            if new_name != safe_name:
+                new_path = config.get_user_learning_dir(user_id) / new_name
+                os.rename(str(save_path), str(new_path))
+                final_name = new_name
+                print(f"[Upload] Renamed {safe_name} -> {new_name}")
         except Exception as rename_err:
             print(f"[Upload] Rename skipped: {rename_err}")
 
@@ -234,27 +248,16 @@ def upload_complete():
         # Clean up chunk dir
         shutil.rmtree(str(chunk_dir), ignore_errors=True)
 
-        # Server-side rename: extract first GPS timestamp from CSV data
         final_name = safe_name
         try:
             with open(save_path, 'r') as f:
-                header_line = f.readline()  # skip header
-                first_data_line = f.readline().strip()
-            if first_data_line:
-                first_data = first_data_line.split(',')
-                gps_ts = first_data[0]  # e.g. "070226_123519"
-                if '_' in gps_ts and len(gps_ts) >= 13:
-                    dd, mm, yy = int(gps_ts[0:2]), int(gps_ts[2:4]), int(gps_ts[4:6])
-                    hh, mi, ss = int(gps_ts[7:9]), int(gps_ts[9:11]), int(gps_ts[11:13])
-                    year = 2000 + yy
-                    dt = datetime(year, mm, dd, hh, mi, ss)
-                    unix_ts = int(dt.timestamp())
-                    new_name = f"sess_{unix_ts}.csv"
-                    new_path = learning_dir / new_name
-                    if not new_path.exists():
-                        os.rename(str(save_path), str(new_path))
-                        final_name = new_name
-                        print(f"[Upload] Renamed {safe_name} -> {new_name}")
+                content = f.read()
+            new_name = _pick_session_name(content, learning_dir)
+            if new_name != safe_name:
+                new_path = learning_dir / new_name
+                os.rename(str(save_path), str(new_path))
+                final_name = new_name
+                print(f"[Upload] Renamed {safe_name} -> {new_name}")
         except Exception as rename_err:
             print(f"[Upload] Rename skipped: {rename_err}")
 

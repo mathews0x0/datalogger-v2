@@ -7,7 +7,7 @@
 | Designator | Qty | Part Number              | Description                                   | Package  |
 | :--------- | :-: | :----------------------- | :-------------------------------------------- | :------- |
 | **U1**     |  1  | **ESP32-S3-WROOM-1**     | MCU Module, 16MB Flash, 8MB PSRAM             | SMD      |
-| **U2**     |  1  | **BMI160**               | 6-Axis IMU (Accel + Gyro)                     | LGA-14   |
+| **U2**     |  1  | **BMI323**               | 6-Axis IMU (Accel + Gyro)                     | LGA-14   |
 | **U3**     |  1  | **TP4054**               | Li-Ion Charger, 500mA                         | SOT-23-5 |
 | **U4**     |  1  | **TLV75733PDBVR**        | LDO Regulator, 3.3V, 1A                       | SOT-23-5 |
 | **D1**     |  1  | **USBLC6-2SC6**          | USB ESD Protection                            | SOT-23-6 |
