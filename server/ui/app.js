@@ -38,6 +38,9 @@ let isCloudConnected = false;  // True when device is seen via Cloud Heartbeat
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Datalogger Companion App loaded');
 
+    updateResponsiveChromeMetrics();
+    window.addEventListener('resize', updateResponsiveChromeMetrics);
+
     // Start cloud heartbeat polling
     pollCloudHeartbeat();
 
@@ -68,6 +71,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load initial data
     loadHomeData();
 });
+
+function updateResponsiveChromeMetrics() {
+    const header = document.getElementById('appHeader');
+    if (!header) return;
+
+    const headerHeight = Math.ceil(header.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--header-offset', `${headerHeight}px`);
+}
 
 // ============================================================================
 // NAVIGATION
@@ -132,6 +143,8 @@ function showView(viewName) {
                 break;
         }
     }
+
+    requestAnimationFrame(updateResponsiveChromeMetrics);
 }
 
 // ============================================================================
@@ -283,6 +296,8 @@ function updateAuthUI() {
         const myDevicesCard = document.getElementById('myDevicesCard');
         if (myDevicesCard) myDevicesCard.style.display = 'none';
     }
+
+    requestAnimationFrame(updateResponsiveChromeMetrics);
 }
 
 // === PASSWORD MODAL ===
@@ -6421,6 +6436,8 @@ async function pollCloudHeartbeat() {
             } else {
                 if (syncPill) syncPill.style.display = 'none';
             }
+
+            requestAnimationFrame(updateResponsiveChromeMetrics);
         }
     } catch (e) {
         console.warn('[Heartbeat] Failed to fetch device status', e);
