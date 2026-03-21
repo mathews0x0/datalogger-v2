@@ -61,23 +61,159 @@ SUCCESS_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Setup Complete</title>
 <style>
-body {{ font-family: sans-serif; background: #121212; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; text-align: center; margin: 0; }}
-.card {{ padding: 2.5rem; background: #1e1e1e; border-radius: 20px; border: 2px solid #4caf50; max-width: 90%; }}
-.icon {{ font-size: 4rem; color: #4caf50; margin-bottom: 1rem; }}
-h2 {{ color: #4caf50; margin-bottom: 0.5rem; }}
-p {{ color: #aaa; margin-bottom: 1.5rem; font-size: 1.1rem; }}
-.countdown {{ font-size: 2.5rem; font-weight: 800; color: #ff6b35; }}
-.action {{ margin-top: 2rem; background: #ff6b35; padding: 1rem; border-radius: 10px; font-weight: 700; animation: blink 1s infinite; }}
-@keyframes blink {{ 0% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} 100% {{ opacity: 1; }} }}
+:root {{
+    --primary: #ff6b35;
+    --primary-dark: #e5501b;
+    --secondary: #004e89;
+    --background: #050505;
+    --surface: rgba(26, 26, 26, 0.88);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --text: #ffffff;
+    --text-dim: #a0a0a0;
+    --success: #00d26a;
+    --shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+}}
+* {{ box-sizing: border-box; }}
+body {{
+    margin: 0;
+    min-height: 100vh;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background:
+        radial-gradient(circle at top left, rgba(255, 107, 53, 0.18), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(0, 78, 137, 0.20), transparent 38%),
+        var(--background);
+}}
+.shell {{
+    width: 100%;
+    max-width: 430px;
+}}
+.card {{
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}}
+.topbar {{
+    height: 5px;
+    background: linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%);
+}}
+.content {{
+    padding: 28px 24px 24px;
+    text-align: center;
+}}
+.eyebrow {{
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--primary);
+    margin-bottom: 14px;
+}}
+.status-icon {{
+    width: 76px;
+    height: 76px;
+    margin: 0 auto 18px;
+    border-radius: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 38px;
+    font-weight: 900;
+    color: var(--success);
+    background: rgba(0, 210, 106, 0.12);
+    border: 1px solid rgba(0, 210, 106, 0.28);
+    box-shadow: inset 0 0 24px rgba(0, 210, 106, 0.08);
+}}
+h1 {{
+    margin: 0 0 10px;
+    font-size: 28px;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+}}
+.lead {{
+    margin: 0 auto 22px;
+    max-width: 290px;
+    color: var(--text-dim);
+    font-size: 15px;
+    line-height: 1.55;
+}}
+.countdown-panel {{
+    margin: 0 0 18px;
+    padding: 18px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}}
+.countdown-label {{
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+}}
+.countdown {{
+    font-size: 52px;
+    line-height: 1;
+    font-weight: 900;
+    color: var(--primary);
+}}
+.countdown-unit {{
+    margin-top: 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+}}
+.action {{
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 107, 53, 0.08));
+    border: 1px solid rgba(255, 107, 53, 0.28);
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: #ffd7ca;
+    animation: pulse 1.4s ease-in-out infinite;
+}}
+.support {{
+    margin-top: 18px;
+    font-size: 12px;
+    color: #7f7f7f;
+}}
+strong {{
+    color: var(--text);
+}}
+@keyframes pulse {{
+    0% {{ transform: scale(1); box-shadow: 0 0 0 rgba(255, 107, 53, 0); }}
+    50% {{ transform: scale(0.985); box-shadow: 0 0 18px rgba(255, 107, 53, 0.12); }}
+    100% {{ transform: scale(1); box-shadow: 0 0 0 rgba(255, 107, 53, 0); }}
+}}
 </style>
 </head>
 <body>
-    <div class="card">
-        <div class="icon">✓</div>
-        <h2>Credentials Linked!</h2>
-        <p>RS-Core will reboot in:</p>
-        <div class="countdown" id="cd">15</div>
-        <div class="action">TURN ON YOUR HOTSPOT NOW</div>
+    <div class="shell">
+        <div class="card">
+            <div class="topbar"></div>
+            <div class="content">
+                <div class="eyebrow">RaceSense Provisioning</div>
+                <div class="status-icon">✓</div>
+                <h1>Credentials Linked</h1>
+                <p class="lead">Your RS-Core has saved the network details and is about to restart into normal sync behavior.</p>
+                <div class="countdown-panel">
+                    <div class="countdown-label">Rebooting In</div>
+                    <div class="countdown" id="cd">15</div>
+                    <div class="countdown-unit">seconds</div>
+                </div>
+                <div class="action">Turn on your hotspot now</div>
+                <div class="support">After reboot, the device will look for the saved network and continue setup automatically.</div>
+            </div>
+        </div>
     </div>
     <script>
         var c = 15;
