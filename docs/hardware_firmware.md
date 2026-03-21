@@ -60,6 +60,7 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 *   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
 *   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread.
 *   **Zero-Allocation Pipeline**: The system uses `color_animations.py` as a theme engine with pre-allocated GRB buffers. The `LEDManager` writes directly to the hardware buffer (`buf[:] = LOOKUP`) to prevent heap fragmentation during Wi-Fi/SSL operations.
+*   **Data Handshake Safety**: The device aggressively moves local logs to an `uploaded` directory immediately upon receiving `200 OK` from the server's final `/upload/complete` signal. The server is strictly architected to synchronously guarantee disk layout before transmitting this success signal.
 *   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is applied to all animations.
 *   **Long press (>3s)** on Sync Button at any time in Sync Mode → enters **Pairing Mode** (AP + Captive Portal).
 *   Device stays in Sync Mode indefinitely (no automatic reboot).

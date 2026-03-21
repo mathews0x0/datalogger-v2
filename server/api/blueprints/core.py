@@ -3,6 +3,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity
 import os
 import json
 from datetime import datetime
+import threading
 
 from api.models import db, User, Job
 from api.blueprints.devices import _resolve_upload_user
@@ -196,7 +197,13 @@ def upload_chunk():
                 device_token.sync_current_file_index = int(file_idx)
             
             device_token.last_sync = datetime.utcnow()
-            db.session.commit()
+            
+            last_chunk_index = -1
+            if device_token.last_sync_total:
+                last_chunk_index = device_token.last_sync_total - 1
+                
+            if chunk_index % 20 == 0 or chunk_index == last_chunk_index:
+                db.session.commit()
 
         return jsonify({"received": True, "chunk_index": chunk_index, "bytes": len(data)})
 
@@ -283,6 +290,13 @@ def upload_complete():
     except Exception as e:
         print(f"Upload Complete Error: {e}")
         traceback.print_exc()
+        if device_token:
+            try:
+                device_token.is_syncing = False
+                db.session.commit()
+            except Exception as reset_err:
+                print(f"Failed to reset is_syncing: {reset_err}")
+                db.session.rollback()
         if os.environ.get('FLASK_ENV', 'development') == 'production':
             return jsonify({"error": "Assembly failed"}), 500
         return jsonify({"error": str(e)}), 500
