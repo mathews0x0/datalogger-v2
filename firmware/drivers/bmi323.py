@@ -83,6 +83,17 @@ class BMI323:
     def get_gyro(self):
         return self._read_words(self.REG_GYR_DATA_X, 3)
 
+    def get_values_into(self, out):
+        """Fill a caller-provided list with ax, ay, az, gx, gy, gz raw values."""
+        raw = self.i2c.readfrom_mem(self.address, self.REG_ACC_DATA_X, 14)
+        idx = 0
+        for i in range(6):
+            lsb = raw[2 + 2 * i]
+            msb = raw[3 + 2 * i]
+            val = (msb << 8) | lsb
+            out[idx] = val if val < 32768 else val - 65536
+            idx += 1
+
     def get_values(self):
         acc = self.get_accel()
         gyr = self.get_gyro()
@@ -107,4 +118,3 @@ if __name__ == "__main__":
             time.sleep(0.5)
     except Exception as e:
         print("Error during test:", e)
-

@@ -134,5 +134,14 @@ def mark_exception(exc):
     _save_json(STATE_PATH, _state)
 
 
+def update_runtime_stats(**kwargs):
+    global _state
+    if _state is None:
+        boot_start()
+    for key, value in kwargs.items():
+        _state[key] = value
+    _save_json(STATE_PATH, _state)
+
+
 def get_state():
     return _state or _load_json(STATE_PATH, {})

@@ -2,12 +2,13 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2025-12-25
+**Last Updated:** 2026-03-22
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
 ---
 
+#
 ## 1. Project Intent (Inception)
 
 **Date:** 2025-11 (late)
@@ -2568,3 +2569,59 @@ Fundamental shift in the uploader's networking model:
 - The RS-Core to Cloud transfer pipeline is now fault-tolerant and guarantees zero data loss on transit.
 
 **Status:** ✅ Complete & Deployed.
+
+# 0. Stability Hardening Reset (Product Perspective)
+
+**Date:** 2026-03-22
+
+PM decision:
+
+> _Field reliability now has direct product value. A logger that captures truth but fails under weak battery, partial network recovery, or storage pressure is not yet a trustworthy rider-development tool._
+
+### Why this became a product issue
+
+The RS-Core was already functionally capable, but too much of the real-world rider experience still depended on optimistic assumptions:
+
+- WiFi/cloud handshake succeeds on the first attempt.
+- Uploads complete in one uninterrupted run.
+- Storage remains healthy throughout a session.
+- Battery voltage remains comfortably above transient brownout conditions.
+- SD write latency is low enough that it does not distort logging behavior.
+
+PM concluded that these were not merely firmware details. They directly affected:
+
+- rider trust in whether the session was truly captured,
+- trust in whether data would still be present after the ride,
+- predictability of sync after the day ends,
+- perceived product maturity.
+
+### Product-level outcomes now targeted
+
+- **More trustworthy sync**:
+  The device should recover from temporary server/network failure inside the same sync session, not require ritual rebooting.
+
+- **Reduced end-of-day failure risk**:
+  Uploads should resume from received chunks instead of re-sending entire sessions over weak hotspot links.
+
+- **Battery-aware behavior**:
+  The module should degrade gracefully under weak voltage by reducing LED draw, lowering WiFi aggressiveness, and deferring non-essential upload work.
+
+- **Cleaner mode transitions**:
+  Pairing mode should not stomp on active sync activity. Mode changes must feel intentional and deterministic.
+
+- **Recoverable logging**:
+  Partial files should remain diagnosable. The device should leave visible integrity breadcrumbs when sessions are interrupted or storage becomes unsafe.
+
+- **Operational observability**:
+  Runtime failures should become explainable through boot/runtime diagnostics rather than anecdotal “it crashed” reports.
+
+### PM framing change
+
+This work formally moves system resilience from a Phase 5 engineering concern into a product requirement:
+
+- **Correctness of capture** is still the first rule.
+- **Reliability of capture and retrieval** is now considered part of correctness.
+
+This is a meaningful product posture shift. RaceSense is no longer only optimizing for analysis sophistication; it is optimizing for _trustworthy capture under real trackday conditions_.
+
+**Status:** ✅ Complete

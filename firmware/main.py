@@ -286,6 +286,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         diag.record_phase("SYNC_WIFI_ACTIVE")
         sta.active(True)
         sta.config(txpower=8.5) # Prevent ESP32 brownout spikes
+        apply_power_policy(get_vbatt(), sta)
         diag.record_phase("SYNC_WIFI_CONNECT", config.get('ssid', ''))
         sta.connect(config['ssid'], config.get('password', ''))
         
@@ -317,9 +318,43 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
     
     wdt.feed()
     # Shared state for thread coordination
-    global uploader_busy, network_lock
-    uploader_busy = False
+    global network_lock
     network_lock = _thread.allocate_lock()
+    state_lock = _thread.allocate_lock()
+    sync_state = {
+        "uploader_busy": False,
+        "uploader_started": False,
+        "hb_ok": False,
+        "wifi_connected": wifi_connected,
+        "pairing_active": False,
+        "portal_requested": False,
+        "low_power_mode": False,
+    }
+
+    def set_state(**kwargs):
+        with state_lock:
+            sync_state.update(kwargs)
+
+    def get_state(key):
+        with state_lock:
+            return sync_state.get(key)
+
+    def spawn_uploader():
+        if get_state("uploader_started"):
+            return False
+        vbatt_now = get_vbatt()
+        _, critical_power = apply_power_policy(vbatt_now, network.WLAN(network.STA_IF) if wifi_connected else None)
+        if critical_power:
+            print("[Sync] Battery too low for upload. Deferring uploader start.")
+            diag.record_phase("SYNC_LOW_BATTERY_DEFER", "%.2f" % vbatt_now)
+            return False
+        print("[Sync] Spawning uploader thread.")
+        diag.record_phase("SYNC_UPLOADER_START")
+        gc.collect()
+        _thread.stack_size(32768) # 32KB for SSL uploader
+        _thread.start_new_thread(uploader_thread_func, (sm, led))
+        set_state(uploader_started=True)
+        return True
     
     # Helper function to get battery voltage
     def get_vbatt():
@@ -330,6 +365,33 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             return (vbat_adc.read_uv() / 1000000.0) * 2.0
         except:
             return 0.0
+
+    def apply_power_policy(vbatt, wifi_sta=None):
+        low_power = vbatt > 0 and vbatt < 3.70
+        critical_power = vbatt > 0 and vbatt < 3.55
+        set_state(low_power_mode=low_power)
+        if critical_power:
+            led.set_brightness(0.10)
+            if wifi_sta:
+                try:
+                    wifi_sta.config(txpower=2.0)
+                except:
+                    pass
+        elif low_power:
+            led.set_brightness(0.18)
+            if wifi_sta:
+                try:
+                    wifi_sta.config(txpower=5.0)
+                except:
+                    pass
+        else:
+            led.set_brightness(0.40)
+            if wifi_sta:
+                try:
+                    wifi_sta.config(txpower=8.5)
+                except:
+                    pass
+        return low_power, critical_power
 
     def perform_heartbeat():
         """Single heartbeat + active track pull using raw sockets for stability."""
@@ -442,11 +504,29 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
                     ss_tr.write(req_tr.encode())
                     
                     # Skip headers and read body
-                    resp_tr = ss_tr.read(4096).decode()
-                    print(f"[Sync] Raw response (partial): {resp_tr[:200]}...")
+                    status_line = ss_tr.readline().decode().strip()
+                    headers = {}
+                    while True:
+                        header_line = ss_tr.readline().decode()
+                        if not header_line or header_line == "\r\n":
+                            break
+                        if ':' in header_line:
+                            key, value = header_line.split(':', 1)
+                            headers[key.strip().lower()] = value.strip()
+
+                    content_len = int(headers.get("content-length", "0") or "0")
+                    body_bytes = b""
+                    while content_len > 0:
+                        chunk = ss_tr.read(content_len)
+                        if not chunk:
+                            break
+                        body_bytes += chunk
+                        content_len -= len(chunk)
+
+                    body = body_bytes.decode() if body_bytes else ""
+                    print(f"[Sync] Track response: {status_line} body_len={len(body_bytes)}")
                     
-                    if "200 OK" in resp_tr and "\r\n\r\n" in resp_tr:
-                        body = resp_tr.split("\r\n\r\n", 1)[1]
+                    if "200 OK" in status_line and body:
                         try:
                             t_data = ujson.loads(body)
                             if t_data and "active_track" in t_data:
@@ -477,7 +557,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             gc.collect()
         
         # Update: Only set status LED if uploader is not busy
-        if not uploader_busy:
+        if not get_state("uploader_busy"):
             if success:
                 led.play_heartbeat_success()
             else:
@@ -487,8 +567,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
 
     # Background Uploader Thread
     def uploader_thread_func(sm_ref, led_ref):
-        global uploader_busy, network_lock
-        uploader_busy = True
+        set_state(uploader_busy=True)
         try:
             pending = sm_ref.list_sessions()
             if pending:
@@ -509,11 +588,10 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             print(f"[Sync] Uploader Thread Fatal: {e}")
             led_ref.play_heartbeat_error()
         finally:
-            uploader_busy = False
+            set_state(uploader_busy=False, uploader_started=False)
 
     # --- PHASE 1: INITIAL HANDSHAKE ---
     hb_ok = False
-    uploader_spawned = False
     
     if wifi_connected:
         print("[Sync] Performing initial handshake...")
@@ -521,17 +599,14 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         for i in range(3):
             with network_lock:
                 hb_ok = perform_heartbeat()
+            set_state(hb_ok=hb_ok)
             if hb_ok: break
             print(f"[Sync] Handshake retry {i+1}/3...")
             time.sleep(2)
         
         if hb_ok:
-            print("[Sync] Handshake successful. Spawning uploader thread.")
-            diag.record_phase("SYNC_UPLOADER_START")
-            gc.collect()
-            _thread.stack_size(32768) # 32KB for SSL uploader
-            _thread.start_new_thread(uploader_thread_func, (sm, led))
-            uploader_spawned = True
+            print("[Sync] Handshake successful.")
+            spawn_uploader()
         else:
             print("[Sync] Handshake failed. Will retry in background.")
             diag.record_phase("SYNC_HANDSHAKE_FAILED")
@@ -540,7 +615,6 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
     print("[Sync] Sync Engine Ready.")
     diag.record_phase("SYNC_READY")
     diag.mark_boot_completed("sync_loop_running")
-    pairing_active = False
     press_start = 0
     last_ping = time.ticks_ms()
     wdt.feed()
@@ -548,28 +622,54 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
     while True:
         wdt.feed()
         current_time = time.ticks_ms()
+        vbatt_now = get_vbatt()
+        low_power, critical_power = apply_power_policy(vbatt_now, network.WLAN(network.STA_IF) if wifi_connected else None)
         
-        if pairing_active:
+        if get_state("pairing_active"):
             led.play_pairing()
             time.sleep_ms(50)
             continue
+
+        if get_state("portal_requested") and not get_state("uploader_busy"):
+            if network_lock.acquire(False):
+                try:
+                    print("[Sync] Entering Pairing Mode...")
+                    diag.record_phase("SYNC_PORTAL_START", "deferred")
+                    stop_wifi()
+                    time.sleep_ms(200)
+                    from lib.captive_portal import start_background_portal
+                    gc.collect()
+                    _thread.stack_size(16384)
+                    _thread.start_new_thread(start_background_portal, (led,))
+                    set_state(pairing_active=True, portal_requested=False, hb_ok=False)
+                    diag.mark_boot_completed("pairing_portal_running")
+                finally:
+                    network_lock.release()
+                time.sleep_ms(50)
+                continue
             
         # Periodic Heartbeat (Every 15s)
-        if wifi_connected and not uploader_busy and time.ticks_diff(current_time, last_ping) > 15000:
+        if wifi_connected and not get_state("uploader_busy") and not get_state("portal_requested") and time.ticks_diff(current_time, last_ping) > 15000:
             if network_lock.acquire(False): # Only heartbeat if lock is free
                 try:
                     last_ping = current_time
                     success = perform_heartbeat()
+                    hb_ok = success
+                    set_state(hb_ok=success)
+                    if success and not get_state("uploader_started"):
+                        spawn_uploader()
                     
                 finally:
                     network_lock.release()
                     gc.collect()
         
         # Visual Status
-        if not uploader_busy:
+        if not get_state("uploader_busy"):
             if needs_setup:
                 led.play_setup_needed()
-            elif hb_ok:
+            elif critical_power:
+                led.play_storage_critical()
+            elif get_state("hb_ok"):
                 led.play_sync_ok()
             elif wifi_connected:
                 led.play_heartbeat_error()
@@ -580,18 +680,8 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             if press_start == 0:
                 press_start = time.ticks_ms()
             elif time.ticks_diff(time.ticks_ms(), press_start) > 3000:
-                print("[Sync] Entering Pairing Mode...")
-                diag.record_phase("SYNC_PORTAL_START", "long_press")
-                from lib.wifi_manager import stop_wifi
-                stop_wifi()
-                time.sleep_ms(200)
-                from lib.captive_portal import start_background_portal
-                # No thread lock needed for portal since it's an exclusive mode
-                gc.collect()
-                _thread.stack_size(16384)
-                _thread.start_new_thread(start_background_portal, (led,))
-                pairing_active = True
-                diag.mark_boot_completed("pairing_portal_running")
+                print("[Sync] Pairing requested. Waiting for network activity to quiesce.")
+                set_state(portal_requested=True)
                 press_start = 0
         else:
             press_start = 0
@@ -623,11 +713,23 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
     # RTC sync flag
     rtc_synced = False
     
-    # Write buffer for batched SD writes
+    # Write buffers for batched SD writes
     write_buf = []
+    flush_buf = []
+    storage_fault = False
+    storage_critical = False
+    stop_logging = False
+    hard_stop_reason = ""
+    max_loop_ms = 0
+    overrun_count = 0
+    marker_seq = 0
+    dropped_rows = 0
+    max_queue_depth = 0
+    min_heap = -1
     
     # Cached values
     vbat = 0.0
+    imu_buf = [0, 0, 0, 0, 0, 0]
     fix = {'valid': False, 'lat': None, 'lon': None, 'altitude': 0.0,
            'speed_kmh': 0.0, 'satellites': 0, 'timestamp': None, 'date': None}
     base_state = "SEARCHING"
@@ -640,6 +742,109 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
     except Exception as e:
         print(f"[System] FAILED to open log file: {e}")
         f = None
+
+    def sample_heap():
+        nonlocal min_heap
+        try:
+            current = gc.mem_free()
+            if min_heap < 0 or current < min_heap:
+                min_heap = current
+            return current
+        except:
+            return -1
+
+    def close_log_file():
+        nonlocal f
+        if f:
+            try:
+                f.close()
+            except:
+                pass
+            f = None
+
+    def queue_row(line):
+        nonlocal dropped_rows, max_queue_depth
+        pending = len(write_buf) + len(flush_buf)
+        if pending >= 200:
+            dropped_rows += 1
+            if dropped_rows == 1 or dropped_rows % 100 == 0:
+                print(f"[System] WRITE QUEUE OVERFLOW: dropped_rows={dropped_rows}")
+            return False
+        write_buf.append(line)
+        pending += 1
+        if pending > max_queue_depth:
+            max_queue_depth = pending
+        return True
+
+    def schedule_flush(force=False):
+        nonlocal write_buf, flush_buf
+        if not f or storage_fault or flush_buf:
+            return
+        if write_buf and (force or len(write_buf) >= FLUSH_INTERVAL):
+            flush_buf, write_buf = write_buf, []
+
+    def flush_write_buf():
+        nonlocal storage_fault, stop_logging, hard_stop_reason, flush_buf
+        if not f or not flush_buf or storage_fault:
+            return
+        try:
+            f.write(''.join(flush_buf))
+            f.flush()
+            flush_buf = []
+        except Exception as e:
+            storage_fault = True
+            stop_logging = True
+            hard_stop_reason = "storage_write_failure"
+            print(f"[System] STORAGE WRITE FAILURE: {e}")
+            diag.record_phase("LOGGING_STORAGE_FAULT", str(e))
+            diag.update_runtime_stats(storage_fault=True, storage_fault_reason=str(e), min_heap=min_heap)
+            try:
+                marker_seq_local = marker_seq + 1
+                row = [
+                    str(time.ticks_ms()),
+                    'M',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    'MARKER',
+                    'LOG_STOP',
+                    str(marker_seq_local),
+                    hard_stop_reason,
+                    '',
+                    f"{vbat:.2f}",
+                ]
+                flush_buf.append(','.join(row) + '\n')
+            except:
+                pass
+            close_log_file()
+
+    def append_marker(marker_name, marker_value=""):
+        nonlocal marker_seq
+        if not f or storage_fault:
+            return
+        marker_seq += 1
+        row = [
+            str(time.ticks_ms()),
+            'M',
+            '',
+            '',
+            '',
+            '',
+            '',
+            '',
+            'MARKER',
+            marker_name,
+            str(marker_seq),
+            marker_value,
+            '',
+            f"{vbat:.2f}",
+        ]
+        queue_row(','.join(row) + '\n')
+
+    append_marker("LOG_OPEN", os.path.basename(log_file))
     
     while True:
         tick_start = time.ticks_ms()
@@ -654,23 +859,23 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
         gyr_x, gyr_y, gyr_z = 0.0, 0.0, 0.0
         if imu:
             try:
-                data = imu.get_values()
-                acc_x = data["acc"]["x"] / imu.ACC_SENSITIVITY
-                acc_y = data["acc"]["y"] / imu.ACC_SENSITIVITY
-                acc_z = data["acc"]["z"] / imu.ACC_SENSITIVITY
-                gyr_x = data["gyro"]["x"] / imu.GYR_SENSITIVITY
-                gyr_y = data["gyro"]["y"] / imu.GYR_SENSITIVITY
-                gyr_z = data["gyro"]["z"] / imu.GYR_SENSITIVITY
+                imu.get_values_into(imu_buf)
+                acc_x = imu_buf[0] / imu.ACC_SENSITIVITY
+                acc_y = imu_buf[1] / imu.ACC_SENSITIVITY
+                acc_z = imu_buf[2] / imu.ACC_SENSITIVITY
+                gyr_x = imu_buf[3] / imu.GYR_SENSITIVITY
+                gyr_y = imu_buf[4] / imu.GYR_SENSITIVITY
+                gyr_z = imu_buf[5] / imu.GYR_SENSITIVITY
             except:
                 pass
         
         # Write IMU row (row_type = I, GPS fields empty)
-        if f:
-            write_buf.append(f"{tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,\n")
+        if f and not stop_logging:
+            queue_row(f"{tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,\n")
         
         # ── 2. GPS READ (every 10th tick = 10 Hz) ──
         if loop_count % 10 == 0:
-            fix = gps.update()
+            fix = gps.update(max_lines=4)
             
             # Sync RTC to GPS once
             if not rtc_synced and fix.get('valid'):
@@ -690,9 +895,9 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                     pass
             
             # Write GPS row if we have a fresh valid fix
-            if f and fix['valid'] and gps.new_fix:
-                write_buf.append(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f}," +
-                                 f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f}\n")
+            if f and not stop_logging and fix['valid'] and gps.new_fix:
+                queue_row(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f}," +
+                          f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f}\n")
                 
                 # Track Engine (only on GPS rows)
                 try:
@@ -706,25 +911,32 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                         print(f"TrackEng Error: {e}")
             
             # LOGGING is solid green
-            base_state = "LOGGING" if fix['valid'] else "SEARCHING"
-            if fix['valid']: led.play_logging()
-            else: led.play_searching()
+            if not storage_critical and not stop_logging:
+                base_state = "LOGGING" if fix['valid'] else "SEARCHING"
+                if fix['valid']: led.play_logging()
+                else: led.play_searching()
             
             # Debug output (every ~1s = every 10 GPS ticks)
             if loop_count % 100 == 0:
-                print(f"[DBG] valid={fix['valid']} lat={fix['lat']} lon={fix['lon']} sats={fix['satellites']} buf={len(write_buf)}")
+                print(f"[DBG] valid={fix['valid']} lat={fix['lat']} lon={fix['lon']} sats={fix['satellites']} queue={len(write_buf)+len(flush_buf)} dropped={dropped_rows}")
         
         # ── 3. FLUSH WRITE BUFFER ──
         if f and len(write_buf) >= FLUSH_INTERVAL:
-            f.write(''.join(write_buf))
-            f.flush()
-            write_buf.clear()
+            schedule_flush()
+        if f and flush_buf:
+            flush_write_buf()
         
         # ── 4. BATTERY (every 100th tick = ~1 Hz) ──
         if loop_count % 100 == 0:
             try:
                 # Use calibrated microvolt reading for better accuracy
                 vbat = (vbat_adc.read_uv() / 1000000.0) * 2.0
+                if vbat > 0 and vbat < 3.55:
+                    led.set_brightness(0.08)
+                elif vbat > 0 and vbat < 3.70:
+                    led.set_brightness(0.15)
+                else:
+                    led.set_brightness(0.35)
             except:
                 vbat = 0.0
         
@@ -734,29 +946,71 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                 s_info = sm.get_active_storage_info()
                 if s_info and s_info['total_kb'] > 0:
                     usage = s_info['used_kb'] / s_info['total_kb']
-                    if usage > 0.95:
+                    if usage > 0.90:
+                        storage_critical = True
                         base_state = "STORAGE_CRITICAL"
                         led.play_storage_critical()
                         print(f"[System] STORAGE CRITICAL: {s_info['used_kb']}/{s_info['total_kb']} KB")
+                    if usage > 0.98 and not stop_logging:
+                        stop_logging = True
+                        hard_stop_reason = "storage_hard_limit"
+                        print("[System] STORAGE HARD LIMIT REACHED. Stopping log growth to protect filesystem.")
+                        diag.record_phase("LOGGING_STORAGE_HARD_LIMIT")
+                        append_marker("LOG_STOP", hard_stop_reason)
+                        schedule_flush(force=True)
+                        flush_write_buf()
+                        close_log_file()
             except:
                 pass
         
         # ── 6. PERIODIC MAINTENANCE ──
         if loop_count % 100 == 0:
             try:
-                os.sync()
+                if f and not storage_fault:
+                    os.sync()
             except:
-                pass
+                storage_fault = True
+                stop_logging = True
+                hard_stop_reason = "storage_sync_failure"
+                diag.record_phase("LOGGING_STORAGE_SYNC_FAULT")
+                append_marker("LOG_STOP", hard_stop_reason)
+                schedule_flush(force=True)
+                close_log_file()
+
+        if not stop_logging and loop_count % 5000 == 0:
+            append_marker("CHECKPOINT", str(loop_count))
+            schedule_flush()
         
         if loop_count % 1000 == 0:
             gc.collect()
-            print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count}")
+            sample_heap()
+            diag.update_runtime_stats(
+                loop_count=loop_count,
+                loop_state=base_state,
+                min_heap=min_heap,
+                max_loop_ms=max_loop_ms,
+                overrun_count=overrun_count,
+                stop_logging=stop_logging,
+                stop_reason=hard_stop_reason,
+                storage_critical=storage_critical,
+                gps_health=gps.get_health(),
+                led_health=led.get_health(),
+                vbat=vbat,
+                queue_depth=len(write_buf) + len(flush_buf),
+                dropped_rows=dropped_rows,
+                max_queue_depth=max_queue_depth,
+            )
+            print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count} | Queue: {len(write_buf)+len(flush_buf)} | Dropped: {dropped_rows} | MinHeap: {min_heap} | MaxLoop: {max_loop_ms}")
 
         # ── 7. TIMING — Target 10ms per tick (100 Hz) ──
         elapsed_ms = time.ticks_diff(time.ticks_ms(), tick_start)
+        if elapsed_ms > max_loop_ms:
+            max_loop_ms = elapsed_ms
         remaining = 10 - elapsed_ms
         if remaining > 0:
             time.sleep_ms(remaining)
+        else:
+            overrun_count += 1
             
 if __name__ == "__main__":
     try:

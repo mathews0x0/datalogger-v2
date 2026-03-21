@@ -5,6 +5,17 @@ class GPS:
     def __init__(self, uart):
         self.uart = uart
         self.new_fix = False  # True when update() parsed a new RMC sentence
+        self.health = {
+            'lines_processed': 0,
+            'checksum_failures': 0,
+            'decode_failures': 0,
+            'parse_failures': 0,
+            'update_calls': 0,
+            'last_lines_processed': 0,
+            'max_lines_per_update': 0,
+            'rmc_received': 0,
+            'gga_received': 0,
+        }
         self.last_fix = {
             'lat': None,
             'lon': None,
@@ -60,10 +71,14 @@ class GPS:
         self.send_ubx(0x06, 0x01, b'\xf0\x05\x00') # VTG
         self.send_ubx(0x06, 0x01, b'\xf0\x02\x00') # GSA
 
-    def update(self):
-        """Read all available data from UART and parse. Don't block."""
+    def update(self, max_lines=None):
+        """Read available data from UART and parse up to max_lines to bound scheduler jitter."""
         self.new_fix = False
+        self.health['update_calls'] += 1
+        lines_processed = 0
         while self.uart.any():
+            if max_lines is not None and lines_processed >= max_lines:
+                break
             try:
                 line = self.uart.readline()
                 if not line: break
@@ -72,12 +87,19 @@ class GPS:
                 try:
                     line_str = line.decode('utf-8').strip()
                 except:
+                    self.health['decode_failures'] += 1
                     continue
                     
                 if line_str.startswith('$'):
                     self._parse_nmea(line_str)
+                    lines_processed += 1
+                    self.health['lines_processed'] += 1
             except Exception:
-                pass 
+                self.health['parse_failures'] += 1
+
+        self.health['last_lines_processed'] = lines_processed
+        if lines_processed > self.health['max_lines_per_update']:
+            self.health['max_lines_per_update'] = lines_processed
                 
         return self.last_fix
 
@@ -99,6 +121,7 @@ class GPS:
 
     def _parse_nmea(self, line):
         if not self._chk(line):
+            self.health['checksum_failures'] += 1
             return 
             
         parts = line.split(',')
@@ -106,6 +129,7 @@ class GPS:
         
         # RMC: Recommended Minimum Data (Time, Lat, Lon, Speed, Date)
         if msg_id == 'RMC':
+            self.health['rmc_received'] += 1
             # $GNRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A
             # Index: 1=Time, 2=Status(A=OK), 3=Lat, 4=N, 5=Lon, 6=E, 7=Speed(Knots)
             if len(parts) < 10: return
@@ -140,6 +164,7 @@ class GPS:
 
         # GGA: Fix Data (Satellites, Altitude)
         elif msg_id == 'GGA':
+            self.health['gga_received'] += 1
             # $GNGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47
             # Index: 6=FixType, 7=Sats
             if len(parts) > 9:
@@ -170,3 +195,6 @@ class GPS:
             return calc
         except:
             return None
+
+    def get_health(self):
+        return self.health

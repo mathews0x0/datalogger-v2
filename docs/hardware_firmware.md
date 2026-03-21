@@ -50,9 +50,12 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 ### **LOGGING MODE (Default — No Radio)**
 *   All WiFi radios are killed immediately.
 *   **Core 0 runs exclusive 100Hz telemetry loop**: IMU every tick (100Hz), GPS every 10th tick (10Hz).
-*   **Buffered writes**: Rows are batched in memory (~20 rows) and flushed to SD card ~5 times/sec for efficiency.
+*   **Bounded double-buffer writes**: Rows are queued into an active memory buffer, swapped into a flush buffer around ~20 rows, and written out separately to reduce SD latency impact on the sampling path.
 *   **Method-Driven UI Signaling**: Core 0 never touches NeoPixel hardware directly. It calls semantic methods (e.g., `led.play_logging()`) which set internal flags for the background worker.
 *   **Track Engine** provides lap/sector crossing events which are overlaid via `led.trigger_event()`.
+*   **Integrity markers**: The logger emits lightweight `M` rows (`LOG_OPEN`, periodic `CHECKPOINT`, `LOG_STOP`) so partial sessions are easier to recover and diagnose after resets or storage faults.
+*   **Protective shutdown behavior**: Storage-critical conditions are latched. At a hard threshold the logger stops file growth deliberately instead of continuing blindly into full-disk failure.
+*   **Runtime diagnostics**: The firmware tracks queue depth, dropped rows, heap low watermark, loop overruns, GPS parser health, LED thread health, and battery voltage for post-mortem diagnosis.
 *   No uploader, no captive portal, no WiFi threads.
 
 ### **SYNC MODE (Button Press — No Logging)**
@@ -60,9 +63,11 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 *   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
 *   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread.
 *   **Zero-Allocation Pipeline**: The system uses `color_animations.py` as a theme engine with pre-allocated GRB buffers. The `LEDManager` writes directly to the hardware buffer (`buf[:] = LOOKUP`) to prevent heap fragmentation during Wi-Fi/SSL operations.
-*   **Data Handshake Safety**: The device aggressively moves local logs to an `uploaded` directory immediately upon receiving `200 OK` from the server's final `/upload/complete` signal. The server is strictly architected to synchronously guarantee disk layout before transmitting this success signal.
-*   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is applied to all animations.
-*   **Long press (>3s)** on Sync Button at any time in Sync Mode → enters **Pairing Mode** (AP + Captive Portal).
+*   **Resumable upload safety**: Session uploads use chunked transfer with server-side chunk persistence. If sync is interrupted, the device can query upload status and resume from the next missing chunk instead of restarting the whole file.
+*   **Recovered handshake path**: If the initial cloud handshake fails, later heartbeat recovery can still trigger uploads in the same sync session.
+*   **Power-aware sync**: Under weak battery voltage, LED brightness and WiFi TX power are reduced. At critical battery voltage the uploader may be deferred to avoid brownouts.
+*   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is now applied to actual LED output, not just animation choice.
+*   **Deferred Pairing Transition**: Long press (>3s) requests Pairing Mode, but the firmware now waits for active network work to quiesce before switching into AP + Captive Portal.
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 
 ---
@@ -72,7 +77,8 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 ### **The State Machine (Logging Mode Only)**
 *   **SEARCHING**: GPS is looking for a lock.
 *   **LOGGING**: GPS fix valid and recording active.
-*   **STORAGE_CRITICAL**: Storage usage > 95%.
+*   **STORAGE_CRITICAL**: Storage usage > 90% and warning is latched.
+*   **HARD_STOP**: Logging growth is stopped near full storage (~98%) to preserve filesystem integrity and diagnostics headroom.
 
 ### **LED Feedback (Method-Driven)**
 
@@ -97,6 +103,7 @@ The `LEDManager` uses semantic methods. Direct state strings are no longer used 
 | Sync: Uploading | **Max Speed Flash** | **Green (25Hz)** |
 | Sync: Upload OK | Slow fade | Green |
 | Sync: Upload Failed | Slow fade | Red |
+| Sync: Low Battery | Reduced brightness + reduced TX power | Existing sync state colors, dimmed |
 | Pairing Mode | Breathing fade | Blue |
 | **SETUP_NEEDED** | **Balanced Rainbow**| **Complex Blends (no primary RGB)** |
 
@@ -108,10 +115,13 @@ Header: `tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,spe
 |----------|------|-----------------|
 | `I` (IMU) | 100 Hz | `tick_ms`, accel, gyro |
 | `G` (GPS) | 10 Hz | `tick_ms`, accel, gyro, lat, lon, alt, speed, sats, vbat |
+| `M` (Marker) | Sparse / event-driven | session integrity + operational marker data |
 
 **`tick_ms`**: ESP32 monotonic clock (milliseconds). Used as the master timestamp for sensor fusion alignment.
 **`vbat`**: Battery voltage (Volts). Calibrated via `read_uv()` with a 2.0x software multiplier for the 100k/100k divider.
-**Buffered writes**: ~20 rows accumulated before single SD write+flush (~200ms max data loss on power failure).
+**Write queueing**: ~20 rows accumulated before a buffer swap and SD write+flush.
+**Queue protection**: The logger tracks queue overflow and dropped-row counts so SD bottlenecks can be measured.
+**Checkpointing**: Marker rows provide recovery breadcrumbs when a file is interrupted before clean completion.
 
 ---
 

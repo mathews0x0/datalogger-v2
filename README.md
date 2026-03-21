@@ -45,8 +45,3 @@ cd firmware
 | `/api/upload` | POST | Streamed CSV upload for logging data. |
 | `/api/devices` | GET | (Frontend) Pulls latest device heartbeats to show "Connected" status. |
 
-## Feature Status
-- [x] **Stealth Provisioning**: Pair without disconnecting mobile data.
-- [x] **Background Heartbeat**: 15s interval asynchronous health checks.
-- [x] **Auto-Upload**: Automatic session streaming to cloud.
-- [x] **Cloud Decoupling**: Frontend polling is purely cloud-based.

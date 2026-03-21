@@ -4,6 +4,7 @@ import time
 import json
 import ubinascii
 import ntptime
+import gc
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
 

@@ -22,6 +22,7 @@ class LEDManager:
         self.pin = Pin(pin, Pin.OUT)
         self.np = neopixel.NeoPixel(self.pin, count)
         self.count = count
+        self._scaled_buf = bytearray(count * 3)
         
         self.onboard_neo_pin = Pin(onboard_neo_pin, Pin.OUT)
         self.onboard_np = neopixel.NeoPixel(self.onboard_neo_pin, 1)
@@ -39,13 +40,16 @@ class LEDManager:
         self._frame_idx = 0
         self._lock = _thread.allocate_lock()
         self._thread_running = False
+        self._error_count = 0
+        self._last_error = ""
 
     def set_brightness(self, level):
         """Set global brightness (mapped during buffer writes)."""
         self.brightness = max(0.0, min(1.0, level))
 
     def set_track_mode(self, active=True):
-        self._track_mode = active
+        with self._lock:
+            self._track_mode = active
 
     def start_animation_thread(self):
         if self._thread_running: return
@@ -55,19 +59,28 @@ class LEDManager:
 
     # --- Semantic Animation Methods ---
 
-    def play_booting(self): self._set_state("BOOT"); self._track_mode = False
+    def play_booting(self):
+        with self._lock:
+            self._track_mode = False
+        self._set_state("BOOT")
     def play_searching(self): self._set_state("SEARCHING")
     def play_logging(self): self._set_state("LOGGING")
     def play_idle(self): self._set_state("IDLE")
     def play_storage_critical(self): self._set_state("STORAGE_CRITICAL")
-    def play_auto_copy(self): self._set_state("AUTO_COPY"); self._track_mode = False
+    def play_auto_copy(self):
+        with self._lock:
+            self._track_mode = False
+        self._set_state("AUTO_COPY")
     
     def play_decision(self, sd_ok, imu_ok, gps_ok):
         if not gps_ok: self._set_state("DECISION_GPS_FAIL")
         elif not sd_ok or not imu_ok: self._set_state("DECISION_HW_FAIL")
         else: self._set_state("DECISION_ALL_OK")
 
-    def play_sync_searching(self): self._set_state("SYNC_SEARCHING"); self._track_mode = False
+    def play_sync_searching(self):
+        with self._lock:
+            self._track_mode = False
+        self._set_state("SYNC_SEARCHING")
     def play_sync_found(self): self._set_state("SYNC_FOUND")
     def play_sync_uploading(self): self._set_state("SYNC_UPLOADING")
     def play_sync_ok(self): self._set_state("SYNC_OK")
@@ -117,8 +130,12 @@ class LEDManager:
                     self._frame_idx += 1
                     # Apply brightness and write to hardware
                     self._apply_brightness_and_write()
-            except:
-                pass
+            except Exception as e:
+                self._error_count += 1
+                try:
+                    self._last_error = str(e)
+                except:
+                    self._last_error = "unprintable"
             time.sleep_ms(20) # 50Hz
 
     def _render_state(self, now):
@@ -206,11 +223,13 @@ class LEDManager:
             self.onboard_np.write()
             return
 
-        # Otherwise, scale. This DOES create small integers but no tuples.
-        # However, for Sync stability, we prefer 100% fixed brightness or pre-scaling.
-        # For now, we push the buffer as-is (pre-baked in sequences).
+        src = self.np.buf
+        dst = self._scaled_buf
+        for i in range(len(src)):
+            dst[i] = int(src[i] * self.brightness)
+        src[:] = dst
         self.np.write()
-        self.onboard_np.buf[:] = self.np.buf[:3]
+        self.onboard_np.buf[:] = dst[:3]
         self.onboard_np.write()
 
     def clear(self):
@@ -226,3 +245,13 @@ class LEDManager:
     def update_onboard_led(self, state):
         mapping = {"CONNECTING": self.play_wifi_connecting, "CONNECTED": self.play_wifi_connected, "PAIRING": self.play_pairing}
         if state in mapping: mapping[state]()
+
+    def get_health(self):
+        with self._lock:
+            return {
+                "state": self._state,
+                "track_mode": self._track_mode,
+                "event_active": self._event_active,
+                "error_count": self._error_count,
+                "last_error": self._last_error,
+            }

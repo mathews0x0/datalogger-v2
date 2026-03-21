@@ -94,6 +94,8 @@ class TrackEngine:
         """
         if not self.track:
             return None
+        if lat is None or lon is None:
+            return None
             
         # Phase 1: Track Identification
         if not self.track_identified:

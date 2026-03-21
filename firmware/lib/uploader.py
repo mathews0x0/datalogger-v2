@@ -5,7 +5,8 @@ import gc
 import time
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
-CHUNK_SIZE = 128 * 1024  # Turbo mode: 128KB chunks for massive throughput
+CHUNK_SIZE = 16 * 1024
+MIN_CHUNK_SIZE = 4 * 1024
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
 TIMEOUT = 45  # Increased for larger 128KB chunks
@@ -30,8 +31,77 @@ def _validate_session(filepath):
         return False
 
 
+def _pick_chunk_size():
+    """Pick a chunk size that leaves heap headroom for TLS/socket buffers."""
+    try:
+        free_mem = gc.mem_free()
+        if free_mem <= 0:
+            return MIN_CHUNK_SIZE
+        target = free_mem // 4
+        if target < MIN_CHUNK_SIZE:
+            return MIN_CHUNK_SIZE
+        if target > CHUNK_SIZE:
+            return CHUNK_SIZE
+        return target - (target % 1024)
+    except:
+        return MIN_CHUNK_SIZE
+
+
+def _read_http_response(sock):
+    status_line = sock.readline().decode().strip()
+    headers = {}
+    while True:
+        line = sock.readline().decode()
+        if not line or line == "\r\n":
+            break
+        if ':' in line:
+            key, value = line.split(':', 1)
+            headers[key.strip().lower()] = value.strip()
+
+    body = b""
+    content_len = int(headers.get("content-length", "0") or "0")
+    while content_len > 0:
+        chunk = sock.read(content_len)
+        if not chunk:
+            break
+        body += chunk
+        content_len -= len(chunk)
+    return status_line, headers, body
+
+
+def _query_upload_status(fname, api_url, token, wdt=None, lock=None):
+    import urequests
+
+    status_url = api_url.rstrip('/') + '/status?filename=' + fname
+    headers = {'Authorization': 'Bearer ' + token}
+    resp = None
+    locked = False
+    try:
+        if lock:
+            locked = lock.acquire(True)
+        if wdt:
+            wdt.feed()
+        gc.collect()
+        resp = urequests.get(status_url, headers=headers, timeout=TIMEOUT)
+        if resp.status_code == 200:
+            data = resp.json()
+            return (
+                int(data.get('next_chunk', 0) or 0),
+                int(data.get('chunk_size', 0) or 0),
+            )
+    except Exception as e:
+        print(f'[Sync] Resume status query failed for {fname}: {e}')
+    finally:
+        if resp:
+            resp.close()
+        if locked:
+            lock.release()
+    return 0, 0
+
+
 def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lock=None, 
-                         global_total=0, global_current=0, file_index=0, total_files=1):
+                         global_total=0, global_current=0, file_index=0, total_files=1,
+                         start_chunk=0, chunk_size=None):
     """
     Stream a file using a PERSISTENT SSL socket to eliminate per-chunk handshakes.
     Manually constructs HTTP POST requests.
@@ -59,8 +129,13 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
         return False, 0, 0
 
     chunk_index = 0
-    bytes_sent = 0
-    total_chunks = (total_size + CHUNK_SIZE - 1) // CHUNK_SIZE
+    if chunk_size is None or chunk_size < MIN_CHUNK_SIZE or chunk_size > CHUNK_SIZE:
+        chunk_size = _pick_chunk_size()
+    if chunk_size <= 0:
+        chunk_size = MIN_CHUNK_SIZE
+    chunk_index = start_chunk
+    bytes_sent = start_chunk * chunk_size
+    total_chunks = (total_size + chunk_size - 1) // chunk_size
     
     # Establish Persistent Connection
     s = None
@@ -86,8 +161,10 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
         if led: led.set_state("SYNC_UPLOADING")
 
         with open(filepath, 'rb') as f:
+            if bytes_sent > 0:
+                f.seek(bytes_sent)
             while True:
-                data = f.read(CHUNK_SIZE)
+                data = f.read(chunk_size)
                 if not data: break
                 
                 content_len = len(data)
@@ -121,20 +198,8 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
                         ss.write(data)
                         
                         # Read Response
-                        status_line = ss.readline().decode()
+                        status_line, _, _ = _read_http_response(ss)
                         if "200" in status_line:
-                            # 1. Drain Headers and find Content-Length
-                            resp_content_len = 0
-                            while True:
-                                h_line = ss.readline().decode()
-                                if not h_line or h_line == "\r\n": break
-                                if h_line.lower().startswith("content-length:"):
-                                    resp_content_len = int(h_line.split(":")[1].strip())
-                            
-                            # 2. Consume the Body (CRITICAL for persistent sockets)
-                            if resp_content_len > 0:
-                                ss.read(resp_content_len)
-                            
                             sent = True
                             print(f'[Sync] Fast Sent: {chunk_index}')
                             break
@@ -223,17 +288,38 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
     for i, fname in enumerate(valid_files):
         try:
             filepath = session_mgr.active_dir + '/' + fname
+            ok = False
+            chunks_sent = 0
+            file_bytes_sent = 0
 
-            ok, chunks_sent, file_bytes_sent = _upload_file_chunked(
-                filepath, fname, api_url, token, led, wdt, lock,
-                global_total=global_total_size, 
-                global_current=global_current,
-                file_index=i, 
-                total_files=len(valid_files)
-            )
+            for attempt in range(MAX_RETRIES):
+                resume_chunk, resume_chunk_size = _query_upload_status(fname, api_url, token, wdt, lock)
+                print(f'[Sync] Resume state {fname}: next_chunk={resume_chunk} chunk_size={resume_chunk_size}')
+                ok, chunks_sent, file_bytes_sent = _upload_file_chunked(
+                    filepath, fname, api_url, token, led, wdt, lock,
+                    global_total=global_total_size,
+                    global_current=global_current,
+                    file_index=i,
+                    total_files=len(valid_files),
+                    start_chunk=resume_chunk,
+                    chunk_size=resume_chunk_size or None,
+                )
+                if ok:
+                    break
+                print(f'[Sync] Retry file {fname} ({attempt + 1}/{MAX_RETRIES})')
+                time.sleep_ms(RETRY_DELAY_MS)
+                gc.collect()
 
             if ok and chunks_sent > 0:
-                if _finalize_upload(fname, api_url, token, chunks_sent, led, wdt, lock):
+                finalized = False
+                for attempt in range(MAX_RETRIES):
+                    if _finalize_upload(fname, api_url, token, chunks_sent, led, wdt, lock):
+                        finalized = True
+                        break
+                    print(f'[Sync] Retry finalize {fname} ({attempt + 1}/{MAX_RETRIES})')
+                    time.sleep_ms(RETRY_DELAY_MS)
+                    gc.collect()
+                if finalized:
                     print(f'[Sync] Done: {fname}')
                     session_mgr.delete_session(fname)
                     success_count += 1

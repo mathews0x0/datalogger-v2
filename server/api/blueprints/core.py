@@ -213,6 +213,53 @@ def upload_chunk():
         return jsonify({"error": str(e)}), 500
 
 
+@core_bp.route('/api/upload/status', methods=['GET'])
+def upload_status():
+    """Return resumable upload state for a given filename."""
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+
+    filename = request.args.get('filename', '')
+    if not filename:
+        return jsonify({"error": "filename required"}), 400
+
+    safe_name = os.path.basename(filename)
+    learning_dir = config.get_user_learning_dir(user_id)
+    chunk_dir = learning_dir / '.chunks' / safe_name
+
+    if not chunk_dir.exists():
+        return jsonify({
+            "filename": safe_name,
+            "next_chunk": 0,
+            "chunk_size": 0,
+            "received_chunks": 0,
+        })
+
+    chunk_files = sorted(chunk_dir.glob('chunk_*'))
+    present = set()
+    chunk_size = 0
+    for path in chunk_files:
+        try:
+            idx = int(path.name.split('_')[1])
+            present.add(idx)
+            if idx == 0:
+                chunk_size = path.stat().st_size
+        except Exception:
+            continue
+
+    next_chunk = 0
+    while next_chunk in present:
+        next_chunk += 1
+
+    return jsonify({
+        "filename": safe_name,
+        "next_chunk": next_chunk,
+        "chunk_size": chunk_size,
+        "received_chunks": len(present),
+    })
+
+
 @core_bp.route('/api/upload/complete', methods=['POST'])
 def upload_complete():
     """Reassemble chunks into final CSV file.

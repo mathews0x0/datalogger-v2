@@ -56,7 +56,8 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 | **Device Token** | Unique `rsk_` token for hardware auth. Dual-auth supported on uploads. | `server/ui/app.js` (generateDeviceToken)| `server/api/blueprints/devices.py` | `DeviceToken` |
 | **WiFi Config** | Web-proxy to push SSID/Password to device in AP mode (`192.168.4.1`). | `server/ui/app.js` (configureDevice) | `server/api/blueprints/devices.py` | N/A |
 | **Firmware OTA** | Pushes binary updates to device over WiFi using `UpdateManager`. | `server/ui/app.js` (flashLatest) | `server/api/update_manager.py` | N/A |
-| **Status Bar** | Real-time polling of device Flash/SD usage, battery, and GPS fix. | `server/ui/app.js` (pollStatus) | `server/api/blueprints/core.py` (status)| N/A |
+| **Status Bar** | Real-time polling of device Flash/SD usage, battery, GPS fix, and sync progress/health. | `server/ui/app.js` (pollStatus) | `server/api/blueprints/core.py` (status)| N/A |
+| **Resumable Upload** | Chunked session upload can resume from previously received chunks after sync interruption. | N/A | `server/api/blueprints/core.py` (`/api/upload/status`, `/api/upload/chunk`, `/api/upload/complete`) | `DeviceToken` |
 
 ### 🏁 Tracks & Circuits
 | Feature | Description | Frontend Files | Backend Files | Models |
@@ -115,6 +116,7 @@ Data is stored in a per-user silo:
 - **Worker**: `worker.py` polls for jobs, spawns `run_analysis.py` as a subprocess.
 - **Processing**:
   - `CSVLoader`: Sanitizes and parses 10/25Hz logs.
+  - Marker rows (`row_type=M`) are tolerated and ignored by the current loader so interrupted-session breadcrumbs do not break ingestion.
   - `LapDetector`: Uses `StartLine` (lat/lon) and `distance_to_segment` logic.
   - `Comparator`: Interpolates two telemetry streams based on **Distance** (using cumulative sum of `speed * dt`) to calculate deltas.
 
