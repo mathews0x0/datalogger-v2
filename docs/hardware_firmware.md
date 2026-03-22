@@ -144,6 +144,7 @@ To update just the Python logic (`main.py`, `lib/`, etc.):
 The production server can push updates to local devices via the **UpdateManager**.
 *   Server holds the latest `micropython.bin` in the `firmware/` root.
 *   Device pulls the update over WiFi when triggered from the **Settings -> Update** menu in the web app.
+*   Backend hosting is now a self-managed public VPS behind DNS + Nginx; this infrastructure change does **not** change the device-side sync or OTA protocol, but it makes cloud endpoint management explicit in operations.
 
 ---
 

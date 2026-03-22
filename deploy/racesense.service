@@ -7,7 +7,7 @@ Type=simple
 User=root
 Group=root
 WorkingDirectory=/var/www/racesense/server
-EnvironmentFile=/var/www/racesense/.env
+EnvironmentFile=/var/www/racesense/env/production.env
 Environment=FLASK_APP=run
 Environment=PYTHONPATH=/var/www/racesense/server:/var/www/racesense/server/api:/var/www/racesense/src
 ExecStartPre=/var/www/racesense/server/venv/bin/flask db upgrade

@@ -24,7 +24,7 @@ def upgrade():
         """
         UPDATE device_tokens
         SET revoked_at = created_at
-        WHERE revoked = 1 AND revoked_at IS NULL
+        WHERE revoked IS TRUE AND revoked_at IS NULL
         """
     )
 

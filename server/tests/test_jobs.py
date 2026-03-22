@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import unittest
+from pathlib import Path
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
 
@@ -14,11 +15,29 @@ from api import create_app
 from api.models import db, Job, User
 from worker import check_stalled_jobs, process_job
 
+
+def require_test_database_url():
+    url = os.environ.get('TEST_DATABASE_URL')
+    if not url:
+        env_file = Path(__file__).resolve().parents[2] / 'env' / 'test.env'
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                os.environ.setdefault(key, value)
+            url = os.environ.get('TEST_DATABASE_URL')
+    if not url:
+        raise RuntimeError('TEST_DATABASE_URL must be set, or env/test.env must exist, for PostgreSQL tests.')
+    return url
+
+
 class TestJobs(unittest.TestCase):
     def setUp(self):
         self.app = create_app(config_overrides={
             'TESTING': True,
-            'SQLALCHEMY_DATABASE_URI': 'sqlite:///:memory:'
+            'SQLALCHEMY_DATABASE_URI': require_test_database_url()
         })
         self.app_context = self.app.app_context()
         self.app_context.push()

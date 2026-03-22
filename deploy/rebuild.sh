@@ -9,10 +9,11 @@ set -e
 
 APP_DIR="/var/www/racesense"
 VENV_DIR="$APP_DIR/server/venv"
-DB_PATH="$APP_DIR/server/data/racesense.db"
+ENV_FILE="$APP_DIR/env/production.env"
+LEGACY_ENV_FILE="$APP_DIR/.env"
 BACKUP_DIR="/root/racesense_backups"
 TIMESTAMP=$(date +%F_%H%M%S)
-DB_BACKUP="$BACKUP_DIR/nuke_backup_$TIMESTAMP.db.bak"
+PG_BACKUP="$BACKUP_DIR/nuke_backup_$TIMESTAMP.postgres.sql"
 
 echo "========================================"
 echo " RaceSense Nuke & Rebuild"
@@ -21,11 +22,22 @@ echo "========================================"
 # 1. Backup DB
 echo "[1/5] Backing up critical database..."
 mkdir -p "$BACKUP_DIR"
-if [ -f "$DB_PATH" ]; then
-    cp "$DB_PATH" "$DB_BACKUP"
-    echo "Database saved to $DB_BACKUP"
+if [ ! -f "$ENV_FILE" ] && [ -f "$LEGACY_ENV_FILE" ]; then
+    mkdir -p "$(dirname "$ENV_FILE")"
+    cp "$LEGACY_ENV_FILE" "$ENV_FILE"
+fi
+
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+fi
+
+if [[ "${DATABASE_URL:-}" == postgresql* ]] || [[ "${DATABASE_URL:-}" == postgres* ]]; then
+    sudo -u postgres pg_dump racesense > "$PG_BACKUP"
+    echo "Database saved to $PG_BACKUP"
 else
-    echo "No existing database found to backup."
+    echo "No PostgreSQL database configured to backup."
 fi
 
 # 2. Demolish app
@@ -42,19 +54,18 @@ wget -qO- https://raw.githubusercontent.com/mathews0x0/datalogger-v2/main/deploy
 echo "[4/5] Restoring old data and reapplying migrations..."
 systemctl stop racesense racesense-worker
 
-if [ -f "$DB_BACKUP" ]; then
-    mkdir -p "$(dirname "$DB_PATH")"
-    cp "$DB_BACKUP" "$DB_PATH"
-
+if [ -f "$PG_BACKUP" ]; then
     bash -c "
+        bash '$APP_DIR/deploy/setup_postgres.sh' && \
         cd '$APP_DIR/server' && \
         . '$VENV_DIR/bin/activate' && \
         set -a && \
-        . '$APP_DIR/.env' && \
+        . '$ENV_FILE' && \
         set +a && \
         export FLASK_APP=run && \
         flask db upgrade
     "
+    sudo -u postgres psql racesense < "$PG_BACKUP"
 else
     echo "No backup found to restore. Starting with fresh DB."
 fi

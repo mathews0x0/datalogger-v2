@@ -10,6 +10,22 @@ from api.models import db, bcrypt
 jwt = JWTManager()
 migrate = Migrate()
 
+
+def _normalize_database_url(raw_url):
+    if not raw_url:
+        raise RuntimeError('DATABASE_URL environment variable must be set.')
+
+    if raw_url.startswith('postgresql+'):
+        return raw_url
+
+    if raw_url.startswith('postgresql://'):
+        return 'postgresql+psycopg://' + raw_url[len('postgresql://'):]
+
+    if raw_url.startswith('postgres://'):
+        return 'postgresql+psycopg://' + raw_url[len('postgres://'):]
+
+    return raw_url
+
 def create_app(config_overrides=None):
     """Application Factory for RaceSense API"""
     
@@ -37,13 +53,13 @@ def create_app(config_overrides=None):
     cors_origins = [o.strip() for o in cors_origins_env.split(',')] if cors_origins_env else DEFAULT_ORIGINS
     CORS(app, supports_credentials=True, origins=cors_origins)
 
-    import api.config as config
-
-
-    
     # App configuration
-    # Note: Test cases might override this after create_app() is called
-    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + str(config.DATA_DIR / 'racesense.db')
+    database_url = None
+    if config_overrides:
+        database_url = config_overrides.get('SQLALCHEMY_DATABASE_URI')
+    if not database_url:
+        database_url = os.environ.get('DATABASE_URL')
+    app.config['SQLALCHEMY_DATABASE_URI'] = _normalize_database_url(database_url)
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max request size
     
@@ -66,7 +82,7 @@ def create_app(config_overrides=None):
         
     # Init extensions
     db.init_app(app)
-    migrate.init_app(app, db, render_as_batch=True)
+    migrate.init_app(app, db)
     bcrypt.init_app(app)
     jwt.init_app(app)
     

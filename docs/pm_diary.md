@@ -2625,3 +2625,41 @@ This work formally moves system resilience from a Phase 5 engineering concern in
 This is a meaningful product posture shift. RaceSense is no longer only optimizing for analysis sophistication; it is optimizing for _trustworthy capture under real trackday conditions_.
 
 **Status:** ✅ Complete
+
+---
+
+## 57. Phase 5.7 — Host.co.in Migration, PostgreSQL Cutover, and Environment Isolation (2026-03-23)
+
+**Objective:** Move RaceSense onto a clean production server with tighter operational control, replace SQLite with PostgreSQL completely, and formalize environment-specific configuration files so development, test, and production no longer share the same database assumptions.
+
+### Decisions
+
+- **New Server Migration:** Moved production hosting from the earlier VPS setup to a fresh **Host.co.in** server. This was treated as a clean-platform migration rather than an in-place repair so infrastructure drift could be removed before the next growth phase.
+- **Self-Managed Infrastructure:** Chose a **non-managed VPS** model intentionally. RaceSense now owns the operating model directly:
+  - Ubuntu host administration
+  - PostgreSQL installation and backups
+  - Nginx reverse proxy configuration
+  - Systemd service lifecycle
+  - SSL renewal and deploy automation
+  This increases operational responsibility, but gives tighter control over deployment, performance tuning, logs, and future backend services.
+- **DNS Cutover:** Updated DNS so the production domain resolves to the new Host.co.in server. The landing page and API cutover were validated after propagation before database work proceeded.
+- **SQLite to PostgreSQL Migration:** Promoted **PostgreSQL** from a planned improvement into the live production database engine. This eliminated the long-standing SQLite write-contention ceiling in the web + worker + upload path.
+- **Complete SQLite Removal:** Decided not to keep SQLite as a fallback. The fallback path would preserve dual-database complexity without providing strategic value once all environments can run PostgreSQL.
+- **Environment-Specific Database Config:** Replaced the single shared `.env` assumption with explicit environment files:
+  - `env/development.env`
+  - `env/test.env`
+  - `env/production.env`
+  Each environment now has an intentionally separate PostgreSQL connection target and runtime envelope.
+- **Alembic Simplification:** Since SQLite is gone, the global migration setup was simplified away from SQLite-oriented batch defaults. Historical migrations remain valid, but future migrations now target PostgreSQL as the only database contract.
+- **Migration Hardening During Cutover:** The live PostgreSQL rollout exposed old migrations that had SQLite-specific assumptions (`DROP TABLE` behavior and boolean comparisons). Those revisions were corrected during the cutover so the migration chain is now valid on PostgreSQL.
+
+### Outcome
+
+- Production is now running on the new Host.co.in server with DNS pointed correctly.
+- RaceSense operates on a self-managed infrastructure baseline with clearer ownership of backups, services, SSL, and deploy behavior.
+- PostgreSQL is now the only supported application database.
+- SQLite has been removed from the runtime architecture instead of lingering as a shadow path.
+- Development, test, and production now have explicit environment-specific config boundaries, reducing accidental cross-environment coupling.
+- The codebase and deploy flow are better aligned with future scaling needs, especially for concurrent uploads, worker activity, and operational debugging.
+
+**Status:** ✅ Complete & Deployed.

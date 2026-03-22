@@ -15,7 +15,9 @@ set -euo pipefail
 SERVER="${SERVER:-rs-hostco}"
 REMOTE_APP_DIR="${REMOTE_APP_DIR:-/var/www/racesense}"
 REMOTE_VENV="$REMOTE_APP_DIR/server/venv"
-REMOTE_DB="$REMOTE_APP_DIR/server/data/racesense.db"
+REMOTE_ENV_DIR="$REMOTE_APP_DIR/env"
+REMOTE_PROD_ENV="$REMOTE_ENV_DIR/production.env"
+REMOTE_LEGACY_ENV="$REMOTE_APP_DIR/.env"
 BACKUP_DIR="${BACKUP_DIR:-/root/racesense_backups}"
 LOCAL_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -56,6 +58,8 @@ ensure_remote_system_packages() {
             curl \
             git \
             nginx \
+            postgresql \
+            postgresql-contrib \
             python3 \
             python3-dev \
             python3-pip \
@@ -104,7 +108,7 @@ do_upgrade() {
     step "1/5" "Syncing files to production..."
 
     # Ensure target directories exist
-    remote "mkdir -p $REMOTE_APP_DIR/src $REMOTE_APP_DIR/server $REMOTE_APP_DIR/deploy"
+    remote "mkdir -p $REMOTE_APP_DIR/src $REMOTE_APP_DIR/server $REMOTE_APP_DIR/deploy $REMOTE_ENV_DIR"
 
     # Sync server/ (no --delete because excluded dirs like ios/android may exist on remote)
     do_rsync \
@@ -140,17 +144,26 @@ do_upgrade() {
         "$LOCAL_ROOT/deploy/" "$SERVER:$REMOTE_APP_DIR/deploy/"
     ok "deploy/ synced"
 
-    # Sync .env.example
-    do_rsync "$LOCAL_ROOT/.env.example" "$SERVER:$REMOTE_APP_DIR/"
-    ok ".env.example synced"
+    # Sync env templates without touching live env/*.env files on the server
+    do_rsync \
+        --exclude='*.env' \
+        "$LOCAL_ROOT/env/" "$SERVER:$REMOTE_ENV_DIR/"
+    ok "env/ synced"
 
     # ── 2. Backup database ────────────────────────────────────────────────────
     step "2/5" "Backing up production database..."
 
     BACKUP_RESULT=$(remote "
         mkdir -p $BACKUP_DIR
-        if [ -f '$REMOTE_DB' ]; then
-            cp -p '$REMOTE_DB' '$BACKUP_DIR/racesense_\$(date +%F_%H%M%S).db.bak'
+        if [ ! -f '$REMOTE_PROD_ENV' ] && [ -f '$REMOTE_LEGACY_ENV' ]; then
+            mkdir -p '$REMOTE_ENV_DIR'
+            cp -p '$REMOTE_LEGACY_ENV' '$REMOTE_PROD_ENV'
+        fi
+        if [ -f '$REMOTE_PROD_ENV' ]; then
+            set -a
+            . '$REMOTE_PROD_ENV'
+            set +a
+            sudo -u postgres pg_dump racesense > '$BACKUP_DIR/racesense_\$(date +%F_%H%M%S).postgres.sql'
             echo 'BACKUP_OK'
         else
             echo 'NO_DB'
@@ -166,6 +179,9 @@ do_upgrade() {
     step "3/5" "Installing Python dependencies..."
 
     remote "
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y
+        apt-get install -y postgresql postgresql-contrib
         if [ ! -x '$REMOTE_VENV/bin/pip' ]; then
             python3 -m venv '$REMOTE_VENV'
         fi
@@ -178,13 +194,18 @@ do_upgrade() {
     step "4/5" "Running database migrations..."
 
     remote "
+        bash '$REMOTE_APP_DIR/deploy/setup_postgres.sh'
         cd $REMOTE_APP_DIR/server
         source $REMOTE_VENV/bin/activate
 
-        # Load env vars from .env file
-        if [ -f '$REMOTE_APP_DIR/.env' ]; then
+        # Load env vars from production env file
+        if [ ! -f '$REMOTE_PROD_ENV' ] && [ -f '$REMOTE_LEGACY_ENV' ]; then
+            mkdir -p '$REMOTE_ENV_DIR'
+            cp -p '$REMOTE_LEGACY_ENV' '$REMOTE_PROD_ENV'
+        fi
+        if [ -f '$REMOTE_PROD_ENV' ]; then
             set -a
-            . '$REMOTE_APP_DIR/.env'
+            . '$REMOTE_PROD_ENV'
             set +a
         fi
 
@@ -248,10 +269,17 @@ do_nuke() {
 
     BACKUP_RESULT=$(remote "
         mkdir -p $BACKUP_DIR
-        if [ -f '$REMOTE_DB' ]; then
+        if [ ! -f '$REMOTE_PROD_ENV' ] && [ -f '$REMOTE_LEGACY_ENV' ]; then
+            mkdir -p '$REMOTE_ENV_DIR'
+            cp -p '$REMOTE_LEGACY_ENV' '$REMOTE_PROD_ENV'
+        fi
+        if [ -f '$REMOTE_PROD_ENV' ]; then
+            set -a
+            . '$REMOTE_PROD_ENV'
+            set +a
             STAMP=\$(date +%F_%H%M%S)
-            cp -p '$REMOTE_DB' '$BACKUP_DIR/nuke_backup_'\$STAMP'.db.bak'
-            echo '$BACKUP_DIR/nuke_backup_'\$STAMP'.db.bak' > /tmp/racesense_last_backup
+            sudo -u postgres pg_dump racesense > '$BACKUP_DIR/nuke_backup_'\$STAMP'.postgres.sql'
+            echo '$BACKUP_DIR/nuke_backup_'\$STAMP'.postgres.sql' > /tmp/racesense_last_backup
             echo 'BACKUP_OK'
         else
             echo 'NO_DB'
@@ -263,21 +291,25 @@ do_nuke() {
         warn "No existing database to backup"
     fi
 
-    # ── 2. Preserve .env ──────────────────────────────────────────────────────
-    step "2/6" "Preserving .env configuration..."
+    # ── 2. Preserve production env ────────────────────────────────────────────
+    step "2/6" "Preserving production env configuration..."
 
     ENV_RESULT=$(remote "
-        if [ -f '$REMOTE_APP_DIR/.env' ]; then
-            cp -p '$REMOTE_APP_DIR/.env' '/tmp/racesense_env_backup'
+        if [ ! -f '$REMOTE_PROD_ENV' ] && [ -f '$REMOTE_LEGACY_ENV' ]; then
+            mkdir -p '$REMOTE_ENV_DIR'
+            cp -p '$REMOTE_LEGACY_ENV' '$REMOTE_PROD_ENV'
+        fi
+        if [ -f '$REMOTE_PROD_ENV' ]; then
+            cp -p '$REMOTE_PROD_ENV' '/tmp/racesense_env_backup'
             echo 'ENV_OK'
         else
             echo 'NO_ENV'
         fi
     " 2>/dev/null) || true
     if echo "$ENV_RESULT" | grep -q 'ENV_OK'; then
-        ok ".env preserved"
+        ok "production env preserved"
     else
-        warn "No .env found"
+        warn "No production env found"
     fi
 
     # ── 3. Stop services & wipe ──────────────────────────────────────────────
@@ -325,8 +357,9 @@ do_nuke() {
     ok "deploy/ deployed"
 
     do_rsync \
-        "$LOCAL_ROOT/.env.example" "$SERVER:$REMOTE_APP_DIR/"
-    ok ".env.example deployed"
+        --exclude='*.env' \
+        "$LOCAL_ROOT/env/" "$SERVER:$REMOTE_ENV_DIR/"
+    ok "env/ deployed"
 
     # ── 5. Rebuild environment on server ──────────────────────────────────────
     step "5/6" "Rebuilding server environment..."
@@ -334,17 +367,19 @@ do_nuke() {
     ensure_remote_system_packages
 
     remote "
-        # Restore .env (or create from template)
+        mkdir -p '$REMOTE_ENV_DIR'
+
+        # Restore production env (or create from template)
         if [ -f '/tmp/racesense_env_backup' ]; then
-            cp -p '/tmp/racesense_env_backup' '$REMOTE_APP_DIR/.env'
+            cp -p '/tmp/racesense_env_backup' '$REMOTE_PROD_ENV'
             rm -f '/tmp/racesense_env_backup'
-        elif [ -f '$REMOTE_APP_DIR/.env.example' ]; then
-            cp '$REMOTE_APP_DIR/.env.example' '$REMOTE_APP_DIR/.env'
+        elif [ -f '$REMOTE_ENV_DIR/production.env.example' ]; then
+            cp '$REMOTE_ENV_DIR/production.env.example' '$REMOTE_PROD_ENV'
         fi
 
-        if [ -f '$REMOTE_APP_DIR/.env' ] && grep -q '^JWT_SECRET_KEY=CHANGE_ME' '$REMOTE_APP_DIR/.env'; then
+        if [ -f '$REMOTE_PROD_ENV' ] && grep -q '^JWT_SECRET_KEY=CHANGE_ME' '$REMOTE_PROD_ENV'; then
             JWT_SECRET=\$(python3 -c 'import secrets; print(secrets.token_hex(32))')
-            sed -i \"s/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=\$JWT_SECRET/\" '$REMOTE_APP_DIR/.env'
+            sed -i \"s/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=\$JWT_SECRET/\" '$REMOTE_PROD_ENV'
         fi
 
         # Recreate venv and install deps
@@ -356,22 +391,25 @@ do_nuke() {
         mkdir -p $REMOTE_APP_DIR/server/data
         mkdir -p $REMOTE_APP_DIR/server/instance
 
-        # Restore database backup
+        # Restore database backup path for later
         BACKUP_PATH=\$(cat /tmp/racesense_last_backup 2>/dev/null || echo '')
-        if [ -n \"\$BACKUP_PATH\" ] && [ -f \"\$BACKUP_PATH\" ]; then
-            cp -p \"\$BACKUP_PATH\" '$REMOTE_DB'
-        fi
+
+        bash '$REMOTE_APP_DIR/deploy/setup_postgres.sh'
 
         # Run migrations
         cd $REMOTE_APP_DIR/server
         source $REMOTE_VENV/bin/activate
-        if [ -f '$REMOTE_APP_DIR/.env' ]; then
+        if [ -f '$REMOTE_PROD_ENV' ]; then
             set -a
-            . '$REMOTE_APP_DIR/.env'
+            . '$REMOTE_PROD_ENV'
             set +a
         fi
         export FLASK_APP=run
         flask db upgrade
+
+        if [[ \"\$BACKUP_PATH\" == *.postgres.sql ]] && [ -f \"\$BACKUP_PATH\" ]; then
+            sudo -u postgres psql racesense < \"\$BACKUP_PATH\"
+        fi
 
         # Ensure log directory exists
         mkdir -p /var/log/racesense

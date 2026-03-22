@@ -8,7 +8,8 @@ set -e
 
 APP_DIR="/var/www/racesense"
 VENV_DIR="$APP_DIR/server/venv"
-DB_PATH="$APP_DIR/server/data/racesense.db"
+ENV_FILE="$APP_DIR/env/production.env"
+LEGACY_ENV_FILE="$APP_DIR/.env"
 BACKUP_DIR="/root/racesense_backups"
 
 echo "========================================"
@@ -18,8 +19,19 @@ echo "========================================"
 # 1. Backup
 echo "[1/7] Backing up database..."
 mkdir -p "$BACKUP_DIR"
-if [ -f "$DB_PATH" ]; then
-    cp "$DB_PATH" "$BACKUP_DIR/racesense_$(date +%F_%H%M%S).db.bak"
+if [ ! -f "$ENV_FILE" ] && [ -f "$LEGACY_ENV_FILE" ]; then
+    mkdir -p "$(dirname "$ENV_FILE")"
+    cp "$LEGACY_ENV_FILE" "$ENV_FILE"
+fi
+
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+fi
+
+if [ -n "${DATABASE_URL:-}" ]; then
+    sudo -u postgres pg_dump racesense > "$BACKUP_DIR/racesense_$(date +%F_%H%M%S).postgres.sql"
     echo "Backup saved to $BACKUP_DIR"
 else
     echo "No database found to backup, skipping..."
@@ -49,7 +61,7 @@ bash -c "
     cd '$APP_DIR/server' && \
     . '$VENV_DIR/bin/activate' && \
     set -a && \
-    . '$APP_DIR/.env' && \
+    . '$ENV_FILE' && \
     set +a && \
     export FLASK_APP=run && \
     flask db upgrade

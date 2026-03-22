@@ -27,6 +27,12 @@ The platform consists of:
 2.  **Frontend (Vanilla JS/Capacitor)**: A high-performance web dashboard that also runs as a native mobile app.
 3.  **Analysis Engine (Python)**: The "brain" that processes raw CSV logs into laps, sectors, and advanced metrics.
 
+### ☁️ Deployment Posture
+- Production now runs on a **self-managed Host.co.in VPS** behind Nginx and systemd.
+- DNS is pointed at the new server before application routing is handed off to Gunicorn.
+- PostgreSQL is the only supported application database across development, test, and production.
+- Environment-specific configuration is split across `env/development.env`, `env/test.env`, and `env/production.env`.
+
 ---
 
 ## 🧩 Feature Documentation & File Mapping
@@ -131,6 +137,8 @@ Data is stored in a per-user silo:
 
 1.  **Backend Setup**:
     - Install requirements: `pip install -r server/requirements.txt`
+    - Create `env/development.env` from `env/development.env.example`
+    - Ensure your local PostgreSQL database exists and matches `DATABASE_URL`
     - Run migrations: `flask db upgrade`
     - Start server: `python server/run.py`
     - Start worker: `python server/worker.py`
@@ -141,8 +149,11 @@ Data is stored in a per-user silo:
     - For mobile (iOS/Android), use Capacitor commands in `server/ui/`.
 
 3.  **Database**:
-    - SQLite is used by default: `server/instance/data/racesense.db`.
-    - Use DB Browser for SQLite or `flask shell` to inspect.
+    - PostgreSQL is required in every environment via `DATABASE_URL`.
+    - Local development should use its own Postgres database, not a separate SQLite mode.
+    - Tests should use `env/test.env` or `TEST_DATABASE_URL`.
+    - Production uses `env/production.env` on the server and is deployed onto the Host.co.in VPS.
+    - Use `psql` or `flask shell` to inspect data.
 
 ---
 
