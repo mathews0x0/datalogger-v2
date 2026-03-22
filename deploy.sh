@@ -6,17 +6,17 @@
 #   ./deploy.sh upgrade   — Sync latest code and restart (keeps DB intact)
 #   ./deploy.sh nuke      — Full wipe + redeploy from scratch (restores DB)
 #
-# Tested on: macOS bash 3.2 + openrsync 2.6.9
+# Tested on: macOS bash 3.2 + openrsync 2.6.9, Ubuntu 24.04 VPS
 # ==============================================================================
 
 set -euo pipefail
 
 # ─── Configuration ────────────────────────────────────────────────────────────
-SERVER="root@103.189.89.142"
-REMOTE_APP_DIR="/var/www/racesense"
+SERVER="${SERVER:-rs-hostco}"
+REMOTE_APP_DIR="${REMOTE_APP_DIR:-/var/www/racesense}"
 REMOTE_VENV="$REMOTE_APP_DIR/server/venv"
 REMOTE_DB="$REMOTE_APP_DIR/server/data/racesense.db"
-BACKUP_DIR="/root/racesense_backups"
+BACKUP_DIR="${BACKUP_DIR:-/root/racesense_backups}"
 LOCAL_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # ─── SSH Multiplexing (enter password only ONCE) ─────────────────────────────
@@ -45,6 +45,25 @@ fail()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 
 remote() {
     ssh $SSH_OPTS -t "$SERVER" "$@"
+}
+
+ensure_remote_system_packages() {
+    remote "
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -y
+        apt-get install -y \
+            ca-certificates \
+            curl \
+            git \
+            nginx \
+            python3 \
+            python3-dev \
+            python3-pip \
+            python3-venv \
+            build-essential \
+            pkg-config
+        systemctl enable nginx >/dev/null 2>&1 || true
+    "
 }
 
 # ─── Rsync wrapper (compatible with macOS openrsync 2.6.9) ───────────────────
@@ -147,6 +166,9 @@ do_upgrade() {
     step "3/5" "Installing Python dependencies..."
 
     remote "
+        if [ ! -x '$REMOTE_VENV/bin/pip' ]; then
+            python3 -m venv '$REMOTE_VENV'
+        fi
         $REMOTE_VENV/bin/pip install --quiet --upgrade pip 2>&1 | tail -1
         $REMOTE_VENV/bin/pip install --quiet -r $REMOTE_APP_DIR/server/requirements.txt 2>&1 | tail -1
     "
@@ -309,6 +331,8 @@ do_nuke() {
     # ── 5. Rebuild environment on server ──────────────────────────────────────
     step "5/6" "Rebuilding server environment..."
 
+    ensure_remote_system_packages
+
     remote "
         # Restore .env (or create from template)
         if [ -f '/tmp/racesense_env_backup' ]; then
@@ -316,6 +340,11 @@ do_nuke() {
             rm -f '/tmp/racesense_env_backup'
         elif [ -f '$REMOTE_APP_DIR/.env.example' ]; then
             cp '$REMOTE_APP_DIR/.env.example' '$REMOTE_APP_DIR/.env'
+        fi
+
+        if [ -f '$REMOTE_APP_DIR/.env' ] && grep -q '^JWT_SECRET_KEY=CHANGE_ME' '$REMOTE_APP_DIR/.env'; then
+            JWT_SECRET=\$(python3 -c 'import secrets; print(secrets.token_hex(32))')
+            sed -i \"s/^JWT_SECRET_KEY=.*/JWT_SECRET_KEY=\$JWT_SECRET/\" '$REMOTE_APP_DIR/.env'
         fi
 
         # Recreate venv and install deps
@@ -346,6 +375,7 @@ do_nuke() {
 
         # Ensure log directory exists
         mkdir -p /var/log/racesense
+        systemctl enable nginx >/dev/null 2>&1 || true
     "
     ok "Environment rebuilt"
 

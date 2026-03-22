@@ -1,46 +1,51 @@
 #!/bin/bash
 # ==============================================================================
 # RaceSense — First-Time VPS Setup Script
-# Run on a fresh Ubuntu 22.04 VPS as root
+# Run on a fresh Ubuntu 24.04 VPS as root
 # Usage: sudo bash setup.sh
 # ==============================================================================
 
 set -e
 
-APP_DIR="/opt/racesense"
-APP_USER="racesense"
-REPO_URL="https://github.com/mathews0x0/datalogger-v2.git"
+APP_DIR="/var/www/racesense"
+VENV_DIR="$APP_DIR/server/venv"
+LOG_DIR="/var/log/racesense"
 
 echo "========================================"
 echo " RaceSense VPS Setup"
 echo "========================================"
 
 # --- 1. System Dependencies ---
-echo "[1/8] Installing system packages..."
-apt update && apt upgrade -y
-apt install -y python3 python3-venv python3-pip nginx git curl ufw
+echo "[1/6] Installing system packages..."
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y \
+    ca-certificates \
+    curl \
+    git \
+    nginx \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
+    build-essential \
+    pkg-config
 
-# --- 2. Create App User ---
-echo "[2/8] Creating application user..."
-if ! id "$APP_USER" &>/dev/null; then
-    useradd --system --create-home --shell /bin/bash "$APP_USER"
-    echo "Created user: $APP_USER"
-else
-    echo "User $APP_USER already exists"
+# --- 2. Validate application directory ---
+echo "[2/6] Validating application directory..."
+if [ ! -d "$APP_DIR/server" ]; then
+    echo "Expected application files in $APP_DIR before running setup.sh"
+    exit 1
 fi
 
-# --- 3. Set Application Directory Permissions ---
-echo "[3/8] Setting application directory permissions..."
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
+# --- 3. Python Virtual Environment ---
+echo "[3/6] Creating Python virtual environment..."
+python3 -m venv "$VENV_DIR"
+"$VENV_DIR/bin/pip" install --upgrade pip
+"$VENV_DIR/bin/pip" install -r "$APP_DIR/server/requirements.txt"
 
-# --- 4. Python Virtual Environment ---
-echo "[4/8] Creating Python virtual environment..."
-sudo -u "$APP_USER" python3 -m venv "$APP_DIR/venv"
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --upgrade pip
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/server/requirements.txt"
-
-# --- 5. Environment Configuration ---
-echo "[5/8] Setting up environment..."
+# --- 4. Environment Configuration ---
+echo "[4/6] Setting up environment..."
 if [ ! -f "$APP_DIR/.env" ]; then
     cp "$APP_DIR/.env.example" "$APP_DIR/.env"
     # Generate a random JWT secret
@@ -49,7 +54,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
     echo "Created .env with auto-generated JWT secret."
     echo ""
     echo "  ╔══════════════════════════════════════════════════╗"
-    echo "  ║  IMPORTANT: Edit /opt/racesense/.env to set     ║"
+    echo "  ║  IMPORTANT: Edit /var/www/racesense/.env to set ║"
     echo "  ║  CORS_ORIGINS to your domain before launch!     ║"
     echo "  ╚══════════════════════════════════════════════════╝"
     echo ""
@@ -57,44 +62,32 @@ else
     echo ".env already exists, skipping."
 fi
 
-# --- 6. Initialize Database ---
-echo "[6/8] Initializing database..."
-sudo -u "$APP_USER" bash -c "
-    cd $APP_DIR/server && \
-    source $APP_DIR/venv/bin/activate && \
-    FLASK_ENV=production \
-    FLASK_APP=run \
-    JWT_SECRET_KEY=\$(grep JWT_SECRET_KEY $APP_DIR/.env | cut -d= -f2) \
+# --- 5. Initialize Database ---
+echo "[5/6] Initializing database..."
+bash -c "
+    cd '$APP_DIR/server' && \
+    . '$VENV_DIR/bin/activate' && \
+    set -a && \
+    . '$APP_DIR/.env' && \
+    set +a && \
+    export FLASK_APP=run && \
     flask db upgrade
 "
 
-# --- 7. Log Directory ---
-echo "[7/8] Setting up logs..."
-mkdir -p /var/log/racesense
-chown "$APP_USER:$APP_USER" /var/log/racesense
-
-# --- 8. Systemd Service ---
-echo "[8/8] Installing systemd services..."
+# --- 6. Install services and Nginx ---
+echo "[6/6] Installing services and Nginx..."
+mkdir -p "$LOG_DIR"
 cp "$APP_DIR/deploy/racesense.service" /etc/systemd/system/racesense.service
 cp "$APP_DIR/deploy/racesense-worker.service" /etc/systemd/system/racesense-worker.service
 systemctl daemon-reload
-systemctl enable racesense
-systemctl enable racesense-worker
-systemctl start racesense
-systemctl start racesense-worker
-
-# --- Nginx ---
-echo "[+] Configuring Nginx..."
+systemctl enable racesense racesense-worker nginx
 cp "$APP_DIR/deploy/nginx.conf" /etc/nginx/sites-available/racesense
 ln -sf /etc/nginx/sites-available/racesense /etc/nginx/sites-enabled/racesense
 rm -f /etc/nginx/sites-enabled/default
-nginx -t && systemctl restart nginx
-
-# --- Firewall ---
-echo "[+] Configuring firewall..."
-ufw allow ssh
-ufw allow 'Nginx Full'
-ufw --force enable
+nginx -t
+systemctl restart nginx
+systemctl restart racesense
+systemctl restart racesense-worker
 
 echo ""
 echo "========================================"
@@ -104,5 +97,5 @@ echo ""
 echo " URL:     http://$(curl -s ifconfig.me)"
 echo " Logs:    journalctl -u racesense -f  |  journalctl -u racesense-worker -f"
 echo " Reload:  sudo systemctl restart racesense && sudo systemctl restart racesense-worker"
-echo " Config:  nano /opt/racesense/.env"
+echo " Config:  nano /var/www/racesense/.env"
 echo ""

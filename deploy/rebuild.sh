@@ -7,9 +7,10 @@
 
 set -e
 
-APP_DIR="/opt/racesense"
-APP_USER="racesense"
-BACKUP_DIR="/home/$(logname)/racesense_backups"
+APP_DIR="/var/www/racesense"
+VENV_DIR="$APP_DIR/server/venv"
+DB_PATH="$APP_DIR/server/data/racesense.db"
+BACKUP_DIR="/root/racesense_backups"
 TIMESTAMP=$(date +%F_%H%M%S)
 DB_BACKUP="$BACKUP_DIR/nuke_backup_$TIMESTAMP.db.bak"
 
@@ -20,8 +21,8 @@ echo "========================================"
 # 1. Backup DB
 echo "[1/5] Backing up critical database..."
 mkdir -p "$BACKUP_DIR"
-if [ -f "$APP_DIR/server/instance/racesense.db" ]; then
-    cp "$APP_DIR/server/instance/racesense.db" "$DB_BACKUP"
+if [ -f "$DB_PATH" ]; then
+    cp "$DB_PATH" "$DB_BACKUP"
     echo "Database saved to $DB_BACKUP"
 else
     echo "No existing database found to backup."
@@ -42,21 +43,16 @@ echo "[4/5] Restoring old data and reapplying migrations..."
 systemctl stop racesense racesense-worker
 
 if [ -f "$DB_BACKUP" ]; then
-    cp "$DB_BACKUP" "$APP_DIR/server/instance/racesense.db"
-    chown racesense:racesense "$APP_DIR/server/instance/racesense.db"
+    mkdir -p "$(dirname "$DB_PATH")"
+    cp "$DB_BACKUP" "$DB_PATH"
 
-    if grep -q "JWT_SECRET_KEY" "$APP_DIR/.env"; then
-        SECRET=$(grep JWT_SECRET_KEY "$APP_DIR/.env" | cut -d= -f2)
-    else
-        SECRET="placeholder"
-    fi
-
-    sudo -u "$APP_USER" bash -c "
-        cd $APP_DIR/server && \
-        source $APP_DIR/venv/bin/activate && \
-        export FLASK_ENV=production && \
+    bash -c "
+        cd '$APP_DIR/server' && \
+        . '$VENV_DIR/bin/activate' && \
+        set -a && \
+        . '$APP_DIR/.env' && \
+        set +a && \
         export FLASK_APP=run && \
-        export JWT_SECRET_KEY=$SECRET && \
         flask db upgrade
     "
 else

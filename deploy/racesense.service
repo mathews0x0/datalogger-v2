@@ -3,7 +3,7 @@ Description=RaceSense Datalogger Web Server
 After=network.target
 
 [Service]
-Type=notify
+Type=simple
 User=root
 Group=root
 WorkingDirectory=/var/www/racesense/server
@@ -16,6 +16,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 KillMode=mixed
 Restart=always
 RestartSec=5
+TimeoutStartSec=180
 
 # Security hardening
 NoNewPrivileges=true

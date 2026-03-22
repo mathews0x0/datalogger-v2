@@ -6,9 +6,10 @@
 
 set -e
 
-APP_DIR="/opt/racesense"
-APP_USER="racesense"
-BACKUP_DIR="/home/$(logname)/racesense_backups"
+APP_DIR="/var/www/racesense"
+VENV_DIR="$APP_DIR/server/venv"
+DB_PATH="$APP_DIR/server/data/racesense.db"
+BACKUP_DIR="/root/racesense_backups"
 
 echo "========================================"
 echo " RaceSense Production Upgrade"
@@ -17,8 +18,8 @@ echo "========================================"
 # 1. Backup
 echo "[1/7] Backing up database..."
 mkdir -p "$BACKUP_DIR"
-if [ -f "$APP_DIR/server/instance/racesense.db" ]; then
-    cp "$APP_DIR/server/instance/racesense.db" "$BACKUP_DIR/racesense_$(date +%F_%H%M%S).db.bak"
+if [ -f "$DB_PATH" ]; then
+    cp "$DB_PATH" "$BACKUP_DIR/racesense_$(date +%F_%H%M%S).db.bak"
     echo "Backup saved to $BACKUP_DIR"
 else
     echo "No database found to backup, skipping..."
@@ -31,28 +32,26 @@ systemctl stop racesense racesense-worker || true
 # 3. Pull Latest Code
 echo "[3/7] Fetching latest code..."
 cd "$APP_DIR"
-sudo -u "$APP_USER" git fetch --all
-sudo -u "$APP_USER" git reset --hard origin/main
+git fetch --all
+git reset --hard origin/main
 
 # 4. Update Python Dependencies
 echo "[4/7] Updating Python dependencies..."
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install --upgrade pip
-sudo -u "$APP_USER" "$APP_DIR/venv/bin/pip" install -r "$APP_DIR/server/requirements.txt"
+if [ ! -x "$VENV_DIR/bin/pip" ]; then
+    python3 -m venv "$VENV_DIR"
+fi
+"$VENV_DIR/bin/pip" install --upgrade pip
+"$VENV_DIR/bin/pip" install -r "$APP_DIR/server/requirements.txt"
 
 # 5. Database Migrations
 echo "[5/7] Running database migrations..."
-if grep -q "JWT_SECRET_KEY" "$APP_DIR/.env"; then
-    SECRET=$(grep JWT_SECRET_KEY "$APP_DIR/.env" | cut -d= -f2)
-else
-    SECRET="placeholder"
-fi
-
-sudo -u "$APP_USER" bash -c "
-    cd $APP_DIR/server && \
-    source $APP_DIR/venv/bin/activate && \
-    export FLASK_ENV=production && \
+bash -c "
+    cd '$APP_DIR/server' && \
+    . '$VENV_DIR/bin/activate' && \
+    set -a && \
+    . '$APP_DIR/.env' && \
+    set +a && \
     export FLASK_APP=run && \
-    export JWT_SECRET_KEY=$SECRET && \
     flask db upgrade
 "
 

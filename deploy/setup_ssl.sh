@@ -17,7 +17,7 @@ DOMAIN="racesense.in"
 WWW_DOMAIN="www.racesense.in"
 NGINX_CONF="/etc/nginx/sites-available/racesense"
 NGINX_ENABLED="/etc/nginx/sites-enabled/racesense"
-REPO_CONF="$(dirname "$0")/../server/racesense_nginx.conf"
+REPO_CONF="$(dirname "$0")/nginx.conf"
 
 echo "=== RaceSense SSL Setup ==="
 echo ""
@@ -35,7 +35,7 @@ ln -sf "$NGINX_CONF" "$NGINX_ENABLED"
 # Remove default site if it exists
 rm -f /etc/nginx/sites-enabled/default
 
-# 3. Test Nginx config (before SSL — temporarily comment out SSL lines)
+# 3. Test Nginx config before Certbot updates it
 echo "[3/5] Testing Nginx config..."
 nginx -t
 
