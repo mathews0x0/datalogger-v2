@@ -4875,7 +4875,9 @@ input:checked+.toggle-slider:before {
     padding: 0.75rem;
   }
 
-  #authModal {
+  #authModal,
+  #pairingTutorialModal,
+  #ledTutorialModal {
     align-items: center;
     justify-content: center;
     padding: 1rem;
@@ -5706,7 +5708,7 @@ input:checked+.toggle-slider:before {
 
 @media (max-width: 900px) {
   .pairing-tutorial-shell {
-    max-height: calc(100vh - 1rem);
+    max-height: calc(100dvh - 2.5rem);
     padding: 1rem 0.95rem 0.9rem !important;
   }
 
