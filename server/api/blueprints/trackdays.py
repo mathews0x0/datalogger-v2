@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import os
 import json
@@ -15,7 +16,7 @@ trackdays_bp = Blueprint('trackdays', __name__)
 @jwt_required()
 def get_trackdays():
     """Get all trackdays for current user with summary info"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     trackdays_meta = TrackDayMeta.query.filter_by(user_id=user_id).all()
     
     # We still need to load the session data for counts, or store it in DB
@@ -59,7 +60,7 @@ def get_trackdays():
 @jwt_required()
 def create_trackday():
     """Create a new trackday"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     data = request.get_json()
     
     trackdays = load_trackdays(user_id)
@@ -100,7 +101,7 @@ def create_trackday():
 @jwt_required()
 def get_trackday(trackday_id):
     """Get full trackday details with aggregated data from all sessions"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     # Check ownership
     td_meta = TrackDayMeta.query.filter_by(trackday_id=trackday_id, user_id=user_id).first()
     if not td_meta:
@@ -212,7 +213,7 @@ def get_trackday(trackday_id):
 @jwt_required()
 def update_trackday(trackday_id):
     """Update trackday details"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     # Check ownership
     td_meta = TrackDayMeta.query.filter_by(trackday_id=trackday_id, user_id=user_id).first()
     if not td_meta:
@@ -243,7 +244,7 @@ def update_trackday(trackday_id):
 @jwt_required()
 def delete_trackday(trackday_id):
     """Delete a trackday (does not delete sessions)"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     # Check ownership
     td_meta = TrackDayMeta.query.filter_by(trackday_id=trackday_id, user_id=user_id).first()
     if not td_meta:
@@ -263,7 +264,7 @@ def delete_trackday(trackday_id):
 @jwt_required()
 def tag_session_to_trackday(trackday_id, session_id):
     """Add a session to a trackday"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     # Check ownership of both trackday and session
     td_meta = TrackDayMeta.query.filter_by(trackday_id=trackday_id, user_id=user_id).first()
     s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
@@ -287,7 +288,7 @@ def tag_session_to_trackday(trackday_id, session_id):
 @jwt_required()
 def untag_session_from_trackday(trackday_id, session_id):
     """Remove a session from a trackday"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     # Check ownership
     td_meta = TrackDayMeta.query.filter_by(trackday_id=trackday_id, user_id=user_id).first()
     if not td_meta:

@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 import os
 
@@ -62,7 +63,7 @@ def get_annotations(session_id):
         verify_jwt_in_request(optional=True)
     except:
         pass
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     
     # Look for session - prioritize own
     s_meta = None

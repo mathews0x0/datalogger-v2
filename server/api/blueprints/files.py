@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request, send_file, Response, current_app
 from flask_jwt_extended import jwt_required, get_jwt_identity
+from api.auth_utils import get_current_user_id
 import os
 import io
 import json
@@ -19,7 +20,7 @@ files_bp = Blueprint('files', __name__)
 @jwt_required()
 def process_session():
     """Process a learning CSV file"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     
     # Check session limit for free users
@@ -106,7 +107,7 @@ def process_session():
 @jwt_required()
 def list_learning_files():
     """List learning CSV files with metadata"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     archived = request.args.get('archived', 'false').lower() == 'true'
     return jsonify(user_file_mgr.get_files(archived=archived))
@@ -114,7 +115,7 @@ def list_learning_files():
 @files_bp.route('/api/learning/<filename>/lock', methods=['POST'])
 @jwt_required()
 def lock_learning_file(filename):
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     locked = data.get('locked', True)
@@ -126,7 +127,7 @@ def lock_learning_file(filename):
 @jwt_required()
 def delete_learning_files():
     """Permanent Bulk Delete"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     filenames = data.get('files', [])
@@ -141,7 +142,7 @@ def delete_learning_files():
 @jwt_required()
 def archive_learning_files():
     """Soft delete - Move to archive"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     filenames = data.get('files', [])
@@ -155,7 +156,7 @@ def archive_learning_files():
 @jwt_required()
 def restore_learning_files():
     """Restore from archive"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     data = request.json
     filenames = data.get('files', [])
@@ -169,7 +170,7 @@ def restore_learning_files():
 @jwt_required()
 def get_learning_file_raw(filename):
     """Get raw head of file"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     lines = request.args.get('lines', 100, type=int)
     return jsonify(user_file_mgr.read_file_head(filename, lines))
@@ -178,7 +179,7 @@ def get_learning_file_raw(filename):
 @jwt_required()
 def get_learning_file_geo(filename):
     """Get Geo Path for Visualization"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user_file_mgr = FileManager(base_dir=config.get_user_learning_dir(user_id))
     return jsonify(user_file_mgr.extract_geo_path(filename))
 
@@ -186,7 +187,7 @@ def get_learning_file_geo(filename):
 @jwt_required()
 def get_processed_files():
     """Returns set of source filenames that have already been processed into sessions."""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     sessions_dir = config.get_user_sessions_dir(user_id)
     processed = set()
     
@@ -208,7 +209,7 @@ def get_processed_files():
 @jwt_required()
 def process_all_files():
     """Process all unprocessed learning files, or specific files if provided."""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     
     # Get already processed files for this user
@@ -336,7 +337,7 @@ def rename_learning_file():
         if not new_name.lower().endswith('.csv'):
             new_name += '.csv'
             
-        user_id = get_jwt_identity()
+        user_id = get_current_user_id()
         user_learning_dir = config.get_user_learning_dir(user_id)
         src = user_learning_dir / old_name
         dst = user_learning_dir / new_name

@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import get_jwt_identity, verify_jwt_in_request, jwt_required
 import requests
 import json
@@ -58,7 +59,7 @@ def sync_from_device():
         user_id = None
         try:
             verify_jwt_in_request(optional=True)
-            user_id = get_jwt_identity()
+            user_id = get_current_user_id()
             if user_id:
                 user_id = int(user_id)
         except:

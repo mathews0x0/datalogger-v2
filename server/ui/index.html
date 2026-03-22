@@ -1659,7 +1659,12 @@
       </div>
 
       <div class="pairing-tutorial-actions">
-        <button class="btn secondary" id="pairingTutorialPrev" onclick="stepPairingTutorial(-1)">Previous</button>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <button class="btn secondary" id="pairingTutorialPrev" onclick="stepPairingTutorial(-1)">Previous</button>
+          <label style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+            <input type="checkbox" id="pairingTutorialDismissForever"> Do not show again
+          </label>
+        </div>
         <div class="pairing-tutorial-actions-right">
           <button class="btn secondary pairing-tutorial-close-action" onclick="closePairingTutorial()">Close</button>
           <button class="btn btn-primary" id="pairingTutorialNext" onclick="stepPairingTutorial(1)">Next</button>
@@ -1787,7 +1792,12 @@
       </div>
 
       <div class="pairing-tutorial-actions">
-        <button class="btn secondary" id="ledTutorialPrev" onclick="stepLedTutorial(-1)">Previous</button>
+        <div style="display: flex; align-items: center; gap: 1rem;">
+          <button class="btn secondary" id="ledTutorialPrev" onclick="stepLedTutorial(-1)">Previous</button>
+          <label style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 0.4rem;">
+            <input type="checkbox" id="ledTutorialDismissForever"> Do not show again
+          </label>
+        </div>
         <div class="pairing-tutorial-actions-right">
           <button class="btn secondary pairing-tutorial-close-action" onclick="closeLedTutorial()">Close</button>
           <button class="btn btn-primary" id="ledTutorialNext" onclick="stepLedTutorial(1)">Next</button>

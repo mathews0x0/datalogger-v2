@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 import os
 import json
@@ -132,7 +133,7 @@ def compare_laps():
             verify_jwt_in_request(optional=True)
         except:
             pass
-        user_id = get_jwt_identity()
+        user_id = get_current_user_id()
         
         s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
         if not s_meta:

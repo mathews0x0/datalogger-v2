@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, send_file, Response, current_app
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 import os
 import json
@@ -79,7 +80,7 @@ def get_session(session_id):
         verify_jwt_in_request(optional=True)
     except:
         pass
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     
     # Check if session belongs to user or is public
     # Look for session - prioritize own
@@ -146,7 +147,7 @@ def get_session_telemetry(session_id):
         verify_jwt_in_request(optional=True)
     except:
         pass
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     
     # Check if session belongs to user or is public
     s_meta = SessionMeta.query.filter_by(session_id=session_id).first()

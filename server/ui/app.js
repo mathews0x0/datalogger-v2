@@ -351,7 +351,7 @@ let currentUser = null;
 
 async function checkAuth() {
     try {
-        const user = await apiCall('/api/auth/me');
+        const user = await apiCall('/api/auth/me', { displayError: false });
         if (user) {
             currentUser = user;
             if (currentUser.active_track_id) {
@@ -882,7 +882,11 @@ function hasPairedDevice() {
 }
 
 function shouldRunFirstTimeTutorials() {
-    return !!currentUser && !hasPairedDevice();
+    if (!currentUser) return false;
+    const seenPairing = localStorage.getItem(getPairingTutorialSeenKey()) === 'true';
+    const seenLed = localStorage.getItem(getLedTutorialSeenKey()) === 'true';
+    if (seenPairing || seenLed) return false;
+    return !hasPairedDevice();
 }
 
 function maybeOpenPairingTutorial() {
@@ -899,10 +903,6 @@ function openPairingTutorial(markSeen = false) {
     const track = document.getElementById('pairingTutorialTrack');
     if (!modal || !track) return;
 
-    if (markSeen && currentUser) {
-        localStorage.setItem(getPairingTutorialSeenKey(), 'true');
-    }
-
     modal.classList.add('active');
     pairingTutorialCurrentSlide = 0;
     selectPairingMode(pairingTutorialMode, false);
@@ -918,11 +918,19 @@ function openPairingTutorial(markSeen = false) {
 function closePairingTutorial() {
     const modal = document.getElementById('pairingTutorialModal');
     if (modal) modal.classList.remove('active');
-    if (currentUser) {
+    
+    const dismissCb = document.getElementById('pairingTutorialDismissForever');
+    if (dismissCb && dismissCb.checked && currentUser) {
         localStorage.setItem(getPairingTutorialSeenKey(), 'true');
+        localStorage.setItem(getLedTutorialSeenKey(), 'true');
     }
+
     if (onboardingTutorialFlow) {
-        setTimeout(() => openLedTutorial(true), 120);
+        if (dismissCb && dismissCb.checked) {
+            onboardingTutorialFlow = false;
+        } else {
+            setTimeout(() => openLedTutorial(true), 120);
+        }
     } else {
         onboardingTutorialFlow = false;
     }
@@ -1020,10 +1028,6 @@ function openLedTutorial(markSeen = false) {
     const track = document.getElementById('ledTutorialTrack');
     if (!modal || !track) return;
 
-    if (markSeen && currentUser) {
-        localStorage.setItem(getLedTutorialSeenKey(), 'true');
-    }
-
     modal.classList.add('active');
     ledTutorialCurrentSlide = 0;
 
@@ -1038,8 +1042,11 @@ function openLedTutorial(markSeen = false) {
 function closeLedTutorial() {
     const modal = document.getElementById('ledTutorialModal');
     if (modal) modal.classList.remove('active');
-    if (currentUser) {
+    
+    const dismissCb = document.getElementById('ledTutorialDismissForever');
+    if (dismissCb && dismissCb.checked && currentUser) {
         localStorage.setItem(getLedTutorialSeenKey(), 'true');
+        localStorage.setItem(getPairingTutorialSeenKey(), 'true');
     }
     onboardingTutorialFlow = false;
 }
@@ -1163,6 +1170,7 @@ async function submitLogin() {
             showToast('Logged in successfully', 'success');
             // Refresh data for current view
             showView(currentView);
+            maybeOpenPairingTutorial();
         }
     } catch (e) {
         if (errorEl) {
@@ -4142,7 +4150,7 @@ async function processFile(filename) {
     }
 
     showToast('Queuing session...', 'info');
-    updateProcessSummary({
+    updateProcessQueueCount({
         totalFiles: window.currentFiles?.length || 0,
         processedFiles: window.processedFiles?.size || 0,
         archivedView: isArchivesView,
@@ -4173,7 +4181,7 @@ async function processFile(filename) {
                     if (statusRes.status === 'complete') {
                         isComplete = true;
                         showToast('Session processed successfully!', 'success');
-                        updateProcessSummary({
+                        updateProcessQueueCount({
                             totalFiles: window.currentFiles?.length || 0,
                             processedFiles: (window.processedFiles?.size || 0) + 1,
                             archivedView: isArchivesView,
@@ -4182,7 +4190,7 @@ async function processFile(filename) {
                     } else if (statusRes.status === 'failed') {
                         isComplete = true;
                         showToast('Analysis failed: ' + statusRes.error, 'error');
-                        updateProcessSummary({
+                        updateProcessQueueCount({
                             totalFiles: window.currentFiles?.length || 0,
                             processedFiles: window.processedFiles?.size || 0,
                             archivedView: isArchivesView,
@@ -6799,7 +6807,7 @@ async function handleManualUpload(event) {
     if (!files || files.length === 0) return;
 
     showToast(`Uploading ${files.length} file(s)...`, 'info');
-    updateProcessSummary({
+    updateProcessQueueCount({
         totalFiles: window.currentFiles?.length || 0,
         processedFiles: window.processedFiles?.size || 0,
         archivedView: isArchivesView,
@@ -6822,7 +6830,7 @@ async function handleManualUpload(event) {
 
     if (successCount > 0) {
         showToast(`Successfully uploaded ${successCount} file(s)`, 'success');
-        updateProcessSummary({
+        updateProcessQueueCount({
             totalFiles: (window.currentFiles?.length || 0) + successCount,
             processedFiles: window.processedFiles?.size || 0,
             archivedView: isArchivesView,
@@ -6834,7 +6842,7 @@ async function handleManualUpload(event) {
     }
     if (failCount > 0) {
         showToast(`Failed to upload ${failCount} file(s)`, 'error');
-        updateProcessSummary({
+        updateProcessQueueCount({
             totalFiles: window.currentFiles?.length || 0,
             processedFiles: window.processedFiles?.size || 0,
             archivedView: isArchivesView,
@@ -6951,15 +6959,27 @@ async function pollCloudHeartbeat() {
                 if (battEl) {
                     battEl.style.display = 'flex';
                     const vbatt = headerDevice.vbatt_sense || 0;
-                    const pct = calculateBatteryPercentage(vbatt);
-                    document.getElementById('headerVbatt').textContent = `${pct}%`;
-                    const pctEl = document.getElementById('headerVbattPct');
-                    if (pctEl) pctEl.textContent = `${vbatt.toFixed(1)}V`;
-                    battEl.style.color = vbatt < 3.6 ? 'var(--error)' : (vbatt < 3.8 ? 'var(--warning)' : 'var(--text-dim)');
-                    if (detailBattery) detailBattery.textContent = `${pct}% • ${vbatt.toFixed(1)}V`;
-                    const battIcon = document.getElementById('headerBatteryIcon');
-                    if (battIcon) {
-                        battIcon.className = pct < 20 ? 'fas fa-battery-quarter' : (pct < 60 ? 'fas fa-battery-half' : 'fas fa-battery-full');
+                    const isUsbPowered = vbatt < 1.0;
+                    
+                    if (isUsbPowered) {
+                        document.getElementById('headerVbatt').textContent = `Charge Now`;
+                        const pctEl = document.getElementById('headerVbattPct');
+                        if (pctEl) pctEl.textContent = ``;
+                        battEl.style.color = 'var(--error)';
+                        if (detailBattery) detailBattery.textContent = `Charge Now`;
+                        const battIcon = document.getElementById('headerBatteryIcon');
+                        if (battIcon) battIcon.className = 'fas fa-battery-empty';
+                    } else {
+                        const pct = calculateBatteryPercentage(vbatt);
+                        document.getElementById('headerVbatt').textContent = `${pct}%`;
+                        const pctEl = document.getElementById('headerVbattPct');
+                        if (pctEl) pctEl.textContent = `${vbatt.toFixed(1)}V`;
+                        battEl.style.color = vbatt < 3.6 ? 'var(--error)' : (vbatt < 3.8 ? 'var(--warning)' : 'var(--text-dim)');
+                        if (detailBattery) detailBattery.textContent = `${pct}% • ${vbatt.toFixed(1)}V`;
+                        const battIcon = document.getElementById('headerBatteryIcon');
+                        if (battIcon) {
+                            battIcon.className = pct < 20 ? 'fas fa-battery-quarter' : (pct < 60 ? 'fas fa-battery-half' : 'fas fa-battery-full');
+                        }
                     }
                 }
 
@@ -6990,8 +7010,23 @@ async function pollCloudHeartbeat() {
                     }
 
                     // Internal Flash
-                    const fFree = headerDevice.storage_flash_free || 0; // KB
-                    const fTotal = headerDevice.storage_flash_total || 0; // KB
+                    let fFree = headerDevice.storage_flash_free || 0; // KB
+                    let fTotal = headerDevice.storage_flash_total || 0; // KB
+                    
+                    // Legacy firmware fix: older devices send flash size in bytes, not KB.
+                    // If free is larger than 100MB (100,000 KB), it's definitely bytes.
+                    if (fFree > 100000) {
+                        fFree = Math.round(fFree / 1024);
+                    }
+                    if (fTotal > 100000) {
+                        fTotal = Math.round(fTotal / 1024);
+                    }
+                    
+                    // Fallback for older firmware that doesn't send total (16MB standard)
+                    if (fFree > 0 && fTotal === 0) {
+                        fTotal = 16384; 
+                    }
+                    
                     const fBar = document.getElementById('flashBarFill');
                     const fText = document.getElementById('flashStorageText');
                     const fShort = document.getElementById('flashStorageShort');

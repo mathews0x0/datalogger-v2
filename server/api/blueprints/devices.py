@@ -121,7 +121,10 @@ def device_ping():
         
     if device_token:
         # Extract telemetry (it's okay if fields are missing)
-        data = request.get_json() or {}
+        raw_data = request.get_data(as_text=True)
+        print(f"[DEBUG hearttbeat] Raw data: '{raw_data}'")
+        data = request.get_json(force=True, silent=True) or {}
+        print(f"[DEBUG heartbeat] Parsed JSON: {data}")
         
         device_token.last_sync = datetime.utcnow()
         if 'vbatt_sense' in data:

@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request, send_file, current_app
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import os
 import json
@@ -63,7 +64,7 @@ def health():
 @core_bp.route('/api/jobs', methods=['GET'])
 @jwt_required()
 def get_jobs():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 20, type=int)
     
@@ -79,7 +80,7 @@ def get_jobs():
 @core_bp.route('/api/jobs/<job_id>', methods=['GET'])
 @jwt_required()
 def get_job(job_id):
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     job = Job.query.filter_by(id=job_id, user_id=user_id).first()
     if not job:
         return jsonify({"error": "Job not found"}), 404

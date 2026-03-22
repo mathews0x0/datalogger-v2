@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
 import os
 import json
@@ -118,7 +119,7 @@ def get_social_counts(user_id):
     is_following = False
     try:
         verify_jwt_in_request(optional=True)
-        current_user_id = get_jwt_identity()
+        current_user_id = get_current_user_id()
         if current_user_id:
             is_following = Follow.query.filter_by(follower_id=int(current_user_id), following_id=user_id).first() is not None
     except:

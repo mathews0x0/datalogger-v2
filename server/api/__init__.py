@@ -61,6 +61,10 @@ def create_app(config_overrides=None):
         database_url = os.environ.get('DATABASE_URL')
     app.config['SQLALCHEMY_DATABASE_URI'] = _normalize_database_url(database_url)
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+    app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+        'pool_pre_ping': True,
+        'pool_recycle': 3600,
+    }
     app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max request size
     
     # JWT Secret
