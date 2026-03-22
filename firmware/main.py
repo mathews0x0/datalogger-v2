@@ -286,7 +286,17 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
         diag.record_phase("SYNC_WIFI_ACTIVE")
         sta.active(True)
         sta.config(txpower=8.5) # Prevent ESP32 brownout spikes
-        apply_power_policy(get_vbatt(), sta)
+        # Inline initial power policy (nested helpers not yet defined)
+        try:
+            _vbatt_init = (vbat_adc.read_uv() / 1000000.0) * 2.0
+            if _vbatt_init > 0 and _vbatt_init < 3.55:
+                led.set_brightness(0.10)
+                sta.config(txpower=2.0)
+            elif _vbatt_init > 0 and _vbatt_init < 3.70:
+                led.set_brightness(0.18)
+                sta.config(txpower=5.0)
+        except:
+            pass
         diag.record_phase("SYNC_WIFI_CONNECT", config.get('ssid', ''))
         sta.connect(config['ssid'], config.get('password', ''))
         
@@ -438,6 +448,7 @@ def run_sync_mode(led, sm, sync_btn, wdt, vbat_adc):
             "storage_flash_free": flash_free,
             "storage_flash_total": flash_total
         })
+        print(f"[Heartbeat] Payload: {telemetry}")
 
         success = False
         s = None
@@ -844,7 +855,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
         ]
         queue_row(','.join(row) + '\n')
 
-    append_marker("LOG_OPEN", os.path.basename(log_file))
+    append_marker("LOG_OPEN", log_file.split('/')[-1])
     
     while True:
         tick_start = time.ticks_ms()

@@ -5,7 +5,7 @@ import gc
 import time
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
-CHUNK_SIZE = 16 * 1024
+CHUNK_SIZE = 8 * 1024
 MIN_CHUNK_SIZE = 4 * 1024
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
@@ -37,7 +37,7 @@ def _pick_chunk_size():
         free_mem = gc.mem_free()
         if free_mem <= 0:
             return MIN_CHUNK_SIZE
-        target = free_mem // 4
+        target = free_mem // 6
         if target < MIN_CHUNK_SIZE:
             return MIN_CHUNK_SIZE
         if target > CHUNK_SIZE:
@@ -155,6 +155,7 @@ def _upload_file_chunked(filepath, fname, api_url, token, led=None, wdt=None, lo
         # 2. SSL Handshake (ONCE PER FILE)
         print(f"[Sync] Handshake: {fname} ({total_size} bytes)")
         s.connect(ai[-1])
+        gc.collect()  # Maximize heap before TLS buffer allocation (~16KB)
         ss = ssl.wrap_socket(s, server_hostname=host)
         
         # Set background animation state once
