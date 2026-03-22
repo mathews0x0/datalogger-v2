@@ -8,6 +8,7 @@ from datetime import datetime
 from api.models import db, User, DeviceToken
 import api.config as config
 import json
+from api.auth_utils import get_current_user_id
 
 devices_bp = Blueprint('devices', __name__)
 
@@ -29,7 +30,7 @@ def _prune_revoked_tokens(user_id, keep=3):
 @jwt_required()
 def create_device_token():
     """Generate a new device upload token"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     data = request.get_json() or {}
     device_name = data.get('device_name', 'RS-Core')
 
@@ -44,7 +45,7 @@ def create_device_token():
 @jwt_required()
 def list_device_tokens():
     """List all device tokens for the current user with live status"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     _prune_revoked_tokens(user_id)
     db.session.commit()
     tokens = DeviceToken.query.filter_by(user_id=user_id).order_by(DeviceToken.created_at.desc()).all()
@@ -55,7 +56,7 @@ def list_device_tokens():
 @jwt_required()
 def get_sync_status():
     """Live status check for UI progress bars"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     # Find active syncing device for this user
     active = DeviceToken.query.filter_by(user_id=user_id, is_syncing=True).first()
     if not active:
@@ -67,7 +68,7 @@ def get_sync_status():
 @jwt_required()
 def revoke_device_token(token_id):
     """Revoke a device token"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     dt = DeviceToken.query.filter_by(id=token_id, user_id=user_id).first()
     if not dt:
         return jsonify({"error": "Token not found"}), 404

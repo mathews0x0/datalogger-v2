@@ -1,8 +1,9 @@
 from functools import wraps
 from flask import jsonify
-from flask_jwt_extended import get_jwt_identity, jwt_required
+from flask_jwt_extended import jwt_required
 import os
 from api.models import User
+from api.auth_utils import get_current_user_id
 
 IS_CLOUD = os.environ.get('RACESENSE_CLOUD', 'false').lower() == 'true'
 
@@ -10,7 +11,7 @@ def require_tier(tier):
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
-            user_id = get_jwt_identity()
+            user_id = get_current_user_id()
             user = User.query.get(user_id)
             if not user:
                 return jsonify({"error": "User not found"}), 404
@@ -37,7 +38,7 @@ def admin_required(f):
     @wraps(f)
     @jwt_required()
     def decorated_function(*args, **kwargs):
-        user_id = get_jwt_identity()
+        user_id = get_current_user_id()
         user = User.query.get(user_id)
         if not user:
             return jsonify({"error": "User not found"}), 404

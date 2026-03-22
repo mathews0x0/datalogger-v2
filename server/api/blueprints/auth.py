@@ -4,6 +4,7 @@ import re
 
 from api.models import db, User, SessionMeta
 import api.config as config
+from api.auth_utils import get_current_user_id
 
 auth_bp = Blueprint('auth', __name__)
 users_bp = Blueprint('users', __name__)
@@ -70,7 +71,7 @@ def logout():
 @auth_bp.route('/me', methods=['GET'])
 @jwt_required()
 def me():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -79,7 +80,7 @@ def me():
 @auth_bp.route('/profile', methods=['PUT'])
 @jwt_required()
 def update_profile():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -95,7 +96,7 @@ def update_profile():
 @auth_bp.route('/profile/photo', methods=['POST'])
 @jwt_required()
 def upload_profile_photo():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -146,7 +147,7 @@ def upload_profile_photo():
 @auth_bp.route('/profile/photo', methods=['DELETE'])
 @jwt_required()
 def delete_profile_photo():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -176,7 +177,7 @@ def get_user_photo(uid):
 @auth_bp.route('/change-password', methods=['POST'])
 @jwt_required()
 def change_password():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404
@@ -208,7 +209,7 @@ sessions_misc_bp = Blueprint('sessions_misc', __name__)
 @sessions_misc_bp.route('/limit', methods=['GET'])
 @jwt_required()
 def get_session_limit():
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     user = User.query.get(user_id)
     if not user:
         return jsonify({"error": "User not found"}), 404

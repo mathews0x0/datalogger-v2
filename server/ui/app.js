@@ -67,7 +67,7 @@ function readUiState(key, fallback = '') {
 // INITIALIZATION
 // ============================================================================
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     console.log('Datalogger Companion App loaded');
 
     updateResponsiveChromeMetrics();
@@ -87,8 +87,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Set up navigation
     setupNavigation();
 
-    // Check Auth
-    checkAuth();
+    // Check Auth before loading user-dependent home state
+    await checkAuth();
 
     // Check for shared session in URL
     const path = window.location.pathname;
@@ -108,8 +108,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Load initial data
-    loadHomeData();
+    if (currentUser) {
+        await loadDeviceTokens();
+        await loadHomeData();
+    }
 });
 
 function updateResponsiveChromeMetrics() {
@@ -685,12 +687,12 @@ async function saveProfile() {
 
 async function loadDeviceTokens() {
     const container = document.getElementById('deviceTokensList');
-    if (!container) return;
 
     try {
         const devices = await apiCall('/api/devices');
         deviceTokensCache = devices || [];
         updateDeviceSetupChecklist();
+        if (!container) return;
         if (!devices || devices.length === 0) {
             container.innerHTML = '<span style="color: var(--text-muted); font-size: 0.85rem;">No devices registered. Generate a token above.</span>';
             return;
@@ -728,7 +730,9 @@ async function loadDeviceTokens() {
     } catch (e) {
         deviceTokensCache = [];
         updateDeviceSetupChecklist();
-        container.innerHTML = '<span style="color: var(--error); font-size: 0.85rem;">Failed to load devices.</span>';
+        if (container) {
+            container.innerHTML = '<span style="color: var(--error); font-size: 0.85rem;">Failed to load devices.</span>';
+        }
     }
 }
 
@@ -873,14 +877,19 @@ function getLedTutorialSeenKey() {
     return currentUser ? `ledTutorialSeen:${currentUser.id}` : 'ledTutorialSeen:guest';
 }
 
-function shouldRunFirstTimeTutorials(sessionCount) {
-    const hasKnownDevice = Array.isArray(deviceTokensCache) && deviceTokensCache.some(device => !device.revoked);
-    return !!currentUser && sessionCount === 0 && !hasKnownDevice;
+function hasPairedDevice() {
+    return Array.isArray(deviceTokensCache) && deviceTokensCache.some(device => !device.revoked && (device.device_uid || device.last_sync));
 }
 
-function maybeOpenPairingTutorial(sessionCount) {
-    if (!shouldRunFirstTimeTutorials(sessionCount)) return;
-    if (localStorage.getItem(getPairingTutorialSeenKey()) === 'true') return;
+function shouldRunFirstTimeTutorials() {
+    return !!currentUser && !hasPairedDevice();
+}
+
+function maybeOpenPairingTutorial() {
+    if (!shouldRunFirstTimeTutorials()) return;
+    const pairingModal = document.getElementById('pairingTutorialModal');
+    const ledModal = document.getElementById('ledTutorialModal');
+    if (pairingModal?.classList.contains('active') || ledModal?.classList.contains('active')) return;
     onboardingTutorialFlow = true;
     openPairingTutorial(true);
 }
@@ -912,7 +921,7 @@ function closePairingTutorial() {
     if (currentUser) {
         localStorage.setItem(getPairingTutorialSeenKey(), 'true');
     }
-    if (onboardingTutorialFlow && localStorage.getItem(getLedTutorialSeenKey()) !== 'true') {
+    if (onboardingTutorialFlow) {
         setTimeout(() => openLedTutorial(true), 120);
     } else {
         onboardingTutorialFlow = false;
@@ -1004,14 +1013,6 @@ function selectPairingMode(mode, jumpToSlide = true) {
     if (jumpToSlide) {
         goToPairingTutorialSlide(1);
     }
-}
-
-function maybeOpenLedTutorial(sessionCount) {
-    if (!shouldRunFirstTimeTutorials(sessionCount)) return;
-    if (localStorage.getItem(getPairingTutorialSeenKey()) !== 'true') return;
-    if (localStorage.getItem(getLedTutorialSeenKey()) === 'true') return;
-    onboardingTutorialFlow = true;
-    openLedTutorial(true);
 }
 
 function openLedTutorial(markSeen = false) {
@@ -1156,6 +1157,7 @@ async function submitLogin() {
         });
         if (result && result.success) {
             currentUser = result.user;
+            await loadDeviceTokens();
             updateAuthUI();
             closeAuthModal();
             showToast('Logged in successfully', 'success');
@@ -1205,6 +1207,7 @@ async function logout() {
         await apiCall('/api/auth/logout', { method: 'POST' });
     } catch (e) { }
     currentUser = null;
+    deviceTokensCache = [];
     closeProfilePanel();
     updateAuthUI();
     showToast('Logged out', 'info');
@@ -2125,6 +2128,8 @@ function refreshHomeContextBanner() {
 }
 
 async function loadHomeData() {
+    if (!currentUser) return;
+
     try {
         // Load tracks and sessions
         const [tracksData, sessionsData] = await Promise.all([
@@ -2140,8 +2145,7 @@ async function loadHomeData() {
 
         // === CONTEXT BANNER ===
         refreshHomeContextBanner();
-        maybeOpenPairingTutorial(sessions.length);
-        maybeOpenLedTutorial(sessions.length);
+        maybeOpenPairingTutorial();
 
         // === STATS with count-up animation ===
         animateCountUp('totalTracks', tracks.length);

@@ -7,6 +7,7 @@ import shutil
 from api.models import db, User, TrackMeta, SessionMeta
 import api.config as config
 from api.helpers import get_track_folder
+from api.auth_utils import get_current_user_id
 
 tracks_bp = Blueprint('tracks', __name__)
 
@@ -14,7 +15,7 @@ tracks_bp = Blueprint('tracks', __name__)
 @jwt_required()
 def get_tracks():
     """Get all tracks for current user"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     tracks_meta = TrackMeta.query.filter_by(user_id=user_id).all()
     
     tracks = []
@@ -34,7 +35,7 @@ def get_tracks():
 @jwt_required()
 def get_track(track_id):
     """Get track details including TBL"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     folder = get_track_folder(track_id, user_id=user_id)
     if not folder:
         return jsonify({"error": "Track not found"}), 404
@@ -76,7 +77,7 @@ def get_track(track_id):
 @jwt_required()
 def update_track(track_id):
     """Update track metadata"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     folder = get_track_folder(track_id, user_id=user_id)
     if not folder:
         return jsonify({"error": "Track not found"}), 404
@@ -109,7 +110,7 @@ def update_track(track_id):
 @jwt_required()
 def get_track_map(track_id):
     """Get track map image"""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     folder = get_track_folder(track_id, user_id=user_id)
     if not folder:
         return jsonify({"error": "Track not found"}), 404
@@ -196,7 +197,7 @@ def rename_track(track_id):
 @jwt_required()
 def get_track_geometry(track_id):
     """Serve the geometry.json file for a track."""
-    user_id = get_jwt_identity()
+    user_id = get_current_user_id()
     folder_name = get_track_folder(track_id, user_id=user_id)
     if not folder_name:
          return jsonify({"error": "Track not found"}), 404
@@ -303,4 +304,3 @@ def delete_track_endpoint(track_id):
     except Exception as e:
         print(f"[API] Delete Track Error: {e}")
         return jsonify({"error": f"Failed to delete: {str(e)}"}), 500
-
