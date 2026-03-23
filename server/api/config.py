@@ -12,7 +12,7 @@ TRACKS_DIR = DATA_DIR / "tracks"
 SESSIONS_DIR = DATA_DIR / "sessions"
 METADATA_DIR = DATA_DIR / "metadata"
 REGISTRY_FILE = METADATA_DIR / "registry.json"
-SECTOR_COUNT = 3
+SECTOR_COUNT = 7
 
 
 

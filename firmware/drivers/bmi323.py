@@ -63,19 +63,36 @@ class BMI323:
         if (cid & 0xFF) != self.CHIP_ID:
             print(f"Warning: Unexpected Chip ID {hex(cid)}")
             
-        # 4. Check for Errors
+        # 4. Check for Initial Errors (Pre-Config)
+        err_init = self._read_words(self.REG_ERR, 1)[0]
+        if err_init != 0:
+            print(f"IMU: Initial Error Register: {hex(err_init)}")
+            
+        # 5. Configure Accel (High Performance, 100Hz, +/- 4g, ODR/4 BW, 4x Avg)
+        # Bits 14:12 (mode): 111 = HP (7)
+        # Bits 10:8  (avg):  010 = 4-sample avg (2)
+        # Bit  7     (bw):   1   = ODR/4 (1)
+        # Bits 6:4   (range): 001 = ±4g (1)
+        # Bits 3:0   (odr):   0111 = 100Hz (7)
+        # Binary: 0111 0010 1001 0111 = 0x7297
+        self._write_word(self.REG_ACC_CONF, 0x7297)
+        
+        # 6. Configure Gyro (High Performance, 100Hz, +/- 2000dps, ODR/4 BW, 2x Avg)
+        # Bits 14:12 (mode): 111 = HP (7)
+        # Bits 10:8  (avg):  001 = 2-sample avg (1)
+        # Bit  7     (bw):   1   = ODR/4 (1)
+        # Bits 6:4   (range): 000 = ±2000dps (0)
+        # Bits 3:0   (odr):   0111 = 100Hz (7)
+        # Binary: 0111 0001 1000 0111 = 0x7187
+        self._write_word(self.REG_GYR_CONF, 0x7187)
+        time.sleep(0.1)
+
+        # 7. Final Error Check (Post-Config)
         err = self._read_words(self.REG_ERR, 1)[0]
         if err != 0:
             print(f"IMU: Sensor Error Register: {hex(err)}")
-            
-        # 5. Configure Accel (High Performance, 100Hz, +/- 4g)
-        # Power Mode 7 (bits 12-14), Range 1 (bits 7-10), ODR 7 (bits 0-3)
-        self._write_word(self.REG_ACC_CONF, 0x7087)
-        
-        # 6. Configure Gyro (High Performance, 100Hz, +/- 2000dps)
-        # Power Mode 7 (bits 12-14), Range 0 (bits 7-10), ODR 7 (bits 0-3)
-        self._write_word(self.REG_GYR_CONF, 0x7007)
-        time.sleep(0.1)
+            if err & 1:
+                print("IMU: Fatal Error - Chip may require power cycle")
 
     def get_accel(self):
         return self._read_words(self.REG_ACC_DATA_X, 3)

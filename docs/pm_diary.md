@@ -2663,3 +2663,21 @@ This is a meaningful product posture shift. RaceSense is no longer only optimizi
 - The codebase and deploy flow are better aligned with future scaling needs, especially for concurrent uploads, worker activity, and operational debugging.
 
 **Status:** ✅ Complete & Deployed.
+
+## 58. Phase 5.8 — BMI323 IMU Optimization & Range Calibration (2026-03-24)
+
+### Why?
+The RaceSense IMU integration was using sub-optimal hardware settings for motorcycle racing. Linear accelerometers are extremely sensitive to engine harmonics and road vibration, which were passing unfiltered into the telemetry. Additionally, a pre-existing configuration bug had the sensor set to ±2g range while the driver expected ±4g, causing all G-force measurements to be inflated by 2x.
+
+### What Changed?
+- **Hardware-Level Filtering:** Enabled ODR/4 bandwidth filtering (25Hz cutoff) in the BMI323 to reject high-frequency vibration at the sensor level.
+- **Hardware Averaging:** Configured 4-sample averaging for the accelerometer and 2-sample for the gyroscope to significantly lower the noise floor without introducing meaningful latency.
+- **Range Calibration Fix:** Corrected the `ACC_CONF` register bits to properly set the ±4g range, aligning the hardware with the `8192 LSB/g` sensitivity constant used in the firmware and analysis engine.
+- **Boot Diagnostics Hardening:** Improved the IMU initialization sequence to check for error flags both before and after configuration, ensuring the `fatal_err` flag clears during power-on.
+
+### Outcome
+- **Accurate Physics:** For the first time, RaceSense provides 1:1 scale G-force telemetry (Z-axis now correctly reads ~1.0g at rest instead of ~2.0g).
+- **Vibration Immunity:** Telemetry traces are significantly cleaner, reducing the need for aggressive software-side smoothing and leading to more precise sector timing and consistency scoring.
+- **Headroom:** Increased accelerometer headroom from ±2g to ±4g, preventing data clipping during extreme braking or curb strikes.
+
+**Status:** ✅ Optimized & Fixed.

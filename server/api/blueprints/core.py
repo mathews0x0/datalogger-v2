@@ -145,6 +145,13 @@ import shutil
 def upload_chunk():
     """Receive a single chunk of a session file from ESP32.
     Metadata is passed in headers to avoid JSON overhead on the device.
+
+    Fast-path: When chunks arrive in order (chunk 0, 1, 2...), appends
+    directly to a .partial staging file — avoids per-chunk file creation
+    and the final reassembly step.
+
+    Fallback: Out-of-order or retransmitted chunks use individual chunk
+    files for resumability.
     """
     user_id, error, device_token = _resolve_upload_user()
     if error:
@@ -160,30 +167,47 @@ def upload_chunk():
 
         chunk_index = int(chunk_index)
         safe_name = os.path.basename(filename)
+        learning_dir = config.get_user_learning_dir(user_id)
 
-        # Create temp chunk directory: learning/.chunks/<filename>/
-        chunk_dir = config.get_user_learning_dir(user_id) / '.chunks' / safe_name
-        chunk_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write chunk file (idempotent — re-sending same index overwrites)
-        chunk_path = chunk_dir / f'chunk_{chunk_index:04d}'
         data = request.get_data()
 
-        with open(chunk_path, 'wb') as f:
-            f.write(data)
+        # --- Fast-path: append-mode when chunks arrive in order ---
+        partial_path = learning_dir / '.chunks' / (safe_name + '.partial')
+        tracker_path = learning_dir / '.chunks' / (safe_name + '.next')
+        chunk_dir = learning_dir / '.chunks' / safe_name
+
+        # Read expected next chunk index from tracker
+        expected_next = 0
+        if tracker_path.exists():
+            try:
+                expected_next = int(tracker_path.read_text().strip())
+            except (ValueError, OSError):
+                expected_next = 0
+
+        if chunk_index == expected_next:
+            # Fast-path: append directly to .partial file
+            (learning_dir / '.chunks').mkdir(parents=True, exist_ok=True)
+            with open(partial_path, 'ab') as f:
+                f.write(data)
+            # Update tracker
+            tracker_path.write_text(str(chunk_index + 1))
+        else:
+            # Fallback: write individual chunk file (out-of-order or retry)
+            chunk_dir.mkdir(parents=True, exist_ok=True)
+            chunk_path = chunk_dir / f'chunk_{chunk_index:04d}'
+            with open(chunk_path, 'wb') as f:
+                f.write(data)
 
         # Record progress for UI
         if device_token:
             device_token.is_syncing = True
             device_token.last_sync_filename = safe_name
             device_token.last_sync_chunk = chunk_index
-            # We assume the caller might send total chunks in a header if we updated it,
-            # otherwise we just track the index.
             total_chunks = request.headers.get('X-Total-Chunks')
             if total_chunks:
                 device_token.last_sync_total = int(total_chunks)
-                
-            # Global progress tracking
+
+            # Global progress tracking (only sent on some chunks)
             global_prog = request.headers.get('X-Global-Progress')
             if global_prog:
                 device_token.sync_global_current = int(global_prog)
@@ -196,13 +220,13 @@ def upload_chunk():
             file_idx = request.headers.get('X-File-Index')
             if file_idx:
                 device_token.sync_current_file_index = int(file_idx)
-            
+
             device_token.last_sync = datetime.utcnow()
-            
+
             last_chunk_index = -1
             if device_token.last_sync_total:
                 last_chunk_index = device_token.last_sync_total - 1
-                
+
             if chunk_index % 20 == 0 or chunk_index == last_chunk_index:
                 db.session.commit()
 
@@ -263,8 +287,13 @@ def upload_status():
 
 @core_bp.route('/api/upload/complete', methods=['POST'])
 def upload_complete():
-    """Reassemble chunks into final CSV file.
-    Called by ESP32 after all chunks are sent.
+    """Finalize a chunked upload.
+
+    Fast-path: If all chunks were appended in order, the .partial file
+    IS the complete file — just rename it. No read/reassembly needed.
+
+    Fallback: If some chunks went through per-file storage, assemble
+    from individual chunk files as before.
     """
     user_id, error, device_token = _resolve_upload_user()
     if error:
@@ -280,29 +309,78 @@ def upload_complete():
 
         safe_name = os.path.basename(filename)
         learning_dir = config.get_user_learning_dir(user_id)
+        partial_path = learning_dir / '.chunks' / (safe_name + '.partial')
+        tracker_path = learning_dir / '.chunks' / (safe_name + '.next')
         chunk_dir = learning_dir / '.chunks' / safe_name
 
-        # Validate all chunks exist
-        for i in range(total_chunks):
-            chunk_path = chunk_dir / f'chunk_{i:04d}'
-            if not chunk_path.exists():
-                return jsonify({"error": f"Missing chunk {i}"}), 400
-
-        # Reassemble into final file
         if not safe_name.lower().endswith('.csv'):
             safe_name += '.csv'
 
         save_path = learning_dir / safe_name
 
-        with open(save_path, 'wb') as out_f:
-            for i in range(total_chunks):
-                chunk_path = chunk_dir / f'chunk_{i:04d}'
-                with open(chunk_path, 'rb') as chunk_f:
-                    out_f.write(chunk_f.read())
+        # --- Check for fast-path: .partial file has all chunks ---
+        partial_complete = False
+        if partial_path.exists() and tracker_path.exists():
+            try:
+                written_chunks = int(tracker_path.read_text().strip())
+                if written_chunks >= total_chunks:
+                    partial_complete = True
+            except (ValueError, OSError):
+                pass
 
-        # Clean up chunk dir
-        shutil.rmtree(str(chunk_dir), ignore_errors=True)
+        if partial_complete:
+            # Fast-path: just rename .partial → final file
+            os.rename(str(partial_path), str(save_path))
+            # Clean up tracker
+            try:
+                tracker_path.unlink()
+            except OSError:
+                pass
+            print(f"[Upload] Fast-assembled {safe_name} (append-mode, {total_chunks} chunks)")
+        else:
+            # Fallback: assemble from individual chunk files
+            # First, check if any chunks were in the partial file
+            partial_chunks = 0
+            if tracker_path.exists():
+                try:
+                    partial_chunks = int(tracker_path.read_text().strip())
+                except (ValueError, OSError):
+                    partial_chunks = 0
 
+            # Validate remaining chunks exist in chunk_dir
+            for i in range(partial_chunks, total_chunks):
+                cp = chunk_dir / f'chunk_{i:04d}'
+                if not cp.exists():
+                    return jsonify({"error": f"Missing chunk {i}"}), 400
+
+            # Build final file: start from partial if it exists, then append remaining
+            with open(save_path, 'wb') as out_f:
+                if partial_path.exists() and partial_chunks > 0:
+                    with open(partial_path, 'rb') as pf:
+                        while True:
+                            block = pf.read(65536)
+                            if not block:
+                                break
+                            out_f.write(block)
+                for i in range(partial_chunks, total_chunks):
+                    cp = chunk_dir / f'chunk_{i:04d}'
+                    with open(cp, 'rb') as chunk_f:
+                        out_f.write(chunk_f.read())
+
+            # Clean up
+            if chunk_dir.exists():
+                shutil.rmtree(str(chunk_dir), ignore_errors=True)
+            try:
+                if partial_path.exists():
+                    partial_path.unlink()
+                if tracker_path.exists():
+                    tracker_path.unlink()
+            except OSError:
+                pass
+
+            print(f"[Upload] Assembled {safe_name} from {total_chunks} chunks (hybrid mode) for user {user_id}")
+
+        # Rename to session timestamp
         final_name = safe_name
         try:
             with open(save_path, 'r') as f:
@@ -316,12 +394,10 @@ def upload_complete():
         except Exception as rename_err:
             print(f"[Upload] Rename skipped: {rename_err}")
 
-        print(f"[Upload] Assembled {final_name} from {total_chunks} chunks for user {user_id}")
-
         # Update last_sync on device token
         if device_token:
             device_token.last_sync = datetime.utcnow()
-            
+
             # Reset global progress if this is the last file (or if we lost track)
             if device_token.sync_current_file_index is not None and device_token.sync_total_files:
                 if device_token.sync_current_file_index >= device_token.sync_total_files - 1:
@@ -330,13 +406,14 @@ def upload_complete():
                     device_token.sync_global_total = 0
             else:
                  device_token.is_syncing = False
-                 
+
             db.session.commit()
 
         return jsonify({"success": True, "filename": final_name})
 
     except Exception as e:
-        print(f"Upload Complete Error: {e}")
+        print(f"Upload Complete Error: {e}"
+        )
         traceback.print_exc()
         if device_token:
             try:

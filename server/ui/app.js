@@ -2971,7 +2971,7 @@ async function viewTrackday(trackdayId) {
     try {
         const td = await apiCall(`/api/trackdays/${trackdayId}`);
 
-        const sectorCount = td.sector_count || 3;
+        const sectorCount = td.sector_count || 7;
 
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1.5rem;">
@@ -6634,44 +6634,49 @@ function drawFrame() {
     }
 
     // ===== SECTOR TIMES =====
-    // For now, show placeholders - sectors need to be defined in track data
-    // TODO: Implement sector detection from track definition
-    const s1El = document.getElementById('pbS1Time');
-    const s2El = document.getElementById('pbS2Time');
-    const s3El = document.getElementById('pbS3Time');
-    const s1Box = document.getElementById('pbS1');
-    const s2Box = document.getElementById('pbS2');
-    const s3Box = document.getElementById('pbS3');
+    const SECTOR_COUNT = 7;
+    const sectorEls = [];
+    const sectorBoxes = [];
+    for (let s = 1; s <= SECTOR_COUNT; s++) {
+        sectorEls.push(document.getElementById(`pbS${s}Time`));
+        sectorBoxes.push(document.getElementById(`pbS${s}`));
+    }
 
-    // Simple 3-way split for demo
-    if (s1El && s2El && s3El && lapEndTime) {
+    if (sectorEls[0] && lapEndTime) {
         const lapDuration = lapEndTime - lapStartTime;
-        const s1End = lapStartTime + lapDuration * 0.33;
-        const s2End = lapStartTime + lapDuration * 0.66;
-
         const currentTime = data.time[i];
 
-        // Highlight current sector
-        [s1Box, s2Box, s3Box].forEach(b => b.style.borderColor = 'transparent');
+        // Clear all highlights
+        sectorBoxes.forEach(b => { if (b) b.style.borderColor = 'transparent'; });
 
-        if (currentTime < s1End) {
-            const s1Time = currentTime - lapStartTime;
-            s1El.textContent = s1Time.toFixed(1);
-            s1Box.style.borderColor = '#fff';
-            s2El.textContent = '--.-';
-            s3El.textContent = '--.-';
-        } else if (currentTime < s2End) {
-            s1El.textContent = (s1End - lapStartTime).toFixed(1);
-            const s2Time = currentTime - s1End;
-            s2El.textContent = s2Time.toFixed(1);
-            s2Box.style.borderColor = '#fff';
-            s3El.textContent = '--.-';
-        } else {
-            s1El.textContent = (s1End - lapStartTime).toFixed(1);
-            s2El.textContent = (s2End - s1End).toFixed(1);
-            const s3Time = currentTime - s2End;
-            s3El.textContent = s3Time.toFixed(1);
-            s3Box.style.borderColor = '#fff';
+        // Determine sector boundaries (equal split)
+        const sectorFraction = 1.0 / SECTOR_COUNT;
+        let activeSector = SECTOR_COUNT - 1; // default to last
+        for (let s = 0; s < SECTOR_COUNT; s++) {
+            const sectorEnd = lapStartTime + lapDuration * sectorFraction * (s + 1);
+            if (currentTime < sectorEnd) {
+                activeSector = s;
+                break;
+            }
+        }
+
+        // Update sector times
+        for (let s = 0; s < SECTOR_COUNT; s++) {
+            const sectorStart = lapStartTime + lapDuration * sectorFraction * s;
+            const sectorEnd = lapStartTime + lapDuration * sectorFraction * (s + 1);
+
+            if (s < activeSector) {
+                // Completed sector
+                sectorEls[s].textContent = (lapDuration * sectorFraction).toFixed(1);
+            } else if (s === activeSector) {
+                // Active sector
+                const elapsed = currentTime - sectorStart;
+                sectorEls[s].textContent = elapsed.toFixed(1);
+                if (sectorBoxes[s]) sectorBoxes[s].style.borderColor = '#fff';
+            } else {
+                // Future sector
+                sectorEls[s].textContent = '--.-';
+            }
         }
     }
 
