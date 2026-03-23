@@ -3,6 +3,10 @@ import os
 import uuid
 from typing import Dict, List, Optional
 import datetime
+from datetime import timezone, timedelta
+
+# IST timezone (GMT+5:30) for all user-facing dates
+IST = timezone(timedelta(hours=5, minutes=30))
 from src.analysis.core.models import Session, Lap
 import src.config as config
 from src.analysis.processing.diagnostics import DiagnosticsEngine
@@ -37,9 +41,9 @@ class SessionExporter:
         et_ts = session.end_time
         dur = session.duration
         
-        # Convert timestamps to ISO8601
-        st_iso = datetime.datetime.fromtimestamp(st_ts).isoformat() + "Z" if st_ts else None
-        et_iso = datetime.datetime.fromtimestamp(et_ts).isoformat() + "Z" if et_ts else None
+        # Convert timestamps to ISO8601 in IST (derived from GPS timestamp)
+        st_iso = datetime.datetime.fromtimestamp(st_ts, tz=IST).isoformat() if st_ts else None
+        et_iso = datetime.datetime.fromtimestamp(et_ts, tz=IST).isoformat() if et_ts else None
         
         data = {
             "meta": {
@@ -204,34 +208,33 @@ class SessionExporter:
     
     def _generate_session_filename(self, session_timestamp: float, folder_name: str) -> str:
         """
-        Generate date-based session filename: jan21Session1.json
-        Uses session timestamp to derive date, then finds next available number for that day.
+        Generate date-based session filename: 23-Mar-Sess-01.json
+        Uses GPS timestamp in IST to derive date, then finds next available number for that day.
         """
-        # Parse timestamp to get date components
+        # Parse GPS timestamp to IST date components
         if session_timestamp:
-            session_dt = datetime.datetime.fromtimestamp(session_timestamp)
+            session_dt = datetime.datetime.fromtimestamp(session_timestamp, tz=IST)
         else:
-            session_dt = datetime.datetime.now()
+            session_dt = datetime.datetime.now(tz=IST)
         
-        # Format: jan21, feb05, etc.
-        month_abbrev = session_dt.strftime("%b").lower()  # 'jan', 'feb', etc.
-        day = session_dt.strftime("%d")                    # '01', '21', etc.
-        date_prefix = f"{month_abbrev}{day}"               # 'jan21'
+        # Format: 23-Mar, 05-Feb, etc.
+        day = session_dt.strftime("%d")           # '23', '05', etc.
+        month_abbrev = session_dt.strftime("%b")  # 'Mar', 'Feb', etc.
+        date_prefix = f"{day}-{month_abbrev}"     # '23-Mar'
         
         # Find existing sessions with this date prefix
         existing = []
         
         if os.path.exists(self.output_dir):
             for file in os.listdir(self.output_dir):
-                # Match pattern: jan21Session1.json (case insensitive)
+                # Match pattern: 23-Mar-Sess-01.json (case insensitive)
                 if file.lower().startswith(date_prefix.lower()) and file.endswith(".json") and not file.endswith("_telemetry.json"):
-                    # Extract session number from jan21Session5.json
                     try:
-                        # Remove date prefix and .json to get 'Session5'
+                        # Remove date prefix and .json to get '-Sess-01'
                         session_part = file[len(date_prefix):].replace(".json", "")
-                        # Extract number after 'Session'
-                        if session_part.lower().startswith("session"):
-                            num_part = session_part[7:]  # Skip 'Session' (7 chars)
+                        # Extract number after '-Sess-'
+                        if session_part.lower().startswith("-sess-"):
+                            num_part = session_part[6:]  # Skip '-Sess-' (6 chars)
                             session_num = int(num_part)
                             existing.append(session_num)
                     except (ValueError, IndexError):
@@ -239,7 +242,7 @@ class SessionExporter:
         
         # Next number is max + 1, or 1 if none exist
         next_num = max(existing) + 1 if existing else 1
-        return f"{date_prefix}Session{next_num}.json"
+        return f"{date_prefix}-Sess-{next_num:02d}.json"
 
     def _extract_gps_stats(self, session: Session) -> Dict:
         if not session.samples:

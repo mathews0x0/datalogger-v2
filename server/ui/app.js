@@ -4143,10 +4143,6 @@ async function processFile(filename) {
             return;
         }
         isForce = true;
-    } else {
-        if (!confirm(`Process session '${filename}'? This will be dispatched to the background queue.`)) {
-            return;
-        }
     }
 
     showToast('Queuing session...', 'info');
@@ -4241,10 +4237,7 @@ async function processAllFiles() {
         return;
     }
 
-    const actionText = selectedCheckboxes.length > 0 ? 'selected' : 'all';
-    if (!confirm(`Process ${filesToProcess.length} ${actionText} unprocessed file(s)? This may take a while.`)) {
-        return;
-    }
+    // No confirm() — first-time analysis is non-destructive and confirm() breaks on mobile Safari
 
     showToast(`Analyzing ${filesToProcess.length} files...`, 'info');
 

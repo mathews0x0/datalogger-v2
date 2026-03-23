@@ -114,6 +114,17 @@ def register_new_sessions(user_id):
                             )
                             db.session.add(track_meta)
                             db.session.commit() # Commit track before session
+                        else:
+                            # Sync: ensure session JSON uses the DB's authoritative track name
+                            json_track_name = data.get('track', {}).get('track_name')
+                            if json_track_name and json_track_name != track_meta.track_name:
+                                print(f"    Syncing track name for {track_id}: '{json_track_name}' -> '{track_meta.track_name}'")
+                                data['track']['track_name'] = track_meta.track_name
+                                try:
+                                    with open(sessions_dir / filename, 'w') as fw:
+                                        json.dump(data, fw, indent=2)
+                                except Exception as write_err:
+                                    print(f"    Failed to sync track name to session JSON: {write_err}")
 
                     # 2. Register session if missing for this user
                     existing = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
