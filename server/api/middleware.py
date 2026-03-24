@@ -33,6 +33,8 @@ def protect_api():
             '/api/public/sessions',
             '/api/upload',
             '/api/upload/chunk',
+            '/api/upload/batch',
+            '/api/upload/status',
             '/api/upload/complete',
             '/api/device/ping',
             '/api/device/active_track',

@@ -252,3 +252,129 @@ def test_global_sync_headers(upload_client, app):
         dt = DeviceToken.query.filter_by(token='rsk_testtoken123').first()
         assert dt.is_syncing == True
         assert dt.sync_global_current == 2000
+
+
+# ============================================================================
+# BATCH UPLOAD TESTS (/api/upload/batch)
+# ============================================================================
+
+def test_batch_upload_single(upload_client, app):
+    """A single batch should create a .partial file."""
+    with app.app_context():
+        data = b'tick_ms,row_type,acc_x\n100,I,0.12\n200,I,0.34\n'
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_batch.csv'
+        headers['X-Offset'] = '0'
+        headers['X-Total-Size'] = str(len(data))
+        headers['Content-Length'] = str(len(data))
+
+        resp = upload_client.post('/api/upload/batch', data=data, headers=headers)
+        assert resp.status_code == 200
+        result = resp.get_json()
+        assert result['received'] is True
+        assert result['offset'] == len(data)
+        assert result['bytes'] == len(data)
+
+        # Verify .partial file exists
+        partial = config.get_user_learning_dir(upload_client._user_id) / '.chunks' / 'sess_batch.csv.partial'
+        assert partial.exists()
+        assert partial.read_bytes() == data
+
+
+def test_batch_upload_multi_and_finalize(upload_client, app):
+    """Upload in two batches + finalize — verify assembled CSV."""
+    with app.app_context():
+        part1 = b'tick_ms,row_type,acc_x\n100,I,0.12\n'
+        part2 = b'200,I,0.34\n300,G,0.56\n'
+        total = len(part1) + len(part2)
+
+        # Batch 1
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_multi.csv'
+        headers['X-Offset'] = '0'
+        headers['X-Total-Size'] = str(total)
+        resp = upload_client.post('/api/upload/batch', data=part1, headers=headers)
+        assert resp.status_code == 200
+        assert resp.get_json()['offset'] == len(part1)
+
+        # Batch 2
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_multi.csv'
+        headers['X-Offset'] = str(len(part1))
+        headers['X-Total-Size'] = str(total)
+        resp = upload_client.post('/api/upload/batch', data=part2, headers=headers)
+        assert resp.status_code == 200
+        assert resp.get_json()['offset'] == total
+
+        # Finalize with total_size (batch mode)
+        headers = _auth_headers(upload_client, content_type='application/json')
+        resp = upload_client.post('/api/upload/complete',
+                                  data=json.dumps({'filename': 'sess_multi.csv', 'total_size': total}),
+                                  headers=headers)
+        assert resp.status_code == 200
+        result = resp.get_json()
+        assert result['success'] is True
+
+        # Verify assembled file
+        final_path = config.get_user_learning_dir(upload_client._user_id) / 'sess_multi.csv'
+        assert final_path.exists()
+        assert final_path.read_bytes() == part1 + part2
+
+
+def test_batch_upload_resume(upload_client, app):
+    """Send batch at offset 0, then another at correct offset — verify continuity."""
+    with app.app_context():
+        part1 = b'AAAA' * 128   # 512 bytes
+        part2 = b'BBBB' * 128   # 512 bytes
+
+        # Batch 1 at offset 0
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_resume.csv'
+        headers['X-Offset'] = '0'
+        headers['X-Total-Size'] = '1024'
+        resp = upload_client.post('/api/upload/batch', data=part1, headers=headers)
+        assert resp.status_code == 200
+        assert resp.get_json()['offset'] == 512
+
+        # Batch 2 at offset 512
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_resume.csv'
+        headers['X-Offset'] = '512'
+        headers['X-Total-Size'] = '1024'
+        resp = upload_client.post('/api/upload/batch', data=part2, headers=headers)
+        assert resp.status_code == 200
+        assert resp.get_json()['offset'] == 1024
+
+        # Verify partial file contains both parts
+        partial = config.get_user_learning_dir(upload_client._user_id) / '.chunks' / 'sess_resume.csv.partial'
+        assert partial.read_bytes() == part1 + part2
+
+
+def test_batch_upload_auth_required(upload_client, app):
+    """Batch upload without a token should be rejected."""
+    with app.app_context():
+        headers = {
+            'Content-Type': 'application/octet-stream',
+            'X-Filename': 'sess_noauth.csv',
+            'X-Offset': '0',
+        }
+        resp = upload_client.post('/api/upload/batch', data=b'data', headers=headers)
+        assert resp.status_code == 401
+
+
+def test_batch_status_returns_bytes(upload_client, app):
+    """After batch upload, /status should return received_bytes."""
+    with app.app_context():
+        data = b'X' * 256
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_status.csv'
+        headers['X-Offset'] = '0'
+        headers['X-Total-Size'] = '512'
+        upload_client.post('/api/upload/batch', data=data, headers=headers)
+
+        # Check status
+        headers = _auth_headers(upload_client)
+        resp = upload_client.get('/api/upload/status?filename=sess_status.csv', headers=headers)
+        assert resp.status_code == 200
+        result = resp.get_json()
+        assert result['received_bytes'] == 256

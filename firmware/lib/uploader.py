@@ -1,16 +1,17 @@
-# lib/uploader.py - High-Speed Persistent Uploader for RS-Core
+# lib/uploader.py - High-Speed Batch Uploader for RS-Core
 import json
 import os
 import gc
 import time
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
-CHUNK_SIZE = 64 * 1024       # 64KB ceiling — dynamic sizing scales down if heap is tight
-MIN_CHUNK_SIZE = 8 * 1024    # 8KB floor
+CHUNK_SIZE = 32 * 1024       # 32KB read size from flash into RAM
+BATCH_SIZE = 512 * 1024      # 512KB per HTTP request (16 reads per batch)
+MIN_CHUNK_SIZE = 8 * 1024    # 8KB floor for memory-constrained situations
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
 TIMEOUT = 45
-GC_EVERY_N = 8              # Only gc.collect() every Nth chunk
+GC_EVERY_N = 8               # Only gc.collect() every Nth read
 
 
 def _load_config():
@@ -33,12 +34,12 @@ def _validate_session(filepath):
 
 
 def _pick_chunk_size():
-    """Pick a chunk size that leaves heap headroom for TLS/socket buffers."""
+    """Pick a read size that leaves heap headroom for TLS/socket buffers."""
     try:
         free_mem = gc.mem_free()
         if free_mem <= 0:
             return MIN_CHUNK_SIZE
-        target = free_mem // 4  # More aggressive: 1/4 of free heap (was 1/6)
+        target = free_mem // 4
         if target < MIN_CHUNK_SIZE:
             return MIN_CHUNK_SIZE
         if target > CHUNK_SIZE:
@@ -102,7 +103,9 @@ def _read_http_response(sock):
 
 def _query_status_on_socket(ss, fname, host, status_path, token):
     """Query upload status using an EXISTING SSL socket (no new handshake)."""
-    req = "GET " + status_path + "?filename=" + fname + " HTTP/1.1\r\n"
+    # URL encode spaces to prevent malformed HTTP request line
+    encoded_fname = fname.replace(' ', '%20')
+    req = "GET " + status_path + "?filename=" + encoded_fname + " HTTP/1.1\r\n"
     req += "Host: " + host + "\r\n"
     req += "Authorization: Bearer " + token + "\r\n"
     req += "Connection: keep-alive\r\n\r\n"
@@ -111,15 +114,16 @@ def _query_status_on_socket(ss, fname, host, status_path, token):
     if "200" in status_line and body:
         data = json.loads(body)
         return (
+            int(data.get('received_bytes', 0) or 0),
             int(data.get('next_chunk', 0) or 0),
             int(data.get('chunk_size', 0) or 0),
         )
-    return 0, 0
+    return 0, 0, 0
 
 
-def _finalize_on_socket(ss, fname, host, complete_path, token, total_chunks, wdt=None):
+def _finalize_on_socket(ss, fname, host, complete_path, token, total_size, wdt=None):
     """Send finalize request on an EXISTING SSL socket (no new handshake)."""
-    payload = json.dumps({'filename': fname, 'total_chunks': total_chunks})
+    payload = json.dumps({'filename': fname, 'total_size': total_size})
     req = "POST " + complete_path + " HTTP/1.1\r\n"
     req += "Host: " + host + "\r\n"
     req += "Authorization: Bearer " + token + "\r\n"
@@ -135,12 +139,16 @@ def _finalize_on_socket(ss, fname, host, complete_path, token, total_chunks, wdt
 def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None, lock=None,
                             global_total=0, global_current=0, file_index=0, total_files=1):
     """
-    Upload a file using a SINGLE persistent SSL connection for:
-      1. Status query (resume check)
-      2. All chunk uploads
-      3. Finalize
+    Upload a file using batched streaming over a SINGLE persistent SSL connection.
 
-    Zero extra SSL handshakes. One connection per file.
+    Instead of one HTTP request per small chunk, this streams multiple 32KB
+    reads into a single ~512KB HTTP request body.  The server receives each
+    batch as one request, cutting round-trips by ~16x.
+
+    Connection layout:
+      1. Status query (resume check) — returns byte offset
+      2. N batch requests (~512KB each, streamed as 16× 32KB reads)
+      3. Finalize
     """
     stat = os.stat(filepath)
     total_size = stat[6]
@@ -150,15 +158,14 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
     # Parse URL
     try:
         proto, host, port, base_path = _parse_url(api_url)
-        chunk_path = base_path + '/chunk'
+        batch_path = base_path + '/batch'
         status_path = base_path + '/status'
         complete_path = base_path + '/complete'
     except Exception as e:
         print(f"[Sync] URL Parse Error: {e}")
         return False, 0, 0
 
-    chunk_index = 0
-    bytes_sent = 0
+    offset = 0
     s = None
     ss = None
     locked = False
@@ -170,107 +177,110 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
         gc.collect()
 
         # 1. Open persistent SSL connection (ONCE PER FILE)
-        print(f"[Sync] Connecting: {fname} ({total_size} bytes)")
+        print(f"[Sync] Connecting: {fname} ({total_size} bytes, {total_size / (1024 * 1024):.2f} MB)")
         s, ss = _open_ssl_socket(host, port, proto)
 
-        # 2. Query resume status on this connection (no extra SSL handshake)
-        start_chunk = 0
-        chunk_size = _pick_chunk_size()
+        # 2. Query resume status on this connection
+        read_size = _pick_chunk_size()
         try:
-            resume_chunk, resume_chunk_size = _query_status_on_socket(
+            resume_bytes, _, _ = _query_status_on_socket(
                 ss, fname, host, status_path, token
             )
-            if resume_chunk > 0:
-                start_chunk = resume_chunk
-                print(f'[Sync] Resuming {fname} from chunk {start_chunk}')
-            if resume_chunk_size >= MIN_CHUNK_SIZE and resume_chunk_size <= CHUNK_SIZE:
-                chunk_size = resume_chunk_size
+            if resume_bytes > 0:
+                offset = resume_bytes
+                print(f'[Sync] Resuming {fname} from byte {offset}')
         except Exception as e:
             print(f'[Sync] Status query failed, starting fresh: {e}')
 
-        chunk_index = start_chunk
-        bytes_sent = start_chunk * chunk_size
-        total_chunks = (total_size + chunk_size - 1) // chunk_size
-        print(f'[Sync] Uploading: {chunk_size // 1024}KB chunks, {total_chunks} total, start={start_chunk}')
+        total_batches = (total_size - offset + BATCH_SIZE - 1) // BATCH_SIZE
+        print(f'[Sync] Uploading: {read_size // 1024}KB reads, {BATCH_SIZE // 1024}KB batches, ~{total_batches} batches')
 
         # Set background animation state once
         if led:
             led.set_state("SYNC_UPLOADING")
 
-        # 3. Stream all chunks on the same connection
+        # 3. Stream batches on the same connection
+        batch_count = 0
+        read_count = 0
         with open(filepath, 'rb') as f:
-            if bytes_sent > 0:
-                f.seek(bytes_sent)
-            while True:
-                data = f.read(chunk_size)
-                if not data:
-                    break
+            if offset > 0:
+                f.seek(offset)
 
-                content_len = len(data)
+            while offset < total_size:
+                # Calculate this batch's size
+                batch_size = min(BATCH_SIZE, total_size - offset)
 
-                # Build HTTP request — minimal headers on non-first chunks
-                request = "POST " + chunk_path + " HTTP/1.1\r\n"
+                # Build ONE HTTP request for this batch
+                request = "POST " + batch_path + " HTTP/1.1\r\n"
                 request += "Host: " + host + "\r\n"
                 request += "Authorization: Bearer " + token + "\r\n"
                 request += "Content-Type: application/octet-stream\r\n"
-                request += "Content-Length: " + str(content_len) + "\r\n"
+                request += "Content-Length: " + str(batch_size) + "\r\n"
                 request += "X-Filename: " + fname + "\r\n"
-                request += "X-Chunk-Index: " + str(chunk_index) + "\r\n"
-                # Send full metadata only on first chunk
-                if chunk_index == start_chunk:
-                    request += "X-Total-Size: " + str(total_size) + "\r\n"
-                    request += "X-Total-Chunks: " + str(total_chunks) + "\r\n"
-                # Global progress every 10th chunk or first/last
-                if global_total > 0 and (chunk_index == start_chunk or chunk_index % 10 == 0 or content_len < chunk_size):
-                    request += "X-Global-Progress: " + str(global_current + bytes_sent) + "\r\n"
+                request += "X-Offset: " + str(offset) + "\r\n"
+                request += "X-Total-Size: " + str(total_size) + "\r\n"
+                # Global progress on every batch
+                if global_total > 0:
+                    request += "X-Global-Progress: " + str(global_current + offset) + "\r\n"
                     request += "X-Global-Total: " + str(global_total) + "\r\n"
                     request += "X-Total-Files: " + str(total_files) + "\r\n"
                     request += "X-File-Index: " + str(file_index) + "\r\n"
                 request += "Connection: keep-alive\r\n\r\n"
-                request = request.encode()
 
-                try:
-                    if wdt:
-                        wdt.feed()
-                    # Send Headers + Data
-                    ss.write(request)
+                if wdt:
+                    wdt.feed()
+
+                ss.write(request.encode())
+
+                # Stream multiple reads into this single request body
+                sent_in_batch = 0
+                while sent_in_batch < batch_size:
+                    to_read = min(read_size, batch_size - sent_in_batch)
+                    data = f.read(to_read)
+                    if not data:
+                        break
                     ss.write(data)
-                    # Read Response
+                    sent_in_batch += len(data)
+                    read_count += 1
+
+                    if wdt and read_count % 4 == 0:
+                        wdt.feed()
+
+                    # GC only every Nth read
+                    if read_count % GC_EVERY_N == 0:
+                        gc.collect()
+
+                # Read ONE response for the entire batch
+                try:
                     status_line, _, _ = _read_http_response(ss)
                     if "200" in status_line:
-                        if chunk_index % 10 == 0 or content_len < chunk_size:
-                            print(f'[Sync] Sent: {chunk_index}/{total_chunks}')
+                        batch_count += 1
+                        offset += sent_in_batch
+                        print(f'[Sync] Batch {batch_count}/{total_batches}: {offset / 1024:.0f}KB / {total_size / 1024:.0f}KB')
                     else:
                         print(f'[Sync] HTTP Error: {status_line.strip()}')
-                        return False, chunk_index, bytes_sent
-                except Exception as chunk_e:
-                    print(f'[Sync] Socket Error at chunk {chunk_index}: {chunk_e}')
-                    return False, chunk_index, bytes_sent
+                        return False, offset, offset
+                except Exception as batch_e:
+                    print(f'[Sync] Socket Error at offset {offset}: {batch_e}')
+                    return False, offset, offset
 
-                bytes_sent += content_len
-                chunk_index += 1
-
-                # GC only every Nth chunk instead of every chunk
-                if chunk_index % GC_EVERY_N == 0:
-                    gc.collect()
-
-        # 4. Finalize on the SAME connection (no extra SSL handshake)
-        print(f'[Sync] Finalizing {fname} ({chunk_index} chunks)...')
+        # 4. Finalize on the SAME connection
+        print(f'[Sync] Finalizing {fname} ({batch_count} batches, {offset} bytes)...')
         for attempt in range(MAX_RETRIES):
             try:
-                if _finalize_on_socket(ss, fname, host, complete_path, token, chunk_index, wdt):
+                if _finalize_on_socket(ss, fname, host, complete_path, token, total_size, wdt):
                     print(f'[Sync] Done: {fname}')
-                    return True, chunk_index, bytes_sent
+                    return True, batch_count, offset
                 print(f'[Sync] Finalize rejected, retry {attempt + 1}')
             except Exception as fin_e:
                 print(f'[Sync] Finalize error: {fin_e}')
             time.sleep_ms(500)
 
-        return False, chunk_index, bytes_sent
+        return False, batch_count, offset
 
     except Exception as e:
         print(f"[Sync] Connection Error: {e}")
-        return False, chunk_index, bytes_sent
+        return False, 0, offset
     finally:
         if ss:
             ss.close()
@@ -282,7 +292,7 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
 
 
 def sync_all(session_mgr, led=None, wdt=None, lock=None):
-    """Upload all pending files using persistent sockets."""
+    """Upload all pending files using persistent sockets with batch streaming."""
     config = _load_config()
     token = config.get('token', '')
     api_url = config.get('api_url', '')
@@ -293,8 +303,6 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
     files = session_mgr.list_sessions()
     if not files:
         return True
-
-    print(f'[Sync] High-Speed Mode: {len(files)} files pending')
 
     # Pre-calculate global total size
     global_total_size = 0
@@ -310,6 +318,8 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
         else:
             session_mgr.delete_session(fname)
 
+    print(f'[Sync] Batch Mode: {len(valid_files)} files pending ({global_total_size / (1024 * 1024):.2f} MB total)')
+
     success_count = len(files) - len(valid_files)
     global_current = 0
 
@@ -317,11 +327,10 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
         try:
             filepath = session_mgr.active_dir + '/' + fname
             ok = False
-            chunks_sent = 0
             file_bytes_sent = 0
 
             for attempt in range(MAX_RETRIES):
-                ok, chunks_sent, file_bytes_sent = _upload_file_persistent(
+                ok, _, file_bytes_sent = _upload_file_persistent(
                     filepath, fname, api_url, token, led, wdt, lock,
                     global_total=global_total_size,
                     global_current=global_current,
@@ -335,9 +344,6 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
                 gc.collect()
 
             if ok:
-                session_mgr.delete_session(fname)
-                success_count += 1
-            elif chunks_sent == 0 and ok:
                 session_mgr.delete_session(fname)
                 success_count += 1
 

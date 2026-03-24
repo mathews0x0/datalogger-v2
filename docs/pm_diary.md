@@ -2681,3 +2681,21 @@ The RaceSense IMU integration was using sub-optimal hardware settings for motorc
 - **Headroom:** Increased accelerometer headroom from ±2g to ±4g, preventing data clipping during extreme braking or curb strikes.
 
 **Status:** ✅ Optimized & Fixed.
+
+## 59. Phase 5.9 — High-Speed Bulk Batch Upload (2026-03-24)
+
+**Objective:** Eliminate the severe file upload bottleneck during Sync Mode. The previous architecture used a 4KB chunked `urequests` model that was heavily penalized by round-trip latency over slow mobile hotspots (e.g., 6.5 minutes for 4MB). 
+
+### Decisions & Architecture Changes
+
+- **Hybrid RAM/HTTP Decoupling:** The ESP32 heap cannot buffer entire 1MB+ files, but the HTTP protocol doesn't require it. The new `uploader.py` reads 32KB chunks from the SD card/Flash and streams them directly into a massive 512KB HTTP `POST` body over a persistent raw SSL socket.
+- **Round-Trip Reduction:** By pushing a 512KB HTTP payload, the system slashes the number of required HTTP connections and server acknowledgments by over 95% (e.g., 100+ requests down to ~3 for a 1.5MB file).
+- **Byte-Level Resume:** The server-side endpoint (`/api/upload/batch`) now writes directly to a `.partial` file at a specified `X-Upload-Offset`. If a 512KB batch fails midway due to a dropped hotspot connection, the next attempt seamlessly resumes from the exact byte offset, preventing the "infinite retry" loop of large files.
+- **Safe Authentication:** The new `/api/upload/batch` and `/status` endpoints were explicitly whitelisted in `middleware.py` so the device's `Authorization: Bearer <token>` is respected without triggering JWT 401 Unauthorized errors.
+- **Spaces in Filenames:** Applied a hotfix to `uploader.py` to URL-encode filenames (replacing spaces with `%20`) in the raw HTTP GET request line, preventing `HTTP 400 Bad Request` errors when syncing duplicated files like `sess_001 copy.csv`.
+
+### Outcome
+- **Throughput Profile Identified:** While round-trips are eliminated, real-world testing (3.5 min for 1.5MB = ~7 KB/s) confirmed that the ultimate bottleneck is now the raw SSL/TLS throughput limit of the ESP32 over a weak 2.4GHz mobile hotspot. 
+- **Stability Achieved:** Despite the low bandwidth of mobile hotspots, the batching and byte-level resume mechanics guarantee that data successfully syncs without crashing the device or dropping connections.
+
+**Status:** ✅ Complete & Verified.

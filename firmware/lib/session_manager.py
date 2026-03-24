@@ -180,62 +180,91 @@ class SessionManager:
             return None
 
     def has_flash_sessions(self):
-        """Checks if there are any session files on internal flash."""
+        """Checks if there are any session files on internal flash, including uploaded."""
         try:
             files = os.listdir(self.flash_sessions)
-            return any(f.endswith('.csv') for f in files)
+            has_pending = any(f.endswith('.csv') for f in files)
+            has_uploaded = False
+            if 'uploaded' in files:
+                try:
+                    up_files = os.listdir(f"{self.flash_sessions}/uploaded")
+                    has_uploaded = any(f.endswith('.csv') for f in up_files)
+                except OSError:
+                    pass
+            return has_pending or has_uploaded
         except OSError:
             return False
 
     def move_flash_to_sd(self):
-        """Moves all session files from flash to SD card."""
+        """Moves all session files from flash to SD card, including uploaded."""
         if not self.sd_mounted:
             return False
             
-        try:
-            files = [f for f in os.listdir(self.flash_sessions) if f.endswith('.csv')]
-            if not files:
-                return False
+        success = True
+        moved_any = False
+        
+        def move_dir_files(src_dir, dst_dir):
+            nonlocal success, moved_any
+            try:
+                try: os.mkdir(dst_dir)
+                except OSError: pass
                 
-            print(f"[Storage] Moving {len(files)} sessions to SD card...")
-            
-            for fname in files:
-                src = f"{self.flash_sessions}/{fname}"
-                dst = f"{self.active_dir}/{fname}"
+                try: files = [f for f in os.listdir(src_dir) if f.endswith('.csv')]
+                except OSError: files = []
                 
-                # Check if file already exists on SD (avoid overwrite)
-                existing_files = os.listdir(self.active_dir)
-                if fname in existing_files:
-                    # Robust Rename: sess_001.csv -> sess_001_1.csv
-                    base, ext = fname.rsplit('.', 1)
-                    counter = 1
-                    new_fname = f"{base}_{counter}.{ext}"
-                    while new_fname in existing_files:
-                        counter += 1
+                if not files:
+                    return
+                    
+                print(f"[Storage] Moving {len(files)} sessions from {src_dir} to SD card...")
+                moved_any = True
+                
+                for fname in files:
+                    src = f"{src_dir}/{fname}"
+                    dst = f"{dst_dir}/{fname}"
+                    
+                    try: existing_files = os.listdir(dst_dir)
+                    except OSError: existing_files = []
+                    
+                    if fname in existing_files:
+                        base, ext = fname.rsplit('.', 1)
+                        counter = 1
                         new_fname = f"{base}_{counter}.{ext}"
-                    dst = f"{self.active_dir}/{new_fname}"
-                    print(f"  ! Conflict: Renaming to {new_fname}")
-                
-                print(f"  -> Copying {fname}...")
-                
-                # Chunked copy
-                with open(src, 'rb') as f_src:
-                    with open(dst, 'wb') as f_dst:
-                        while True:
-                            chunk = f_src.read(4096)
-                            if not chunk:
-                                break
-                            f_dst.write(chunk)
-                
-                # Verify size
-                if os.stat(src)[6] == os.stat(dst)[6]:
-                    os.remove(src)
-                    print(f"  ✓ Moved {fname}")
-                else:
-                    print(f"  ! Error: Size mismatch for {fname}")
-                    return False
-            
-            return True
-        except Exception as e:
-            print(f"[Storage] Move failed: {e}")
-            return False
+                        while new_fname in existing_files:
+                            counter += 1
+                            new_fname = f"{base}_{counter}.{ext}"
+                        dst = f"{dst_dir}/{new_fname}"
+                        print(f"  ! Conflict: Renaming to {new_fname}")
+                    
+                    print(f"  -> Copying {fname}...")
+                    
+                    with open(src, 'rb') as f_src:
+                        with open(dst, 'wb') as f_dst:
+                            chunk_count = 0
+                            while True:
+                                chunk = f_src.read(4096)
+                                if not chunk:
+                                    break
+                                f_dst.write(chunk)
+                                chunk_count += 1
+                                if chunk_count % 32 == 0:
+                                    try:
+                                        import machine
+                                        machine.WDT(timeout=20000).feed()
+                                    except:
+                                        pass
+                    
+                    if os.stat(src)[6] == os.stat(dst)[6]:
+                        os.remove(src)
+                        print(f"  ✓ Moved {fname}")
+                    else:
+                        print(f"  ! Error: Size mismatch for {fname}")
+                        success = False
+                        break
+            except Exception as e:
+                print(f"[Storage] Move failed in {src_dir}: {e}")
+                success = False
+
+        move_dir_files(self.flash_sessions, self.active_dir)
+        move_dir_files(f"{self.flash_sessions}/uploaded", f"{self.active_dir}/uploaded")
+        
+        return success and moved_any

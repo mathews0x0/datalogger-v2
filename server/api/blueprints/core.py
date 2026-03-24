@@ -238,6 +238,93 @@ def upload_chunk():
         return jsonify({"error": str(e)}), 500
 
 
+@core_bp.route('/api/upload/batch', methods=['POST'])
+def upload_batch():
+    """Receive a batch (~512KB) of a file, streamed from ESP32 in 32KB reads.
+
+    The firmware sets Content-Length to the batch size and streams multiple
+    small reads from flash into a single HTTP request body.  This eliminates
+    the per-chunk round-trip overhead that dominated upload time.
+
+    Headers:
+        X-Filename:        session filename
+        X-Offset:          byte offset in the file (for resume)
+        X-Total-Size:      total file size in bytes
+        Content-Length:    size of this batch
+        + optional global progress headers (same as chunk endpoint)
+    """
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+
+    try:
+        filename = request.headers.get('X-Filename', '')
+        offset = int(request.headers.get('X-Offset', '0'))
+        total_size = int(request.headers.get('X-Total-Size', '0'))
+        content_length = request.content_length or 0
+
+        if not filename or content_length <= 0:
+            return jsonify({"error": "X-Filename and Content-Length required"}), 400
+
+        safe_name = os.path.basename(filename)
+        learning_dir = config.get_user_learning_dir(user_id)
+        chunks_dir = learning_dir / '.chunks'
+        chunks_dir.mkdir(parents=True, exist_ok=True)
+        partial_path = chunks_dir / (safe_name + '.partial')
+
+        # Stream request body to .partial file at the correct offset
+        bytes_written = 0
+        mode = 'r+b' if partial_path.exists() and offset > 0 else 'wb'
+        with open(partial_path, mode) as f:
+            f.seek(offset)
+            while bytes_written < content_length:
+                read_size = min(65536, content_length - bytes_written)
+                block = request.stream.read(read_size)
+                if not block:
+                    break
+                f.write(block)
+                bytes_written += len(block)
+
+        new_offset = offset + bytes_written
+
+        # Update tracker for /complete fast-path compatibility
+        tracker_path = chunks_dir / (safe_name + '.next')
+        tracker_path.write_text(str(new_offset))
+
+        # Update device progress once per batch
+        if device_token:
+            device_token.is_syncing = True
+            device_token.last_sync_filename = safe_name
+            device_token.last_sync = datetime.utcnow()
+
+            if total_size > 0:
+                device_token.last_sync_total = total_size
+                device_token.last_sync_chunk = new_offset
+
+            # Global progress headers (same as chunk endpoint)
+            global_prog = request.headers.get('X-Global-Progress')
+            if global_prog:
+                device_token.sync_global_current = int(global_prog)
+            global_tot = request.headers.get('X-Global-Total')
+            if global_tot:
+                device_token.sync_global_total = int(global_tot)
+            tot_files = request.headers.get('X-Total-Files')
+            if tot_files:
+                device_token.sync_total_files = int(tot_files)
+            file_idx = request.headers.get('X-File-Index')
+            if file_idx:
+                device_token.sync_current_file_index = int(file_idx)
+
+            db.session.commit()
+
+        return jsonify({"received": True, "offset": new_offset, "bytes": bytes_written})
+
+    except Exception as e:
+        print(f"Batch Upload Error: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @core_bp.route('/api/upload/status', methods=['GET'])
 def upload_status():
     """Return resumable upload state for a given filename."""
@@ -253,15 +340,22 @@ def upload_status():
     learning_dir = config.get_user_learning_dir(user_id)
     chunk_dir = learning_dir / '.chunks' / safe_name
 
-    if not chunk_dir.exists():
+    # Check for batch-mode partial file (byte-offset resume)
+    partial_path = learning_dir / '.chunks' / (safe_name + '.partial')
+    received_bytes = 0
+    if partial_path.exists():
+        received_bytes = partial_path.stat().st_size
+
+    if not chunk_dir.exists() and received_bytes == 0:
         return jsonify({
             "filename": safe_name,
             "next_chunk": 0,
             "chunk_size": 0,
             "received_chunks": 0,
+            "received_bytes": 0,
         })
 
-    chunk_files = sorted(chunk_dir.glob('chunk_*'))
+    chunk_files = sorted(chunk_dir.glob('chunk_*')) if chunk_dir.exists() else []
     present = set()
     chunk_size = 0
     for path in chunk_files:
@@ -282,6 +376,7 @@ def upload_status():
         "next_chunk": next_chunk,
         "chunk_size": chunk_size,
         "received_chunks": len(present),
+        "received_bytes": received_bytes,
     })
 
 
@@ -303,9 +398,10 @@ def upload_complete():
         data = request.get_json()
         filename = data.get('filename', '')
         total_chunks = data.get('total_chunks', 0)
+        total_size = data.get('total_size', 0)  # Batch mode sends total_size instead
 
-        if not filename or total_chunks <= 0:
-            return jsonify({"error": "filename and total_chunks required"}), 400
+        if not filename or (total_chunks <= 0 and total_size <= 0):
+            return jsonify({"error": "filename and total_chunks (or total_size) required"}), 400
 
         safe_name = os.path.basename(filename)
         learning_dir = config.get_user_learning_dir(user_id)
@@ -322,11 +418,20 @@ def upload_complete():
         partial_complete = False
         if partial_path.exists() and tracker_path.exists():
             try:
-                written_chunks = int(tracker_path.read_text().strip())
-                if written_chunks >= total_chunks:
+                tracker_val = int(tracker_path.read_text().strip())
+                if total_size > 0:
+                    # Batch mode: tracker stores byte offset
+                    if tracker_val >= total_size:
+                        partial_complete = True
+                elif tracker_val >= total_chunks:
+                    # Legacy chunk mode: tracker stores chunk count
                     partial_complete = True
             except (ValueError, OSError):
                 pass
+        # Also check: batch mode with total_size — partial file size is enough
+        if not partial_complete and total_size > 0 and partial_path.exists():
+            if partial_path.stat().st_size >= total_size:
+                partial_complete = True
 
         if partial_complete:
             # Fast-path: just rename .partial → final file

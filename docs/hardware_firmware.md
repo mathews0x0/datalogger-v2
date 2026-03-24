@@ -63,7 +63,8 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 *   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
 *   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread.
 *   **Zero-Allocation Pipeline**: The system uses `color_animations.py` as a theme engine with pre-allocated GRB buffers. The `LEDManager` writes directly to the hardware buffer (`buf[:] = LOOKUP`) to prevent heap fragmentation during Wi-Fi/SSL operations.
-*   **Resumable upload safety**: Session uploads use chunked transfer with server-side chunk persistence. If sync is interrupted, the device can query upload status and resume from the next missing chunk instead of restarting the whole file.
+*   **High-Speed Batch Uploads**: Session uploads stream `32KB` reads directly into large `512KB` HTTP POST payloads over persistent SSL connections. This slashes TLS round-trip overhead on mobile hotspots.
+*   **Resumable Upload Safety**: If horizontal scaling or network instability drops a request mid-batch, the device queries the server and seamlessly resumes the upload from the exact byte offset (`X-Upload-Offset`) instead of restarting the whole file.
 *   **Recovered handshake path**: If the initial cloud handshake fails, later heartbeat recovery can still trigger uploads in the same sync session.
 *   **Power-aware sync**: Under weak battery voltage, LED brightness and WiFi TX power are reduced. At critical battery voltage the uploader may be deferred to avoid brownouts.
 *   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is now applied to actual LED output, not just animation choice.
