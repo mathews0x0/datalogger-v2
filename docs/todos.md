@@ -16,3 +16,8 @@ This document tracks high-priority technical tasks and architectural improvement
 ## 📱 User Experience
 - [ ] **Improved Progress Visualization**
     - Ensure the UI handles batched progress updates gracefully without appearing "stuck" between commits.
+
+## 🏁 Future Features
+- [ ] **Global Race Visualization (Multi-Rider)**
+    - **Concept**: Calculate and render precise movement for all concurrent riders on a track using the synchronized absolute `gps_epoch` timestamps.
+    - **Execution**: If users are running RaceSense simultaneously and share their sessions publicly, display a live/replay "Race View" where users are accurately shown chasing each other corner-by-corner.
