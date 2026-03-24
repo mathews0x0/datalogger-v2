@@ -51,7 +51,8 @@ class CSVLoader:
             try:
                 # Parse with defaults for missing columns
                 # 1. Timestamp (Required)
-                ts = float(row.get("timestamp") or row.get("time") or row.get("gps_time") or 0)
+                # Parse the gps date/times to act as session start time, effectively handling local time conversion later
+                ts = float(row.get("timestamp") or row.get("time") or row.get("gps_time") or row.get("gps_unix_time") or 0)
                 
                 # 2. GPS
                 gps = GPSSample(

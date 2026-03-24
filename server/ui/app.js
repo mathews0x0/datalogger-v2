@@ -685,6 +685,23 @@ async function saveProfile() {
 // DEVICE TOKEN MANAGEMENT
 // ============================================================================
 
+async function toggleAutoAnalyse(tokenId, checked) {
+    try {
+        await apiCall(`/api/devices/${tokenId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ auto_analyse: checked })
+        });
+        showToast('Auto Analyse preference saved', 'success');
+        // Cache update
+        const device = deviceTokensCache.find(d => d.id === tokenId);
+        if (device) device.auto_analyse = checked;
+    } catch (e) {
+        showToast('Failed to update Auto Analyse: ' + e.message, 'error');
+        loadDeviceTokens(); // Revert toggle state
+    }
+}
+
 async function loadDeviceTokens() {
     const container = document.getElementById('deviceTokensList');
 
@@ -713,17 +730,32 @@ async function loadDeviceTokens() {
             const sdText = d.storage_sd_free !== null && d.storage_sd_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-sd-card"></i> ${d.storage_sd_free} MB free</span>` : '';
             const flashText = d.storage_flash_free !== null && d.storage_flash_free !== undefined ? `<span style="margin-left: 0.75rem; color: var(--text-muted); font-size: 0.75rem;"><i class="fas fa-microchip"></i> ${d.storage_flash_free} KB free</span>` : '';
 
+            const isAutoAnalyse = d.auto_analyse !== false; // Default true
+
             return `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--border);">
-                <div>
-                    <span style="font-weight: 600;">${d.device_name}</span>
-                    <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem; font-family: monospace;">rsk_••••${d.token ? d.token.slice(-4) : '????'}</span>
-                    ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : (isOnline ? '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ONLINE</span>' : '<span style="color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem;">OFFLINE</span>')}
-                    <div style="margin-top: 0.25rem;">
-                        ${uidText}${batteryText}${sdText}${flashText}
+            <div style="display: flex; flex-direction: column; padding: 0.75rem; background: var(--bg-secondary); border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--border);">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                    <div>
+                        <span style="font-weight: 600;">${d.device_name}</span>
+                        <span style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.5rem; font-family: monospace;">rsk_••••${d.token ? d.token.slice(-4) : '????'}</span>
+                        ${d.revoked ? '<span style="color: var(--error); font-size: 0.7rem; margin-left: 0.5rem;">REVOKED</span>' : (isOnline ? '<span style="color: var(--success); font-size: 0.7rem; margin-left: 0.5rem;">ONLINE</span>' : '<span style="color: var(--text-muted); font-size: 0.7rem; margin-left: 0.5rem;">OFFLINE</span>')}
+                        <div style="margin-top: 0.25rem;">
+                            ${uidText}${batteryText}${sdText}${flashText}
+                        </div>
                     </div>
+                    ${!d.revoked ? `<button class="btn btn-danger btn-sm" onclick="revokeDeviceToken(${d.id})" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">Revoke</button>` : ''}
                 </div>
-                ${!d.revoked ? `<button class="btn btn-danger btn-sm" onclick="revokeDeviceToken(${d.id})" style="padding: 0.25rem 0.75rem; font-size: 0.75rem;">Revoke</button>` : ''}
+                ${!d.revoked ? `
+                <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 0.5rem; border-top: 1px solid rgba(255,255,255,0.05);">
+                    <div style="font-size: 0.8rem; color: var(--text-muted);">
+                        <i class="fas fa-magic"></i> Auto Analyse
+                        <span class="info-tooltip" tabindex="0"><i class="fas fa-info-circle"></i><span class="info-tooltip-text">Auto analyses and processes session data whenever a new file is synced.</span></span>
+                    </div>
+                    <label class="toggle-switch" style="transform: scale(0.85); transform-origin: right center;">
+                        <input type="checkbox" onchange="toggleAutoAnalyse(${d.id}, this.checked)" ${isAutoAnalyse ? 'checked' : ''}>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>` : ''}
             </div>
             `;
         }).join('');
@@ -2234,9 +2266,9 @@ function updateHomeContextBanner(sessionCount) {
         banner.style.display = 'block';
         banner.className = 'home-context-banner context-connected';
         icon.innerHTML = '<i class="fas fa-satellite-dish"></i>';
-        title.textContent = 'RS-Core Online';
-        detail.textContent = 'Your device is connected. Recent sync telemetry is available.';
-        action.innerHTML = '<button class="btn btn-sm" onclick="triggerBrowserSync()" style="background: var(--success); color: #000;"><i class="fas fa-cloud-upload-alt"></i> Sync Now</button>';
+        title.textContent = 'Auto synced and processed from RS core';
+        detail.textContent = 'Your device is online and automatically syncing telemetry.';
+        action.innerHTML = '';
     } else if (sessionCount === 0) {
         // Brand new user
         banner.style.display = 'block';
@@ -2293,7 +2325,7 @@ function animateCountUp(elementId, target) {
 function renderRecentSessions(recentSessions) {
     const container = document.getElementById('recentSessionsList');
 
-    if (recentSessions.length === 0) {
+    if (!recentSessions || recentSessions.length === 0) {
         container.innerHTML = renderEmptyState(
             '🏁',
             'No sessions yet',
@@ -2304,26 +2336,31 @@ function renderRecentSessions(recentSessions) {
         return;
     }
 
-    container.innerHTML = recentSessions.map(session => `
-        <div class="session-card" onclick="viewSession('${session.session_id}')">
-            <div class="session-header">
-                <div class="session-title">${session.track_name}</div>
-                <div class="session-time"><i class="far fa-calendar-alt"></i> ${formatDateTimeAbbreviated(session.start_time)}</div>
-            </div>
-            <div class="session-stats">
-                <div class="session-stat">
-                    <span>Laps</span>
-                    <strong>${session.total_laps}</strong>
-                </div>
-                <div class="session-stat">
-                    <span>Best Time</span>
-                    <strong>${formatTime(session.best_lap_time)}</strong>
-                </div>
-                ${session.tbl_improved ? '<span class="badge success"><i class="fas fa-rocket"></i> New TBL!</span>' : ''}
-            </div>
-            ${renderSessionQuickActions(session)}
+    const session = recentSessions[0];
+    
+    let greetingMsg = "Solid riding!";
+    let detailMsg = `Your session at ${session.track_name || 'the track'} is ready to view.`;
+    
+    if (session.tbl_improved) {
+        greetingMsg = "New TBL!";
+        detailMsg = `Incredible! You set a new TBL at ${session.track_name}.`;
+    } else if (session.is_personal_best) {
+        greetingMsg = "New Personal Best!";
+        detailMsg = `You clocked your fastest lap at ${session.track_name}.`;
+    } else if (session.best_lap_time) {
+        greetingMsg = `Best lap: ${formatTime(session.best_lap_time)}`;
+        detailMsg = `Nice consistent lines at ${session.track_name}.`;
+    }
+
+    // Dynamic banner with neon styling matching the app's aesthetic
+    container.innerHTML = `
+        <div class="session-card greeting-card" style="padding: 2.5rem 1.5rem; text-align: center; border: 1px solid rgba(0, 255, 170, 0.3); background: linear-gradient(135deg, rgba(20,20,20,0.9) 0%, rgba(0,255,170,0.05) 100%); cursor: pointer; transition: transform 0.2s, box-shadow 0.2s;" onclick="viewSession('${session.session_id}')" onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 24px rgba(0,255,170,0.15)';" onmouseout="this.style.transform='none'; this.style.boxShadow='none';">
+            <div style="font-size: 3rem; margin-bottom: 1rem; color: var(--primary);"><i class="fas fa-flag-checkered"></i></div>
+            <h3 style="margin-bottom: 0.5rem; color: #fff; font-size: 1.5rem;">${greetingMsg}</h3>
+            <p style="color: var(--text-muted); margin-bottom: 1.5rem; font-size: 0.95rem;">${detailMsg}</p>
+            <button class="btn btn-primary" style="padding: 0.6rem 1.5rem; font-weight: 600;"><i class="fas fa-chart-line" style="margin-right: 0.5rem;"></i> View Dashboard</button>
         </div>
-    `).join('');
+    `;
 }
 
 // ============================================================================

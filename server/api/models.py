@@ -194,6 +194,7 @@ class DeviceToken(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=True)  # Optional expiration
     last_sync = db.Column(db.DateTime, nullable=True)
+    auto_analyse = db.Column(db.Boolean, default=True)
     
     # Telemetry data from heartbeat
     device_uid = db.Column(db.String(100), nullable=True)
@@ -238,7 +239,8 @@ class DeviceToken(db.Model):
             "sync_global_current": self.sync_global_current,
             "sync_global_total": self.sync_global_total,
             "sync_total_files": self.sync_total_files,
-            "sync_current_file_index": self.sync_current_file_index
+            "sync_current_file_index": self.sync_current_file_index,
+            "auto_analyse": self.auto_analyse
         }
 
 class Job(db.Model):

@@ -78,6 +78,22 @@ def revoke_device_token(token_id):
     db.session.commit()
     return jsonify({"success": True})
 
+@devices_bp.route('/api/devices/<int:token_id>', methods=['PUT'])
+@jwt_required()
+def update_device_token(token_id):
+    """Update device token settings like auto_analyse"""
+    user_id = get_current_user_id()
+    dt = DeviceToken.query.filter_by(id=token_id, user_id=user_id).first()
+    if not dt:
+        return jsonify({"error": "Token not found"}), 404
+        
+    data = request.get_json() or {}
+    if 'auto_analyse' in data:
+        dt.auto_analyse = bool(data['auto_analyse'])
+        
+    db.session.commit()
+    return jsonify({"success": True, "device": dt.to_dict()})
+
 # ============================================================================
 # CSV UPLOAD (Dual-Auth: JWT or Device Token)
 # ============================================================================

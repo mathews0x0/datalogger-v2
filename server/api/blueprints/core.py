@@ -3,6 +3,7 @@ from api.auth_utils import get_current_user_id
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import os
 import json
+import re
 from datetime import datetime
 import threading
 
@@ -18,28 +19,27 @@ core_bp = Blueprint('core_bp', __name__)
 
 
 def _pick_session_name(content, learning_dir):
-    """Name sessions using current server time once the CSV matches the current firmware shape."""
+    """Name sessions using sequential numbers (sess_01.csv) instead of UNIX timestamps."""
+    import re
+    max_num = 0
     try:
-        for raw_line in content.splitlines()[1:]:
-            parts = raw_line.split(',')
-            if len(parts) < 13:
-                continue
-
-            row_type = parts[1].strip()
-            lat = parts[8].strip()
-            lon = parts[9].strip()
-            if row_type == 'G' and lat and lon:
-                break
+        if learning_dir.exists():
+            for fname in os.listdir(learning_dir):
+                if fname.startswith("sess_") and fname.endswith(".csv"):
+                    match = re.search(r'^sess_(\d+)', fname)
+                    if match:
+                        num = int(match.group(1))
+                        if num > max_num:
+                            max_num = num
     except Exception:
         pass
 
-    session_ts = int(datetime.utcnow().timestamp())
-
-    base_name = f"sess_{session_ts}"
+    next_num = max_num + 1
+    base_name = f"sess_{next_num:02d}"
     candidate = f"{base_name}.csv"
     counter = 1
     while (learning_dir / candidate).exists():
-        candidate = f"{base_name}_{counter}.csv"
+        candidate = f"sess_{next_num:02d}_{counter}.csv"
         counter += 1
     return candidate
 
@@ -128,6 +128,22 @@ def upload_file():
         # Update last_sync on device token
         if device_token:
             device_token.last_sync = datetime.utcnow()
+            
+            # Auto-queue analysis if enabled (treating None as True for migrated tokens)
+            auto_enabled = getattr(device_token, 'auto_analyse', True)
+            if auto_enabled is not False:
+                try:
+                    from api.models import Job
+                    job = Job(
+                        user_id=user_id,
+                        type='analysis',
+                        input_data=json.dumps({"csv_path": str(config.get_user_learning_dir(user_id) / final_name)})
+                    )
+                    db.session.add(job)
+                    print(f"[Upload] Auto-queued analysis for {final_name}")
+                except Exception as auto_err:
+                    print(f"[Upload] Failed to auto-queue analysis: {auto_err}")
+                    
             db.session.commit()
 
         return jsonify({"success": True, "filename": final_name})
@@ -511,6 +527,21 @@ def upload_complete():
                     device_token.sync_global_total = 0
             else:
                  device_token.is_syncing = False
+
+            # Auto-queue analysis if enabled (treating None as True for migrated tokens)
+            auto_enabled = getattr(device_token, 'auto_analyse', True)
+            if auto_enabled is not False:
+                try:
+                    from api.models import Job
+                    job = Job(
+                        user_id=user_id,
+                        type='analysis',
+                        input_data=json.dumps({"csv_path": str(learning_dir / final_name)})
+                    )
+                    db.session.add(job)
+                    print(f"[Upload] Auto-queued analysis for {final_name}")
+                except Exception as auto_err:
+                    print(f"[Upload] Failed to auto-queue analysis: {auto_err}")
 
             db.session.commit()
 
