@@ -97,9 +97,11 @@ class CSVLoader:
           3. Produce a unified Session at the IMU sample rate (~100Hz).
         """
         imu_rows = []  # (tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z)
-        gps_rows = []  # (tick_ms, lat, lon, alt, speed, sats)
+        gps_rows = []  # (tick_ms, lat, lon, alt, speed, sats, vbat)
         
         first_tick_ms = None
+        gps_epoch_anchor = None
+        gps_epoch_tick = None
         
         for row in reader:
             try:
@@ -127,6 +129,11 @@ class CSVLoader:
                     sats = int(row.get("sats") or 0)
                     vbat = float(row.get("vbat") or 0.0)
                     
+                    gps_epoch = float(row.get("gps_epoch") or 0.0)
+                    if gps_epoch > 0 and gps_epoch_anchor is None:
+                        gps_epoch_anchor = gps_epoch
+                        gps_epoch_tick = tick_ms
+                    
                     gps_rows.append((tick_ms, lat, lon, alt, speed, sats, vbat))
                     # Also add to IMU list (G rows contain IMU data too)
                     imu_rows.append((tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z))
@@ -152,8 +159,11 @@ class CSVLoader:
         for imu in imu_rows:
             tick_ms = imu[0]
             
-            # Timestamp: convert tick_ms to seconds relative to start
-            ts = (tick_ms - base_tick) / 1000.0
+            # Timestamp: convert tick_ms to absolute Unix epoch if we found an anchor
+            if gps_epoch_anchor is not None:
+                ts = gps_epoch_anchor + (tick_ms - gps_epoch_tick) / 1000.0
+            else:
+                ts = (tick_ms - base_tick) / 1000.0
             
             # IMU sample
             imu_sample = IMUSample(

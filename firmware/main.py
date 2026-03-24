@@ -747,7 +747,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
     
     try:
         f = open(log_file, 'w')
-        f.write("tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat\n")
+        f.write("tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch\n")
         f.flush()
         print(f"[System] Log file opened: {log_file}")
     except Exception as e:
@@ -880,7 +880,7 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
             except:
                 pass
         
-        # Write IMU row (row_type = I, GPS fields empty)
+        # Write IMU row (row_type = I, GPS fields empty, including gps_epoch)
         if f and not stop_logging:
             queue_row(f"{tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,\n")
         
@@ -899,6 +899,13 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
                     hour = int(t[0:2])
                     minute = int(t[2:4])
                     second = int(t[4:6])
+                    
+                    # Convert to standard UNIX epoch (1970)
+                    # MicroPython time.mktime operates on 2000 epoch, so add 946684800
+                    try:
+                        fix['gps_epoch'] = time.mktime((year, month, day, hour, minute, second, 0, 0)) + 946684800
+                    except:
+                        fix['gps_epoch'] = 0
                     machine.RTC().datetime((year, month, day, 0, hour, minute, second, 0))
                     rtc_synced = True
                     print(f"[System] RTC Synced to GPS: {year}-{month}-{day} {hour}:{minute}:{second}")
@@ -907,8 +914,9 @@ def logging_loop(led, gps, imu, sm, track_eng, vbat_adc, wdt):
             
             # Write GPS row if we have a fresh valid fix
             if f and not stop_logging and fix['valid'] and gps.new_fix:
+                epoch_val = fix.get('gps_epoch', 0)
                 queue_row(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f}," +
-                          f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f}\n")
+                          f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f},{epoch_val}\n")
                 
                 # Track Engine (only on GPS rows)
                 try:
