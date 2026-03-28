@@ -131,6 +131,7 @@ def run_worker():
                 break
             except Exception as e:
                 print(f"[Worker] Error in worker loop: {e}")
+                db.session.rollback()
                 time.sleep(5) # Backoff
 
 if __name__ == '__main__':
