@@ -2699,3 +2699,216 @@ The RaceSense IMU integration was using sub-optimal hardware settings for motorc
 - **Stability Achieved:** Despite the low bandwidth of mobile hotspots, the batching and byte-level resume mechanics guarantee that data successfully syncs without crashing the device or dropping connections.
 
 **Status:** ✅ Complete & Verified.
+
+---
+
+## 60. Phase 5.10 — Front-Facing IMU Session Processing Model (2026-03-28)
+
+**Objective:** Move the IMU pipeline from a broad "arbitrary orientation" exploration into a production-usable session-processing model under the actual hardware usage assumption: the device is mounted **forward-facing**, generally flat, and may be pitched nose-up or nose-down. The output target was clear: produce physically valid lean angles, braking, acceleration, and playback telemetry with the **IMU as the primary contributor**, while still using GPS as a low-frequency physics reference and validator.
+
+### Context and Problem Reframing
+
+The original direction tried to support arbitrary session-by-session mounting by estimating a full per-session mount transform from ride data alone. That work exposed a real limitation:
+
+- The system could often detect bad IMU outcomes.
+- It could not yet reliably produce good IMU-led outcomes across real sessions.
+- Production therefore kept falling back to `gps_primary`, which was safe, but not aligned with the product goal.
+
+At the same time, real-world usage clarified a more constrained and more useful assumption:
+
+- Riders will mount the unit **forward-facing**.
+- The board can be flat or pitched.
+- The board is not expected to be reversed or sideways in production use.
+
+That changed the problem materially. Once front-facing is a hard assumption, the backend no longer needs to solve full arbitrary yaw/orientation per session. Instead, session processing only needs to:
+
+- resolve gravity / vertical axis
+- estimate pitch / small installation tilt
+- confirm the assumed forward direction from rollout and braking evidence
+- compute lean and braking in that resolved frame
+
+This was the key simplification that made the production path viable.
+
+### Design Decisions
+
+- **Shift from Arbitrary Orientation to Front-Facing Production Model:** The arbitrary-mount exploration was useful for learning, but it was not the right production model for the expected install behavior. Production logic now assumes the sensor is front-facing by default.
+- **Treat GPS as Low-Frequency Physics Truth, not the Main Product Output:** GPS remains necessary as a slow reference and validator, but the goal is no longer "GPS-first telemetry." Instead:
+  - GPS defines low-frequency lean/brake baselines
+  - IMU contributes short-term dynamics and refined motion
+- **Use Front-Facing + Gravity as the Orientation Contract:** Once forward-facing is fixed and gravity is estimated, the session has a usable bike frame. Rollout and braking are retained as confirmation signals, not as the primary source of forward-axis discovery.
+- **Prefer a Valid IMU Result Over Perfect GPS if It Is Close Enough:** Production candidate selection now explicitly prefers `orientation_solver` if it passes validation and scores at least `80`, instead of always allowing `gps_primary` to dominate just because it trivially scores `100`.
+- **Hard Physical Envelope Tightening:** Lean validation was tightened to reflect realistic motorcycle behavior:
+  - warning at `55°`
+  - fail at `60°`
+  - additional rejection of sustained extreme lean without strong turn evidence
+
+### Implementation Work Completed
+
+#### 1. Session Mount Resolution Reworked Around Front-Facing Assumption
+
+In `server/core/processing/advanced_imu.py`:
+
+- Converted the mount resolver so the **sensor forward axis is assumed to be bike forward**.
+- Gravity resolution remains per session and is still derived from startup/static or low-dynamic evidence.
+- Startup rollout and hard-brake detection were retained, but demoted into **confirmation signals**:
+  - `+rollout_confirmed`
+  - `+hard_brake_confirmed`
+  - conflict cases reduce confidence instead of redefining the forward axis
+
+This removed a large amount of unnecessary ambiguity from the production path.
+
+#### 2. Hard-Braking Anchor Added as a Real Orientation Evidence Source
+
+The resolver now detects the strongest sustained braking window by:
+
+- finding a multi-second negative GPS speed derivative event
+- averaging the IMU acceleration vector over that window
+- removing the gravity component
+- using the remaining horizontal deceleration vector as a forward-axis confirmation signal
+
+This improved confidence scoring and made the orientation evidence much more physically grounded.
+
+#### 3. Validation Engine Upgraded with Production-Grade Physics Gates
+
+The validation layer in `advanced_imu.py` now rejects or penalizes:
+
+- lean beyond the physical envelope
+- strong lean without supporting turn evidence
+- braking and acceleration sign contradictions versus GPS speed derivative
+- braking that does not align with GPS speed drop
+- false braking where IMU implies brake without corresponding GPS deceleration
+- prolonged non-zero lean on straights
+- lateral G inconsistent with lean
+- excessive switching/noise in accel-brake output
+
+This shifted the backend from "emit something plausible-looking" to "only emit an IMU-led result if it survives physics checks."
+
+#### 4. IMU Signal Conditioning Strengthened
+
+Even though firmware already had strong BMI323 filtering in place, the backend was updated to reject occasional residual spikes before they can distort derived telemetry:
+
+- added explicit IMU despiking on accel and gyro channels before frame projection / fusion
+- retained rolling smoothing windows for aligned frame channels
+
+This ensured that occasional spikes do not cause the system to reject otherwise good IMU sessions.
+
+#### 5. Lean Logic Rewritten Around Front-Facing Physics
+
+This was the largest functional change.
+
+Earlier IMU lean experiments failed for two reasons:
+
+- roll-rate integration was allowed to dominate absolute lean and drift upward
+- accelerometer-ratio lean could blow up under dynamic loads and installation variance
+
+The final production lean model now does this:
+
+- GPS lean is used as the **low-frequency baseline**
+- IMU contributes a **bounded short-term delta**
+- accelerometer lean is only used as a weak correction in low-dynamic windows
+
+This preserved IMU responsiveness while preventing the absolute lean state from drifting or saturating toward unrealistic values.
+
+#### 6. Longitudinal / Braking Logic Rewritten in the Same Way
+
+The original braking path was too naive: it used smoothed resolved-frame longitudinal acceleration directly, which caused large false-braking counts on some sessions.
+
+The final front-facing braking model now does this:
+
+- GPS longitudinal acceleration provides the **slow baseline**
+- IMU longitudinal acceleration provides a **bounded high-frequency delta**
+- the IMU delta is decayed on straights and low-dynamic windows
+- the combined result is clamped and validated against GPS decel
+
+This was the change that unlocked the remaining real sessions and allowed the IMU-led candidate to survive validation on the under-seat / tail-mounted logs.
+
+#### 7. Session Export Updated with Diagnostics and Final Signals
+
+In `server/core/core/session_processor.py`:
+
+- final derived signals now export:
+  - `lean_angle`
+  - `aligned_accel_x`
+  - `aligned_accel_y`
+  - `aligned_accel_z`
+  - `yaw_rate`
+  - `lateral_g`
+  - `acceleration_g`
+  - `braking_g`
+- calibration payload now exports:
+  - `selected_algorithm`
+  - `mount_method`
+  - `mount_confidence`
+  - `rotation_matrix`
+  - `gyro_bias`
+  - `gravity_vector`
+  - `evidence_summary`
+  - `validation`
+  - `diagnostics`
+
+This gives production outputs enough introspection to support debugging and future UI surfacing without exposing raw internal heuristics to the rider.
+
+### Real-World Validation Work
+
+Today’s work used real production logs and intentionally varied mount families:
+
+- tank flat forward
+- under-seat forward pitched down
+- above-tail flat forward
+- inside-tail forward angled
+
+These sessions were first used in an offline bakeoff harness to learn failure modes, tune thresholds, and compare candidate behaviors. Once the front-facing model stabilized and consistently passed, the temporary bakeoff assets and imported session datasets were removed from the repo to keep only the production code and tests.
+
+The final algorithmic posture after validation:
+
+- IMU-led output is selected when it passes validation and scores strongly
+- GPS remains the low-frequency physical baseline and validator
+- fallback still exists, but is no longer the dominant output path for the validated real-session set
+
+### Final Validation Outcome
+
+After the front-facing lean and braking rewrites, the collected real-session corpus validated successfully under the production selector:
+
+- tank sessions selected `orientation_solver`
+- above-tail sessions selected `orientation_solver`
+- under-seat / forward-angled sessions selected `orientation_solver`
+- all validated outputs stayed inside the tightened lean envelope and passed the production scoring rules
+
+The final offline summary showed all collected sessions resolving to `orientation_solver` with passing scores and realistic maximum lean values.
+
+### Cleanup Performed
+
+After the algorithm stabilized:
+
+- removed temporary `data/imu_bakeoff` datasets
+- removed metadata files created only for the offline learning phase
+- removed the one-off `server/core/tools/imu_bakeoff.py` harness from the repo
+- kept only:
+  - production session-processing code
+  - session integration
+  - IMU regression tests
+
+This leaves the codebase aligned with the production-ready front-facing model rather than a mixed development/bakeoff state.
+
+### Remaining Caveats
+
+- This is **not** a general arbitrary-orientation solution anymore.
+- It is a production-ready solution for the **actual intended mounting contract**:
+  - forward-facing
+  - flat or pitched
+  - not sideways or reversed
+- A few unrelated core tests still fail elsewhere in the project (`laps`, `resampling`, `track_manager`), but these are not caused by the IMU work.
+
+### Outcome
+
+RaceSense now has a coherent production IMU pipeline for session processing under the real hardware assumption:
+
+- front-facing mount assumption
+- gravity-resolved tilt calibration
+- IMU-led lean and braking
+- GPS as low-frequency baseline and validator
+- physics-gated selection before publishing telemetry
+
+This is the first point where the IMU logic is aligned with both the product goal and the observed real-world usage pattern.
+
+**Status:** ✅ Complete, cleaned up, and validated for the front-facing production model.

@@ -1,7 +1,4 @@
 import os
-import uuid
-import datetime
-from typing import Optional
 
 from src.analysis.ingestion.csv_loader import CSVLoader
 from src.analysis.core.track_manager import TrackManager
@@ -11,7 +8,6 @@ from src.analysis.core.session_exporter import SessionExporter
 from src.analysis.processing.laps import LapDetector, StartLine
 from src.analysis.processing.stats import StatsEngine
 from src.analysis.core.registry_manager import RegistryManager
-from src.analysis.core.imu_calibrator import IMUCalibrator
 from src.analysis.processing.metrics_engine import SensorMetricsEngine
 import src.config as config
 from src.core.log_manager import get_logger
@@ -126,7 +122,11 @@ class SessionProcessor:
                     "aligned_accel_y": imu_results["ay_cg"], # Lateral
                     "aligned_accel_z": imu_results["az_cg"],
                     "lean_angle": imu_results["lean_angle"],
-                    "pitch": imu_results["pitch_angle"]
+                    "pitch": imu_results["pitch_angle"],
+                    "yaw_rate": imu_results.get("yaw_angle", []),
+                    "lateral_g": imu_results.get("lateral_g", []),
+                    "acceleration_g": imu_results.get("acceleration_g", []),
+                    "braking_g": imu_results.get("braking_g", []),
                 }
                 
                 # Inject Metrics
@@ -137,8 +137,15 @@ class SessionProcessor:
                 # Update calibration status for JSON export compatibility
                 session.calibration = {
                     "calibrated": True, 
-                    "confidence": "HIGH",
-                    "method": "AdvancedIMUProcessor"
+                    "confidence": imu_results.get("mount_confidence", "LOW"),
+                    "method": imu_results.get("mount_method", "AdvancedIMUProcessor"),
+                    "selected_algorithm": imu_results.get("diagnostics", {}).get("selected_algorithm"),
+                    "rotation_matrix": imu_results.get("rotation_matrix"),
+                    "gyro_bias": imu_results.get("gyro_bias"),
+                    "gravity_vector": imu_results.get("gravity_vector"),
+                    "evidence_summary": imu_results.get("evidence_summary"),
+                    "validation": imu_results.get("validation"),
+                    "diagnostics": imu_results.get("diagnostics"),
                 }
                 
                 # 4.6 Sensor Metrics (Recalculate on clean signals)

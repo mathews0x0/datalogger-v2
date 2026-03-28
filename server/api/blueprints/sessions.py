@@ -82,35 +82,15 @@ def get_session(session_id):
         pass
     user_id = get_current_user_id()
     
-    # Check if session belongs to user or is public
-    # Look for session - prioritize own
+    # Private session fetch should resolve only against the current user's
+    # sessions. Public/shared access is handled by dedicated shared routes.
+    if not user_id:
+        return jsonify({"error": "Access denied"}), 401
+
     s_meta = None
-    if user_id:
-        s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
-    
-    # Fallback to any session for public/shared check
-    if not s_meta:
-        s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
-        
-    if not s_meta.is_public:
-        if not user_id:
-            return jsonify({"error": "Access denied"}), 401
-            
-        user_id = int(user_id)
-        if int(s_meta.user_id) != user_id:
-            # Phase 5: Team Check
-            has_team_access = False
-            owner_teams = TeamMember.query.filter_by(user_id=s_meta.user_id).all()
-            for ot in owner_teams:
-                caller_membership = TeamMember.query.filter_by(team_id=ot.team_id, user_id=user_id).first()
-                if caller_membership and caller_membership.role in ['owner', 'coach']:
-                    has_team_access = True
-                    break
-            
-            if not has_team_access:
-                return jsonify({"error": "Access denied"}), 403
         
     sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     session_file = sessions_dir / f"{session_id}.json"
@@ -149,28 +129,14 @@ def get_session_telemetry(session_id):
         pass
     user_id = get_current_user_id()
     
-    # Check if session belongs to user or is public
-    s_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    # Private telemetry fetch should resolve only against the current user's
+    # sessions. Public/shared access is handled by dedicated shared routes.
+    if not user_id:
+        return jsonify({"error": "Access denied"}), 401
+
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
     if not s_meta:
         return jsonify({"error": "Session not found"}), 404
-        
-    if not s_meta.is_public:
-        if not user_id:
-            return jsonify({"error": "Access denied"}), 401
-            
-        user_id = int(user_id)
-        if int(s_meta.user_id) != user_id:
-            # Phase 5: Team Check
-            has_team_access = False
-            owner_teams = TeamMember.query.filter_by(user_id=s_meta.user_id).all()
-            for ot in owner_teams:
-                caller_membership = TeamMember.query.filter_by(team_id=ot.team_id, user_id=user_id).first()
-                if caller_membership and caller_membership.role in ['owner', 'coach']:
-                    has_team_access = True
-                    break
-            
-            if not has_team_access:
-                return jsonify({"error": "Access denied"}), 403
         
     sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
     telemetry_file = sessions_dir / f"{session_id}_telemetry.json"
@@ -547,4 +513,3 @@ def save_trackdays(user_id, trackdays):
     trackdays_file = config.get_user_dir(user_id) / "trackdays.json"
     with open(trackdays_file, 'w') as f:
         json.dump(trackdays, f, indent=2)
-

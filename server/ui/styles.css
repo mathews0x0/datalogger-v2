@@ -701,10 +701,11 @@ h2::before {
   gap: 1rem;
 }
 
-.playback-shell {
-  max-width: 1200px;
-  width: min(95vw, 1200px);
-  height: min(90vh, 940px);
+#playbackModal .playback-shell {
+  max-width: none;
+  max-height: 95vh;
+  width: 95vw;
+  height: 95vh;
   display: flex;
   flex-direction: column;
   background:
