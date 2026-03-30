@@ -137,7 +137,8 @@ def _finalize_on_socket(ss, fname, host, complete_path, token, total_size, wdt=N
 
 
 def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None, lock=None,
-                            global_total=0, global_current=0, file_index=0, total_files=1):
+                            global_total=0, global_current=0, file_index=0, total_files=1,
+                            status_cb=None):
     """
     Upload a file using batched streaming over a SINGLE persistent SSL connection.
 
@@ -194,6 +195,20 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
 
         total_batches = (total_size - offset + BATCH_SIZE - 1) // BATCH_SIZE
         print(f'[Sync] Uploading: {read_size // 1024}KB reads, {BATCH_SIZE // 1024}KB batches, ~{total_batches} batches')
+        if status_cb:
+            try:
+                status_cb(
+                    "upload_start",
+                    filename=fname,
+                    file_index=file_index,
+                    total_files=total_files,
+                    sent_bytes=offset,
+                    total_bytes=total_size,
+                    global_current=global_current + offset,
+                    global_total=global_total,
+                )
+            except:
+                pass
 
         # Set background animation state once
         if led:
@@ -257,6 +272,22 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
                         batch_count += 1
                         offset += sent_in_batch
                         print(f'[Sync] Batch {batch_count}/{total_batches}: {offset / 1024:.0f}KB / {total_size / 1024:.0f}KB')
+                        if status_cb:
+                            try:
+                                status_cb(
+                                    "upload_progress",
+                                    filename=fname,
+                                    file_index=file_index,
+                                    total_files=total_files,
+                                    sent_bytes=offset,
+                                    total_bytes=total_size,
+                                    global_current=global_current + offset,
+                                    global_total=global_total,
+                                    batch_count=batch_count,
+                                    total_batches=total_batches,
+                                )
+                            except:
+                                pass
                     else:
                         print(f'[Sync] HTTP Error: {status_line.strip()}')
                         return False, offset, offset
@@ -270,6 +301,20 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
             try:
                 if _finalize_on_socket(ss, fname, host, complete_path, token, total_size, wdt):
                     print(f'[Sync] Done: {fname}')
+                    if status_cb:
+                        try:
+                            status_cb(
+                                "upload_done",
+                                filename=fname,
+                                file_index=file_index,
+                                total_files=total_files,
+                                sent_bytes=total_size,
+                                total_bytes=total_size,
+                                global_current=global_current + total_size,
+                                global_total=global_total,
+                            )
+                        except:
+                            pass
                     return True, batch_count, offset
                 print(f'[Sync] Finalize rejected, retry {attempt + 1}')
             except Exception as fin_e:
@@ -291,7 +336,7 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
         gc.collect()
 
 
-def sync_all(session_mgr, led=None, wdt=None, lock=None):
+def sync_all(session_mgr, led=None, wdt=None, lock=None, status_cb=None):
     """Upload all pending files using persistent sockets with batch streaming."""
     config = _load_config()
     token = config.get('token', '')
@@ -319,6 +364,11 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
             session_mgr.delete_session(fname)
 
     print(f'[Sync] Batch Mode: {len(valid_files)} files pending ({global_total_size / (1024 * 1024):.2f} MB total)')
+    if status_cb:
+        try:
+            status_cb("queue", files=valid_files, global_total=global_total_size)
+        except:
+            pass
 
     success_count = len(files) - len(valid_files)
     global_current = 0
@@ -336,6 +386,7 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
                     global_current=global_current,
                     file_index=i,
                     total_files=len(valid_files),
+                    status_cb=status_cb,
                 )
                 if ok:
                     break
@@ -346,6 +397,20 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None):
             if ok:
                 session_mgr.delete_session(fname)
                 success_count += 1
+            elif status_cb:
+                try:
+                    status_cb(
+                        "upload_failed",
+                        filename=fname,
+                        file_index=i,
+                        total_files=len(valid_files),
+                        sent_bytes=file_bytes_sent,
+                        total_bytes=os.stat(filepath)[6],
+                        global_current=global_current + file_bytes_sent,
+                        global_total=global_total_size,
+                    )
+                except:
+                    pass
 
             global_current += file_bytes_sent
             gc.collect()

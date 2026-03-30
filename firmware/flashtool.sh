@@ -156,7 +156,7 @@ except: pass"
     if [ -d "drivers" ]; then
         echo -e "${CYAN}Syncing drivers/...${NC}"
         # Explicit driver list to exclude bmi270 and __pycache__
-        DRIVERS_LIST=("bmi323.py" "gps.py" "sdcard.py")
+        DRIVERS_LIST=("bmi323.py" "gps.py" "sdcard.py" "oled.py")
         for driver in "${DRIVERS_LIST[@]}"; do
             if [ -f "drivers/$driver" ]; then
                 $MPREMOTE_CMD connect "$PORT" cp "drivers/$driver" :drivers/
@@ -204,7 +204,7 @@ except Exception as e:
 
 do_sync_drivers_only() {
     echo -e "${YELLOW}Synchronizing drivers to ESP32 root...${NC}"
-    DRIVERS=("bmi323.py" "gps.py" "sdcard.py")
+    DRIVERS=("bmi323.py" "gps.py" "sdcard.py" "oled.py")
     for driver in "${DRIVERS[@]}"; do
         if [ -f "drivers/$driver" ]; then
             echo "Pushing $driver..."
