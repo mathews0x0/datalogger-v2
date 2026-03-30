@@ -6,6 +6,7 @@ from drivers.oled import SH1106_I2C, SSD1306_I2C
 
 CHAR_W = 8
 CHAR_H = 8
+SAFE_RIGHT_PX = 8
 
 
 def _short_name(path_or_name):
@@ -29,15 +30,11 @@ class OLEDStatus:
                 self._display = SH1106_I2C(width, height, i2c, addr=addr)
             self._prime_panel()
             self._enabled = True
-            self.show_message("RS-CORE", "OLED online", controller.upper(), force=True)
         except Exception as e:
             print("[OLED] Init Failed:", e)
 
     def _prime_panel(self):
-        # Match the low-level controller probe that visibly woke the panel on hardware.
-        self._display.fill(1)
-        self._display.show()
-        time.sleep_ms(120)
+        # Raw wake is handled before OLEDStatus is created. Keep constructor init visually quiet.
         self._display.fill(0)
         self._display.show()
         time.sleep_ms(50)
@@ -45,17 +42,43 @@ class OLEDStatus:
     def is_enabled(self):
         return self._enabled and self._display is not None
 
-    def _center_x(self, text):
+    def _max_chars(self, reserve_px=0):
+        usable = max(0, self._width - reserve_px - SAFE_RIGHT_PX)
+        return max(1, usable // CHAR_W)
+
+    def _fit_text(self, text, reserve_px=0):
         text = str(text)
+        max_chars = self._max_chars(reserve_px=reserve_px)
+        if len(text) <= max_chars:
+            return text
+        return text[:max_chars]
+
+    def _center_x(self, text):
+        text = self._fit_text(text, reserve_px=1)
         width = len(text) * CHAR_W
         x = (self._width - width) // 2
         return 0 if x < 0 else x
 
     def _draw_text(self, x, y, text, color=1):
-        self._display.text(str(text), int(x), int(y), color)
+        x = int(x)
+        reserve_px = max(0, x)
+        self._display.text(self._fit_text(text, reserve_px=reserve_px), x, int(y), color)
 
     def _draw_center(self, y, text, color=1):
         self._draw_text(self._center_x(text), y, text, color)
+
+    def _draw_bold(self, x, y, text, color=1):
+        text = self._fit_text(text, reserve_px=int(x) + 1)
+        self._draw_text(x, y, text, color)
+        self._draw_text(x + 1, y, text, color)
+
+    def _draw_center_bold(self, y, text, color=1):
+        text = self._fit_text(text, reserve_px=1)
+        width = (len(text) * CHAR_W) + 1
+        x = (self._width - width) // 2
+        if x < 0:
+            x = 0
+        self._draw_bold(x, y, text, color)
 
     def _draw_header(self, title):
         self._display.fill_rect(0, 0, self._width, 12, 1)
@@ -71,7 +94,7 @@ class OLEDStatus:
         y = 16
         if lines:
             for line in lines[:4]:
-                self._draw_text(0, y, str(line)[:21])
+                self._draw_text(0, y, line)
                 y += 10
         if progress is not None:
             value, maximum = progress
@@ -94,8 +117,8 @@ class OLEDStatus:
         if body:
             for line in str(body).split("\n"):
                 if line:
-                    lines.append(line[:21])
-        self._render_screen(title, lines=lines, footer=footer[:21] if footer else "")
+                    lines.append(line)
+        self._render_screen(title, lines=lines, footer=footer if footer else "")
 
     def _show(self, kind, *args):
         if not self.is_enabled():
@@ -112,6 +135,18 @@ class OLEDStatus:
 
     def show_message(self, title, body="", footer="", force=False):
         return self._show("message", title, body, footer)
+
+    def show_startup_logo(self):
+        if not self.is_enabled():
+            return False
+        with self._lock:
+            self._display.fill(0)
+            self._display.fill_rect(0, 0, self._width, 16, 1)
+            self._draw_center_bold(4, "RACESENSE", 0)
+            self._display.hline(12, 24, self._width - 24, 1)
+            self._draw_center_bold(32, "RS-CORE", 1)
+            self._display.show()
+        return True
 
     def show_boot(self, stage, sd_ok=None, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, storage_info=None, force=False):
         lines = [stage]
@@ -131,13 +166,19 @@ class OLEDStatus:
             "IMU: " + ("OK" if imu_ok else "ERR"),
             "GPS: " + ("OK" if gps_ok else ("WAIT %d/5" % gps_sentences)),
         ]
-        footer = "Press SYNC"
+        footer = "Press sync to upload"
         if countdown_ms is not None and gps_ok:
             footer = "Sync in %ds" % max(0, countdown_ms // 1000)
         return self._show("screen", "DECISION", lines, footer, None)
 
     def show_setup_needed(self):
         return self.show_message("SETUP", "No WiFi saved", "Hold for pairing")
+
+    def show_first_time_setup(self):
+        return self.show_message("SETUP", "First-time setup", "Open pairing mode")
+
+    def show_flash_transfer(self):
+        return self._show("screen", "STORAGE", ["Moving files to SD", "Please wait"], "Internal -> SD", None)
 
     def show_pairing(self, ssid_hint="RS-Core AP"):
         return self._show("screen", "PAIRING", ["Hotspot active", ssid_hint], "Open portal", None)
@@ -153,7 +194,7 @@ class OLEDStatus:
         if host:
             lines.append(host)
         if detail:
-            lines.append(detail[:20])
+            lines.append(detail)
         return self._show("screen", "HEARTBEAT", lines, "Cloud link", None)
 
     def show_track_sync(self, track_name):
@@ -185,7 +226,7 @@ class OLEDStatus:
         if filename:
             lines.append(_short_name(filename))
         if detail:
-            lines.append(str(detail)[:20])
+            lines.append(str(detail))
         footer = "Upload complete" if ok else "Retry later"
         return self._show("screen", title, lines, footer, None)
 
@@ -195,9 +236,10 @@ class OLEDStatus:
             lines.append("Battery: low")
         return self._show("screen", "SYNC READY", lines, "Hold to pair", None)
 
-    def show_logging_started(self, filename, force=False):
-        lines = ["Telemetry capture", _short_name(filename)]
-        return self._show("screen", "LOGGING", lines, "LED events only", None)
+    def show_logging_started(self, filename, track_name=None, force=False):
+        lines = [_short_name(filename)]
+        lines.append(track_name or "No active track")
+        return self._show("screen", "LOGGING", lines, "", None)
 
     def show_track_event(self, event, track_name=None, sector=None):
         footer = track_name or ""

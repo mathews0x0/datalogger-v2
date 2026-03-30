@@ -2912,3 +2912,181 @@ RaceSense now has a coherent production IMU pipeline for session processing unde
 This is the first point where the IMU logic is aligned with both the product goal and the observed real-world usage pattern.
 
 **Status:** ✅ Complete, cleaned up, and validated for the front-facing production model.
+
+## 2026-03-31 — OLED Display Integration on RS-Core
+
+### Summary
+
+Introduced a production OLED display path on the ESP32-S3 RS-Core firmware so the device can surface rider-facing status during boot, sync, and logging. The display is a generic blue/white I2C OLED connected on the shared I2C bus with the BMI323 IMU.
+
+The final implementation now provides:
+
+- a dedicated MicroPython OLED driver under `firmware/drivers/oled.py`
+- a firmware-facing status renderer under `firmware/lib/oled_status.py`
+- rich boot and sync-mode screens
+- minimal logging-mode display behavior aligned to logging-integrity priority
+- reliable clean-boot panel wake behavior after a previously non-obvious controller/init issue
+
+### What Was Implemented
+
+The OLED feature set was added in layers:
+
+#### 1. Low-Level OLED Driver for ESP32 / MicroPython
+
+The original reference file was an older Raspberry Pi OLED helper in `temp_data/oled_control.py`. That code was not usable as-is because it depended on Pi/Linux-specific pieces and non-MicroPython libraries.
+
+A new MicroPython-native OLED driver was added in `firmware/drivers/oled.py` with:
+
+- `SSD1306_I2C`
+- `SH1106_I2C`
+- direct framebuffer-based drawing over `machine.I2C`
+
+This gave us working low-level access to the panel on-device.
+
+#### 2. Firmware Status Rendering Layer
+
+A new status helper was added in `firmware/lib/oled_status.py` so firmware code could render device states without duplicating drawing logic.
+
+This layer now supports:
+
+- startup splash
+- boot status
+- decision window
+- sync search / connect / heartbeat / queue / upload / result
+- logging start
+- critical storage / event screens
+
+#### 3. Main Firmware Integration
+
+`firmware/main.py` was extended so the OLED becomes part of the normal firmware lifecycle:
+
+- boot-time startup + device status
+- decision window screen
+- sync mode status and upload progress
+- minimal logging-mode display behavior
+
+The flashtool was also updated so `drivers/oled.py` is copied during full sync / clean flash.
+
+### Product / UX Decisions
+
+A key product decision was made during integration:
+
+- boot and sync mode should use the OLED richly
+- logging integrity must remain higher priority than display richness
+
+As a result, logging mode was intentionally simplified:
+
+- show a logging start screen
+- keep OLED traffic minimal during active capture
+- reserve dynamic feedback during logging for rare event-style screens only
+
+This keeps the display useful without letting it compete with telemetry capture timing.
+
+### Main Technical Issue Encountered
+
+The biggest issue was not wiring, not imports, and not general I2C connectivity.
+
+The OLED would often remain completely black after a clean flash / normal boot, even though:
+
+- the device could scan `0x3c` on I2C
+- the low-level driver imported correctly
+- boot code reached OLED init
+- the same panel could be made to display content manually via `mpremote`
+
+That meant the bug was specifically a boot-time panel wake / initialization issue.
+
+### Investigation Path
+
+We worked bottom-up and proved each layer separately.
+
+#### 1. Hardware and I2C Were Verified
+
+Direct `mpremote` commands confirmed:
+
+- OLED at `0x3c`
+- BMI323 at `0x69`
+
+This ruled out wiring and bus-address mistakes.
+
+#### 2. Raw Controller Tests Worked
+
+The key breakthrough came from running a direct low-level controller test on the live board that:
+
+- instantiated `SSD1306_I2C`
+- then instantiated `SH1106_I2C`
+- pushed explicit white / clear / text patterns for each
+
+That command visibly woke the panel and proved:
+
+- the display hardware was good
+- low-level driver writes were good
+- the actual board responded to `SH1106`
+- the panel sometimes needed a stronger wake/init sequence than the normal firmware path was giving it
+
+#### 3. Abstraction-Layer Fixes Alone Were Not Enough
+
+Multiple intermediate attempts were made in higher-level code:
+
+- deferred render scheduling
+- simpler direct drawing in `oled_status.py`
+- earlier boot rendering
+- later boot rendering
+- repeated SH1106-only retries
+
+Those were not enough by themselves because they still did not reproduce the exact live sequence that had already been proven to wake the panel.
+
+### Final Fix
+
+The final stable fix was to make firmware boot reproduce the actual known-good wake path instead of approximating it.
+
+The working wake sequence is now:
+
+1. initialize `SSD1306_I2C`
+2. write full white
+3. clear
+4. initialize `SH1106_I2C`
+5. write full white
+6. clear
+7. re-bind normal runtime rendering through `OLEDStatus`
+
+This mattered because the manual recovery that consistently worked on hardware did not use `SH1106` alone. It exercised both controller init paths in sequence before the panel became reliably usable.
+
+Once firmware matched that exact sequence, clean-boot OLED behavior became reliable.
+
+### Boot Flow Cleanup
+
+After wake reliability was solved, the OLED boot experience was cleaned up:
+
+- removed noisy on-screen controller/debug text during wake
+- removed internal constructor screens that were never meant for the rider
+- added a cleaner `RACESENSE` startup splash
+- adjusted boot sequencing so the intended visible flow is:
+  - startup splash
+  - device status
+  - decision window
+
+This separated the hardware wake-up choreography from the rider-facing UI.
+
+### Final Behavior
+
+The OLED implementation now behaves as follows:
+
+- clean flash / clean boot wakes the panel correctly
+- startup splash is shown first
+- boot health information is shown next
+- decision window appears after boot status
+- sync mode shows useful WiFi / heartbeat / queue / upload progress information
+- logging mode remains conservative to protect telemetry integrity
+
+### Outcome
+
+This work introduced the first production OLED capability on RS-Core and also uncovered a subtle controller/init quirk of the generic I2C panel.
+
+The major outcome was not just “OLED support added”, but:
+
+- reliable boot wake
+- clean rider-facing status screens
+- correct integration with the firmware lifecycle
+- preserved logging-first system priorities
+
+**Status:** ✅ Implemented and working on hardware after matching firmware boot to the validated raw controller wake sequence.

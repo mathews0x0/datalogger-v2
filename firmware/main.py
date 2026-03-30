@@ -50,16 +50,8 @@ def raw_oled_wake(i2c, label="wake"):
         probe.fill(0)
         probe.show()
         time.sleep_ms(80)
-        probe.text(name, 0, 16, 1)
-        probe.show()
-        time.sleep_ms(160)
-        probe.fill(0)
-        probe.show()
-        time.sleep_ms(80)
+        print("[OLED] Raw wake via", name)
     probe = SH1106_I2C(128, 64, i2c, addr=0x3C)
-    probe.text(label, 0, 16, 1)
-    probe.show()
-    time.sleep_ms(180)
     probe.fill(0)
     probe.show()
 
@@ -67,8 +59,10 @@ def raw_oled_wake(i2c, label="wake"):
 def revive_oled(i2c, sd_mounted, sm, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, label="wake"):
     raw_oled_wake(i2c, label=label)
     oled = OLEDStatus(i2c, addr=0x3C, controller="sh1106")
+    oled.show_startup_logo()
+    time.sleep_ms(3000)
     oled.show_boot(
-        "OLED awake",
+        "Device status",
         sd_ok=sd_mounted,
         imu_ok=imu_ok,
         gps_ok=gps_ok,
@@ -77,7 +71,7 @@ def revive_oled(i2c, sd_mounted, sm, imu_ok=None, gps_ok=None, gps_baud=None, gp
         storage_info=sm.get_active_storage_info(),
         force=True,
     )
-    oled.tick(force=True)
+    time.sleep_ms(2000)
     print("[OLED] Wake complete:", label)
     return oled
 
@@ -125,6 +119,13 @@ def setup():
             print("\n[System] Found session files on internal flash. Moving to SD card...")
             diag.record_phase("BOOT_AUTO_COPY")
             led.play_auto_copy()
+            try:
+                auto_i2c = machine.I2C(0, sda=machine.Pin(PIN_I2C_SDA), scl=machine.Pin(PIN_I2C_SCL), freq=100000)
+                oled = revive_oled(auto_i2c, sd_mounted, sm, label="copy")
+                if oled:
+                    oled.show_flash_transfer()
+            except Exception as e:
+                print(f"[OLED] Auto-copy display unavailable ({e})")
             # Feed WDT during potentially long copy
             wdt = machine.WDT(timeout=20000) # Ensure WDT is active
             
@@ -255,7 +256,7 @@ def main():
         print("\n[System] No WiFi configured — First-time setup! Entering Pairing Mode.")
         diag.record_phase("SYNC_SETUP_NEEDED")
         if oled:
-            oled.show_setup_needed()
+            oled.show_first_time_setup()
         run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc)
         return  # Never reaches here (sync mode loops forever)
     
@@ -285,7 +286,7 @@ def main():
                         print("[System] GPS RECOVERED: NMEA detected. Window will now proceed.")
                         break
         
-        if i2c and oled_retry_count < 4 and time.ticks_diff(time.ticks_ms(), next_oled_retry_ms) >= 0:
+        if oled is None and i2c and oled_retry_count < 4 and time.ticks_diff(time.ticks_ms(), next_oled_retry_ms) >= 0:
             try:
                 oled_retry_count += 1
                 label = "retry%d" % oled_retry_count
@@ -378,7 +379,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             wdt.feed()
             led.play_setup_needed()
             if oled:
-                oled.show_setup_needed()
+                oled.show_first_time_setup()
                 oled.tick()
             time.sleep_ms(50)
     
@@ -900,7 +901,8 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
     log_file = sm.get_log_file()
     print(f"[System] Session file: {log_file}")
     if oled:
-        oled.show_logging_started(log_file, force=True)
+        track_status = track_eng.get_status()
+        oled.show_logging_started(log_file, track_name=track_status.get("track_name"), force=True)
         oled.tick(force=True)
     
     # RTC sync flag
