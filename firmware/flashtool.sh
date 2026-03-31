@@ -402,8 +402,8 @@ main() {
         echo ""
         detect_port
         free_port
-        # Try to force bootloader state if OS or Wipe selected
-        if [[ "$choice" == "1" || "$choice" == "2" || "$choice" == "4" ]]; then
+        # Only force ROM bootloader for actions that actually reflash the OS.
+        if [[ "$choice" == "1" || "$choice" == "3" ]]; then
             echo -e "${YELLOW}Triggering Bootloader...${NC}"
             $MPREMOTE_CMD connect "$PORT" exec "import machine; machine.bootloader()" 2>/dev/null
             sleep 2

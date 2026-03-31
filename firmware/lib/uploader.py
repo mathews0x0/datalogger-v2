@@ -7,8 +7,8 @@ from lib.memory_profile import get_memory_profile, recommended_stream_chunk_size
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
 CHUNK_SIZE = 4 * 1024        # Legacy non-PSRAM ceiling
-PSRAM_CHUNK_SIZE = 16 * 1024 # Safer larger reads once PSRAM-backed heap is available
-BATCH_SIZE = 512 * 1024      # 512KB per HTTP request (16 reads per batch)
+PSRAM_CHUNK_SIZE = 32 * 1024 # Faster PSRAM-backed read size without overpushing weak links
+BATCH_SIZE = 1 * 1024 * 1024 # 1MB per HTTP request to balance speed and stability
 MIN_CHUNK_SIZE = 1024        # 1KB floor for badly fragmented heaps
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
