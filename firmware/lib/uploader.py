@@ -3,15 +3,19 @@ import json
 import os
 import gc
 import time
+from lib.memory_profile import get_memory_profile, recommended_stream_chunk_size
 
 DEVICE_CONFIG_PATH = '/data/metadata/device.json'
-CHUNK_SIZE = 32 * 1024       # 32KB read size from flash into RAM
+CHUNK_SIZE = 4 * 1024        # Legacy non-PSRAM ceiling
+PSRAM_CHUNK_SIZE = 16 * 1024 # Safer larger reads once PSRAM-backed heap is available
 BATCH_SIZE = 512 * 1024      # 512KB per HTTP request (16 reads per batch)
-MIN_CHUNK_SIZE = 8 * 1024    # 8KB floor for memory-constrained situations
+MIN_CHUNK_SIZE = 1024        # 1KB floor for badly fragmented heaps
 MAX_RETRIES = 3
 RETRY_DELAY_MS = 2000
 TIMEOUT = 45
 GC_EVERY_N = 8               # Only gc.collect() every Nth read
+RESPONSE_READ_SIZE = 1024
+MAX_JSON_BODY = 4096
 
 
 def _load_config():
@@ -36,15 +40,10 @@ def _validate_session(filepath):
 def _pick_chunk_size():
     """Pick a read size that leaves heap headroom for TLS/socket buffers."""
     try:
-        free_mem = gc.mem_free()
-        if free_mem <= 0:
+        chunk_size = recommended_stream_chunk_size()
+        if chunk_size <= 0:
             return MIN_CHUNK_SIZE
-        target = free_mem // 4
-        if target < MIN_CHUNK_SIZE:
-            return MIN_CHUNK_SIZE
-        if target > CHUNK_SIZE:
-            return CHUNK_SIZE
-        return target - (target % 1024)
+        return chunk_size
     except:
         return MIN_CHUNK_SIZE
 
@@ -78,8 +77,8 @@ def _open_ssl_socket(host, port, proto):
     return s, ss
 
 
-def _read_http_response(sock):
-    """Read HTTP response: status line, headers, body."""
+def _read_http_response(sock, max_body_bytes=0):
+    """Read HTTP response with bounded body buffering."""
     status_line = sock.readline().decode().strip()
     headers = {}
     while True:
@@ -90,15 +89,19 @@ def _read_http_response(sock):
             key, value = line.split(':', 1)
             headers[key.strip().lower()] = value.strip()
 
-    body = b""
+    body = bytearray() if max_body_bytes > 0 else None
     content_len = int(headers.get("content-length", "0") or "0")
     while content_len > 0:
-        chunk = sock.read(content_len)
+        chunk = sock.read(min(RESPONSE_READ_SIZE, content_len))
         if not chunk:
             break
-        body += chunk
+        if body is not None and len(body) < max_body_bytes:
+            remaining = max_body_bytes - len(body)
+            body.extend(chunk[:remaining])
         content_len -= len(chunk)
-    return status_line, headers, body
+    if body is None:
+        return status_line, headers, b""
+    return status_line, headers, bytes(body)
 
 
 def _query_status_on_socket(ss, fname, host, status_path, token):
@@ -110,7 +113,7 @@ def _query_status_on_socket(ss, fname, host, status_path, token):
     req += "Authorization: Bearer " + token + "\r\n"
     req += "Connection: keep-alive\r\n\r\n"
     ss.write(req.encode())
-    status_line, _, body = _read_http_response(ss)
+    status_line, _, body = _read_http_response(ss, max_body_bytes=MAX_JSON_BODY)
     if "200" in status_line and body:
         data = json.loads(body)
         return (
@@ -183,6 +186,7 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
 
         # 2. Query resume status on this connection
         read_size = _pick_chunk_size()
+        mem_info = get_memory_profile()
         try:
             resume_bytes, _, _ = _query_status_on_socket(
                 ss, fname, host, status_path, token
@@ -194,7 +198,8 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
             print(f'[Sync] Status query failed, starting fresh: {e}')
 
         total_batches = (total_size - offset + BATCH_SIZE - 1) // BATCH_SIZE
-        print(f'[Sync] Uploading: {read_size // 1024}KB reads, {BATCH_SIZE // 1024}KB batches, ~{total_batches} batches')
+        max_chunk = PSRAM_CHUNK_SIZE if mem_info.get("psram_present") else CHUNK_SIZE
+        print(f'[Sync] Uploading: {read_size // 1024}KB reads (cap {max_chunk // 1024}KB), {BATCH_SIZE // 1024}KB batches, ~{total_batches} batches')
         if status_cb:
             try:
                 status_cb(

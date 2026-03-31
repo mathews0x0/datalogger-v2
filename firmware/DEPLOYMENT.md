@@ -3,7 +3,7 @@
 This guide is updated for the **ESP32-S3** based Racesense V2 hardware.
 
 ## ✅ **Hardware Features (V2)**
-- **ESP32-S3-WROOM-1**: Faster processor, more IO, native USB.
+- **ESP32-S3-WROOM-1-N16R8**: Faster processor, more IO, native USB, 16MB flash, 8MB Octal PSRAM.
 - **MicroSD Support**: High-speed logging to SD card.
 - **Native USB**: Programming and debugging via the USB-C port (IO19/20).
 - **Battery Monitoring**: Integrated ADC for voltage tracking (IO7).
@@ -13,6 +13,15 @@ This guide is updated for the **ESP32-S3** based Racesense V2 hardware.
 ---
 
 ## 🚀 **Deployment Script**
+
+### Preferred MicroPython Build for This Board
+
+For the **ESP32-S3-WROOM-1-N16R8**, keep a vetted local copy of the **ESP32_GENERIC_S3 octal-SPIRAM** firmware in the repo and flash only that local file:
+
+- Preferred repo filename: `firmware/esp32s3-micropython-psram-oct.bin`
+- Accepted fallback local filenames: `firmware/esp32s3-micropython.bin`, `firmware/micropython.bin`
+
+The flashing tool now resolves firmware from local files only. It will not depend on any network location at flash time.
 
 Use the `deploy.sh` script to push the firmware:
 
@@ -80,6 +89,24 @@ This ensures that network activity does not cause "gaps" in your high-frequency 
 ---
 
 ## ⚡ **Troubleshooting**
+
+### PSRAM Validation
+
+After flashing the octal-PSRAM build, run:
+
+```bash
+cd firmware
+./flashtool.sh
+```
+
+Then choose `Run PSRAM Probe`.
+
+Expected outcome:
+- boot logs show `[Memory] Boot: ... PSRAM=yes`
+- the probe reports `PSRAM inference: DETECTED`
+- contiguous allocation should succeed well past internal-RAM-only sizes, typically into multi-megabyte range
+
+If the probe says `PSRAM inference: NOT DETECTED`, the board is almost certainly running the wrong MicroPython image.
 
 ### Native USB Connection
 If the device is not detected, put it into **Download Mode**:

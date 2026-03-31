@@ -9,7 +9,7 @@ This document details the physical data acquisition module (**RS-Core V2**) and 
 The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high-frequency telemetry and robust storage.
 
 ### **Core Components**
-*   **MCU**: ESP32-S3-WROOM-1 (Dual-core, 240MHz).
+*   **MCU**: ESP32-S3-WROOM-1-N16R8 (Dual-core, 240MHz, 16MB flash, 8MB Octal PSRAM).
 *   **GNSS (GPS)**: Neo-M8N (Connected via UART on IO17/18). Target rate: **10Hz**.
 *   **IMU (6-Axis)**: BMI323 (Connected via I2C on IO21/39). Accel + Gyro. Requires High Performance Mode (Power Mode 7) for reliable gyro output.
 *   **Storage**: 
@@ -30,7 +30,15 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 
 ## 🧠 Firmware Architecture
 
-The firmware is written in **MicroPython (v1.22+)** and operates in one of two **exclusive modes**, selected by the hardware Sync Button (IO5) during a 10-second boot window.
+The firmware is written in **MicroPython** and operates in one of two **exclusive modes**, selected by the hardware Sync Button (IO5) during a 10-second boot window.
+
+### **MicroPython Build Requirement**
+For this exact module, standardize on a vetted local copy of the **ESP32_GENERIC_S3 "spiram-oct"** variant and flash only from the repository.
+
+Operationally, that means:
+*   Preferred local filename: `firmware/esp32s3-micropython-psram-oct.bin`
+*   Accepted local fallbacks: `firmware/esp32s3-micropython.bin`, `firmware/micropython.bin`
+*   After flashing, the firmware should print a boot-time memory line with `PSRAM=yes`
 
 ### **Boot Sequence**
 1.  5-second safe boot window (Ctrl-C to halt via mpremote).
@@ -63,7 +71,7 @@ The firmware is written in **MicroPython (v1.22+)** and operates in one of two *
 *   **Sequential Sequence**: Device searches for known WiFi, then performs a **Heartbeat First** handshake to verify cloud health.
 *   **Single-Writer Worker (Core 1)**: All NeoPixel timing and writes are handled by a dedicated background thread.
 *   **Zero-Allocation Pipeline**: The system uses `color_animations.py` as a theme engine with pre-allocated GRB buffers. The `LEDManager` writes directly to the hardware buffer (`buf[:] = LOOKUP`) to prevent heap fragmentation during Wi-Fi/SSL operations.
-*   **High-Speed Batch Uploads**: Session uploads stream `32KB` reads directly into large `512KB` HTTP POST payloads over persistent SSL connections. This slashes TLS round-trip overhead on mobile hotspots.
+*   **High-Speed Batch Uploads**: Session uploads stream adaptive reads into large `512KB` HTTP POST payloads over persistent SSL connections. On PSRAM-backed builds the read ceiling is raised to `16KB`, giving more upload headroom without returning to the older fragmentation failures seen on small-heap builds.
 *   **Resumable Upload Safety**: If horizontal scaling or network instability drops a request mid-batch, the device queries the server and seamlessly resumes the upload from the exact byte offset (`X-Upload-Offset`) instead of restarting the whole file.
 *   **Recovered handshake path**: If the initial cloud handshake fails, later heartbeat recovery can still trigger uploads in the same sync session.
 *   **Power-aware sync**: Under weak battery voltage, LED brightness and WiFi TX power are reduced. At critical battery voltage the uploader may be deferred to avoid brownouts.
@@ -135,6 +143,8 @@ In the `firmware/` directory, use the supplied shell script:
 ```
 **Download Mode**: Hold **BOOT**, press **RESET**, release **BOOT**.
 
+For the `ESP32-S3-WROOM-1-N16R8`, the repository flashing flow prefers `esp32s3-micropython-psram-oct.bin` and only uses local firmware files already present in `firmware/`.
+
 ### **2. Script Deployment**
 To update just the Python logic (`main.py`, `lib/`, etc.):
 ```bash
@@ -146,6 +156,21 @@ The production server can push updates to local devices via the **UpdateManager*
 *   Server holds the latest `micropython.bin` in the `firmware/` root.
 *   Device pulls the update over WiFi when triggered from the **Settings -> Update** menu in the web app.
 *   Backend hosting is now a self-managed public VPS behind DNS + Nginx; this infrastructure change does **not** change the device-side sync or OTA protocol, but it makes cloud endpoint management explicit in operations.
+
+### **4. PSRAM Validation**
+After flashing, validate the memory layout before trusting the build in the field:
+
+```bash
+cd firmware
+./flashtool.sh
+```
+
+Choose `Run PSRAM Probe`.
+
+Pass criteria:
+*   Boot log shows `[Memory] Boot: ... PSRAM=yes`
+*   `tools/psram_probe.py` reports `PSRAM inference: DETECTED`
+*   Large contiguous `bytearray` allocations succeed into the multi-megabyte range
 
 ---
 

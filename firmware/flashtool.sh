@@ -8,9 +8,10 @@
 
 # --- Configuration ---
 BAUD="460800"
-FIRMWARE_BIN="esp32s3-micropython.bin"
+PREFERRED_FIRMWARE_BIN="esp32s3-micropython-psram-oct.bin"
 BLINK_SRC="../hardware/workbench/blink_simple.py"
 FULL_TEST_SRC="../hardware/workbench/full_system_test.py"
+PSRAM_PROBE_SRC="tools/psram_probe.py"
 
 # --- Color Codes ---
 GREEN='\033[0;32m'
@@ -76,6 +77,21 @@ free_port() {
     pkill -9 mpremote 2>/dev/null
 }
 
+resolve_firmware_bin() {
+    local candidates=(
+        "$PREFERRED_FIRMWARE_BIN"
+        "esp32s3-micropython.bin"
+        "micropython.bin"
+    )
+    for candidate in "${candidates[@]}"; do
+        if [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # --- 3. Core Actions ---
 do_wipe() {
     echo -e "${YELLOW}Erasing Flash...${NC}"
@@ -84,12 +100,20 @@ do_wipe() {
 }
 
 do_flash_os() {
-    echo -e "${YELLOW}Flashing MicroPython ($FIRMWARE_BIN)...${NC}"
-    if [ ! -f "$FIRMWARE_BIN" ]; then
-        echo -e "${RED}ERROR: $FIRMWARE_BIN not found in $(pwd)${NC}"
+    local firmware_bin
+    firmware_bin=$(resolve_firmware_bin)
+    if [ -z "$firmware_bin" ]; then
+        echo -e "${RED}ERROR: No MicroPython firmware binary found in $(pwd)${NC}"
+        echo -e "${YELLOW}Expected preferred local firmware: $PREFERRED_FIRMWARE_BIN${NC}"
+        echo -e "${YELLOW}Accepted fallback local firmware names: esp32s3-micropython.bin, micropython.bin${NC}"
         exit 1
     fi
-    $ESPTOOL_CMD --chip esp32s3 --port "$PORT" --baud $BAUD --before default-reset --after hard-reset write-flash -z 0 "$FIRMWARE_BIN"
+    echo -e "${YELLOW}Flashing MicroPython ($firmware_bin)...${NC}"
+    if [ "$firmware_bin" != "$PREFERRED_FIRMWARE_BIN" ]; then
+        echo -e "${MAGENTA}Warning: using fallback firmware image.${NC}"
+        echo -e "${MAGENTA}For ESP32-S3-WROOM-1-N16R8, prefer: $PREFERRED_FIRMWARE_BIN${NC}"
+    fi
+    $ESPTOOL_CMD --chip esp32s3 --port "$PORT" --baud $BAUD --before default-reset --after hard-reset write-flash -z 0 "$firmware_bin"
     if [ $? -ne 0 ]; then echo -e "${RED}Flash failed!${NC}"; exit 1; fi
     
     echo -e "${YELLOW}Because this board uses Native USB, auto-reset via RTS fails.${NC}"
@@ -99,6 +123,15 @@ do_flash_os() {
     sleep 5
     # Re-detect port after boot
     PORT=$(ls /dev/cu.usbmodem* /dev/tty.usbmodem* 2>/dev/null | head -n 1)
+}
+
+do_psram_probe() {
+    if [ ! -f "$PSRAM_PROBE_SRC" ]; then
+        echo -e "${RED}ERROR: $PSRAM_PROBE_SRC not found${NC}"
+        exit 1
+    fi
+    echo -e "${CYAN}Running PSRAM probe on device...${NC}"
+    $MPREMOTE_CMD connect "$PORT" run "$PSRAM_PROBE_SRC"
 }
 
 do_sync_source() {
@@ -354,9 +387,10 @@ show_menu() {
     echo "3) Nuke Sync (Full Wipe + Install OS + Sync latest)"
     echo "4) Backup & Purge Device Data (Internal flash only)"
     echo "5) View Boot Diagnostics"
-    echo "6) Exit"
+    echo "6) Run PSRAM Probe"
+    echo "7) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-6]: "
+    echo -ne "Select an option [1-7]: "
 }
 
 main() {
@@ -364,7 +398,7 @@ main() {
     read choice
     
     # We need a port for all menu actions except exit
-    if [[ "$choice" != "6" ]]; then
+    if [[ "$choice" != "7" ]]; then
         echo ""
         detect_port
         free_port
@@ -401,6 +435,9 @@ main() {
             do_view_boot_history
             ;;
         6)
+            do_psram_probe
+            ;;
+        7)
             echo "Exiting."
             exit 0
             ;;

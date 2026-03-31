@@ -12,7 +12,6 @@ import ssl
 
 # Drivers
 import ubinascii
-from lib.uploader import sync_all
 from drivers.gps import GPS
 from drivers.bmi323 import BMI323
 from drivers.oled import SSD1306_I2C, SH1106_I2C
@@ -20,7 +19,11 @@ from lib.session_manager import SessionManager
 from lib.led_manager import LEDManager
 from lib.track_engine import TrackEngine
 from lib.oled_status import OLEDStatus
+from lib.memory_profile import get_memory_profile, format_memory_profile
 from lib import boot_diagnostics as diag
+
+TRACK_RESPONSE_LIMIT = 16 * 1024
+TRACK_RESPONSE_READ_SIZE = 1024
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_LED_FEEDBACK = 4    # Feedback NeoPixel (16-LED matrix)
@@ -125,6 +128,16 @@ def revive_oled(i2c, sd_mounted, sm, battery_pct=None, imu_ok=None, gps_ok=None,
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
     diag.record_phase("BOOT_SETUP_START")
+    mem_info = get_memory_profile()
+    print("[Memory] Boot:", format_memory_profile(mem_info))
+    diag.update_runtime_stats(
+        psram_present=mem_info.get("psram_present"),
+        gc_total_kb=mem_info.get("gc_total", 0) // 1024,
+        gc_free_kb=mem_info.get("gc_free", 0) // 1024,
+        idf_total_kb=mem_info.get("idf_total", 0) // 1024,
+        idf_free_kb=mem_info.get("idf_free", 0) // 1024,
+        idf_largest_kb=mem_info.get("idf_largest", 0) // 1024,
+    )
     
     # 1. LED Manager (Dual NeoPixel: IO4 feedback + IO6 onboard)
     diag.record_phase("BOOT_LED_INIT")
@@ -457,9 +470,24 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
         
         gc.collect()
         sta = network.WLAN(network.STA_IF)
+        try:
+            sta.disconnect()
+        except:
+            pass
+        try:
+            sta.active(False)
+            time.sleep_ms(150)
+        except:
+            pass
+        gc.collect()
         diag.record_phase("SYNC_WIFI_ACTIVE")
         sta.active(True)
-        sta.config(txpower=8.5) # Prevent ESP32 brownout spikes
+        time.sleep_ms(200)
+        gc.collect()
+        try:
+            sta.config(txpower=8.5) # Prevent ESP32 brownout spikes
+        except:
+            pass
         # Inline initial power policy (nested helpers not yet defined)
         try:
             _vbatt_init = (vbat_adc.read_uv() / 1000000.0) * 2.0
@@ -720,12 +748,14 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                             headers[key.strip().lower()] = value.strip()
 
                     content_len = int(headers.get("content-length", "0") or "0")
-                    body_bytes = b""
+                    body_bytes = bytearray()
                     while content_len > 0:
-                        chunk = ss_tr.read(content_len)
+                        chunk = ss_tr.read(min(TRACK_RESPONSE_READ_SIZE, content_len))
                         if not chunk:
                             break
-                        body_bytes += chunk
+                        if len(body_bytes) < TRACK_RESPONSE_LIMIT:
+                            remaining = TRACK_RESPONSE_LIMIT - len(body_bytes)
+                            body_bytes.extend(chunk[:remaining])
                         content_len -= len(chunk)
 
                     body = body_bytes.decode() if body_bytes else ""
@@ -1297,6 +1327,7 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
         if loop_count % 1000 == 0:
             gc.collect()
             sample_heap()
+            mem_info = get_memory_profile()
             diag.update_runtime_stats(
                 loop_count=loop_count,
                 loop_state=base_state,
@@ -1312,8 +1343,12 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
                 queue_depth=len(write_buf) + len(flush_buf),
                 dropped_rows=dropped_rows,
                 max_queue_depth=max_queue_depth,
+                psram_present=mem_info.get("psram_present"),
+                gc_free_kb=mem_info.get("gc_free", 0) // 1024,
+                idf_free_kb=mem_info.get("idf_free", 0) // 1024,
+                idf_largest_kb=mem_info.get("idf_largest", 0) // 1024,
             )
-            print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count} | Queue: {len(write_buf)+len(flush_buf)} | Dropped: {dropped_rows} | MinHeap: {min_heap} | MaxLoop: {max_loop_ms}")
+            print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count} | Queue: {len(write_buf)+len(flush_buf)} | Dropped: {dropped_rows} | MinHeap: {min_heap} | GCFreeKB: {mem_info.get('gc_free', 0) // 1024} | MaxLoop: {max_loop_ms}")
 
 
         # ── 7. TIMING — Target 10ms per tick (100 Hz) ──
