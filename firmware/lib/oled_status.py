@@ -23,6 +23,10 @@ class OLEDStatus:
         self._display = None
         self._width = width
         self._height = height
+        self._battery_pct = None
+        self._battery_pct_filtered = None
+        self._sd_ok = None
+        self._sd_pct = None
         try:
             if (controller or "sh1106").lower() == "ssd1306":
                 self._display = SSD1306_I2C(width, height, i2c, addr=addr)
@@ -41,6 +45,30 @@ class OLEDStatus:
 
     def is_enabled(self):
         return self._enabled and self._display is not None
+
+    def set_context(self, battery_pct=None, sd_ok=None, sd_pct=None):
+        if battery_pct is not None:
+            try:
+                battery_pct = int(battery_pct)
+            except Exception:
+                battery_pct = None
+        if battery_pct is not None:
+            battery_pct = max(0, min(100, battery_pct))
+            if self._battery_pct_filtered is None:
+                self._battery_pct_filtered = float(battery_pct)
+                self._battery_pct = battery_pct
+            else:
+                self._battery_pct_filtered = (self._battery_pct_filtered * 0.85) + (battery_pct * 0.15)
+                filtered_pct = int(round(self._battery_pct_filtered))
+                if self._battery_pct is None or abs(filtered_pct - self._battery_pct) >= 2:
+                    self._battery_pct = filtered_pct
+        if sd_ok is not None:
+            self._sd_ok = bool(sd_ok)
+        if sd_pct is not None:
+            try:
+                self._sd_pct = max(0, min(100, int(sd_pct)))
+            except Exception:
+                self._sd_pct = None
 
     def _max_chars(self, reserve_px=0):
         usable = max(0, self._width - reserve_px - SAFE_RIGHT_PX)
@@ -80,9 +108,38 @@ class OLEDStatus:
             x = 0
         self._draw_bold(x, y, text, color)
 
+    def _draw_battery_icon(self, x, y, color=0):
+        self._display.rect(x, y, 10, 6, color)
+        self._display.fill_rect(x + 10, y + 2, 1, 2, color)
+        if self._battery_pct is None:
+            return
+        fill_w = int((max(0, min(100, self._battery_pct)) * 8) / 100)
+        if fill_w > 0:
+            self._display.fill_rect(x + 1, y + 1, fill_w, 4, color)
+
+    def _draw_sd_icon(self, x, y, color=0):
+        self._display.rect(x + 1, y, 8, 8, color)
+        self._display.fill_rect(x + 6, y, 2, 2, color)
+        self._display.hline(x + 2, y + 3, 5, color)
+        self._display.hline(x + 2, y + 5, 5, color)
+
     def _draw_header(self, title):
         self._display.fill_rect(0, 0, self._width, 12, 1)
         self._draw_center(2, title, 0)
+
+    def _draw_status_row(self, y, color=1):
+        if self._battery_pct is not None:
+            self._draw_battery_icon(0, y + 1, color)
+            self._draw_text(12, y, "%d%%" % max(0, min(100, int(self._battery_pct))), color)
+        if self._sd_ok is not None:
+            right_x = self._width - 36
+            if right_x < 72:
+                right_x = 72
+            self._draw_sd_icon(right_x, y, color)
+            if self._sd_ok and self._sd_pct is not None:
+                self._draw_text(right_x + 11, y, "%d%%" % self._sd_pct, color)
+            else:
+                self._draw_text(right_x + 11, y, "OK" if self._sd_ok else "--", color)
 
     def _draw_footer(self, footer):
         if footer:
@@ -92,6 +149,8 @@ class OLEDStatus:
         self._display.fill(0)
         self._draw_header(title)
         y = 16
+        self._draw_status_row(y, 1)
+        y += 10
         if lines:
             for line in lines[:4]:
                 self._draw_text(0, y, line)
@@ -169,7 +228,7 @@ class OLEDStatus:
         footer = "Press sync to upload"
         if countdown_ms is not None and gps_ok:
             footer = "Sync in %ds" % max(0, countdown_ms // 1000)
-        return self._show("screen", "DECISION", lines, footer, None)
+        return self._show("screen", "SYNC?", lines, footer, None)
 
     def show_setup_needed(self):
         return self.show_message("SETUP", "No WiFi saved", "Hold for pairing")

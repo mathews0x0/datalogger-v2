@@ -41,6 +41,52 @@ PIN_DEBUG_LED = 2       # Blue Debug LED
 # Sensitivity constants now handled by IMU driver class
 
 
+def calculate_battery_percentage(voltage):
+    if voltage >= 4.2:
+        return 100
+    if voltage <= 3.3:
+        return 0
+
+    curve = (
+        (4.2, 100),
+        (4.05, 90),
+        (3.95, 80),
+        (3.85, 60),
+        (3.75, 40),
+        (3.7, 20),
+        (3.6, 10),
+        (3.4, 5),
+        (3.3, 0),
+    )
+
+    for i in range(len(curve) - 1):
+        high_v, high_p = curve[i]
+        low_v, low_p = curve[i + 1]
+        if voltage <= high_v and voltage >= low_v:
+            range_v = high_v - low_v
+            range_p = high_p - low_p
+            v_offset = voltage - low_v
+            return int(round(low_p + (v_offset / range_v) * range_p))
+    return 0
+
+
+def read_vbatt(vbat_adc):
+    try:
+        return (vbat_adc.read_uv() / 1000000.0) * 2.0
+    except Exception:
+        return 0.0
+
+
+def get_storage_used_percent(sm):
+    try:
+        info = sm.get_active_storage_info()
+        if not info or info.get('total_kb', 0) <= 0:
+            return None
+        return int(round((info['used_kb'] * 100.0) / info['total_kb']))
+    except Exception:
+        return None
+
+
 def raw_oled_wake(i2c, label="wake"):
     for cls, name in ((SSD1306_I2C, "ssd1306"), (SH1106_I2C, "sh1106")):
         probe = cls(128, 64, i2c, addr=0x3C)
@@ -56,9 +102,10 @@ def raw_oled_wake(i2c, label="wake"):
     probe.show()
 
 
-def revive_oled(i2c, sd_mounted, sm, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, label="wake"):
+def revive_oled(i2c, sd_mounted, sm, battery_pct=None, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, label="wake"):
     raw_oled_wake(i2c, label=label)
     oled = OLEDStatus(i2c, addr=0x3C, controller="sh1106")
+    oled.set_context(battery_pct=battery_pct, sd_ok=sd_mounted, sd_pct=get_storage_used_percent(sm))
     oled.show_startup_logo()
     time.sleep_ms(3000)
     oled.show_boot(
@@ -121,7 +168,7 @@ def setup():
             led.play_auto_copy()
             try:
                 auto_i2c = machine.I2C(0, sda=machine.Pin(PIN_I2C_SDA), scl=machine.Pin(PIN_I2C_SCL), freq=100000)
-                oled = revive_oled(auto_i2c, sd_mounted, sm, label="copy")
+                oled = revive_oled(auto_i2c, sd_mounted, sm, battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)), label="copy")
                 if oled:
                     oled.show_flash_transfer()
             except Exception as e:
@@ -216,6 +263,7 @@ def setup():
             i2c,
             sd_mounted,
             sm,
+            battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
             imu_ok=imu is not None,
             gps_ok=sentences_received >= 5,
             gps_baud=115200,
@@ -308,6 +356,11 @@ def main():
         # Update LED with current health status
         led.play_decision(sd_mounted, imu_ok, gps_ok)
         if oled:
+            oled.set_context(
+                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                sd_ok=sd_mounted,
+                sd_pct=get_storage_used_percent(sm),
+            )
             remaining_ms = 10000 - elapsed
             oled.show_decision(sd_mounted, imu_ok, gps_ok, gps_sentences=sentences_received, countdown_ms=remaining_ms)
             oled.tick(force=True)
@@ -363,6 +416,14 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
     config = load_device_config()
     wifi_connected = False
     needs_setup = not config.get('ssid')
+
+    def update_oled_context():
+        if oled:
+            oled.set_context(
+                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                sd_ok=sm.sd_mounted,
+                sd_pct=get_storage_used_percent(sm),
+            )
     
     if needs_setup:
         # No saved network — auto-enter pairing mode with rainbow animation
@@ -379,6 +440,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             wdt.feed()
             led.play_setup_needed()
             if oled:
+                update_oled_context()
                 oled.show_first_time_setup()
                 oled.tick()
             time.sleep_ms(50)
@@ -389,6 +451,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
         diag.record_phase("SYNC_WIFI_PREP", config.get('ssid', ''))
         led.set_state("SYNC_SEARCHING")
         if oled:
+            update_oled_context()
             oled.show_sync_searching(config.get('ssid', ''))
             oled.tick(force=True)
         
@@ -421,6 +484,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                 diag.record_phase("SYNC_WIFI_CONNECTED", sta.ifconfig()[0])
                 led.play_sync_found()
                 if oled:
+                    update_oled_context()
                     oled.show_sync_connected(config.get('ssid', ''), sta.ifconfig()[0])
                     oled.tick(force=True)
                 wdt.feed()
@@ -434,6 +498,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             print("[Sync] WiFi connection failed.")
             diag.record_phase("SYNC_WIFI_FAILED")
             if oled:
+                update_oled_context()
                 oled.show_message("SYNC FAIL", "WiFi connect failed", config.get('ssid', ''))
             sta.active(False)
             gc.collect()
@@ -538,6 +603,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
         except Exception as e:
             print(f"[Sync] URL Parse Error: {e}")
             if oled:
+                update_oled_context()
                 oled.show_heartbeat("URL error", detail=str(e))
             return False
 
@@ -579,6 +645,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             diag.record_phase("SYNC_SSL_HEARTBEAT", host)
             led.play_heartbeat_send()
             if oled:
+                update_oled_context()
                 oled.show_heartbeat("Sending", host=host, detail="POST /ping")
             
             # 1. Opening Raw Socket
@@ -608,12 +675,14 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                 print("[Heartbeat] Server ACK OK.")
                 led.play_heartbeat_ack()
                 if oled:
+                    update_oled_context()
                     oled.show_heartbeat("ACK OK", host=host, detail="Heartbeat accepted")
                 time.sleep(1) # Visual confirmation
                 success = True
             else:
                 print(f"[Heartbeat] Server Rejected: {resp_line.strip()}")
                 if oled:
+                    update_oled_context()
                     oled.show_heartbeat("Rejected", host=host, detail=resp_line.strip())
             
             # 5. Active Track Pull (Separate connection for safety)
@@ -673,6 +742,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                                     print(f"[Sync] Active track saved: {track_info.get('track_name', 'Unknown')}")
                                     set_state(last_track_name=track_info.get('track_name') or track_info.get('name', 'Unknown'))
                                     if oled:
+                                        update_oled_context()
                                         oled.show_track_sync(track_info.get('track_name') or track_info.get('name', 'Unknown'))
                                 else:
                                     print("[Sync] Active track is null on server.")
@@ -691,6 +761,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
         except Exception as e:
             print(f"[Heartbeat] Network Error: {e}")
             if oled:
+                update_oled_context()
                 oled.show_heartbeat("Network error", host=host if 'host' in locals() else "", detail=str(e))
         finally:
             if ss: ss.close()
@@ -712,11 +783,13 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
         try:
             pending = sm_ref.list_sessions()
             if oled:
+                update_oled_context()
                 oled.show_sync_queue(pending)
 
             def upload_status(event, **info):
                 if not oled:
                     return
+                update_oled_context()
                 if event == "queue":
                     oled.show_sync_queue(info.get("files", []))
                 elif event in ("upload_start", "upload_progress", "upload_done"):
@@ -743,21 +816,25 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                     print("[Sync] All files uploaded successfully!")
                     led_ref.play_idle() # Back to idle/ready
                     if oled:
+                        update_oled_context()
                         oled.show_sync_result(True, detail="All files uploaded")
                 else:
                     print("[Sync] One or more uploads failed.")
                     led_ref.play_heartbeat_error()
                     if oled:
+                        update_oled_context()
                         oled.show_sync_result(False, detail="One or more uploads failed")
             else:
                 print("[Sync] No pending files.")
                 led_ref.play_idle()
                 if oled:
+                    update_oled_context()
                     oled.show_sync_queue([])
         except Exception as e:
             print(f"[Sync] Uploader Thread Fatal: {e}")
             led_ref.play_heartbeat_error()
             if oled:
+                update_oled_context()
                 oled.show_sync_result(False, detail=str(e))
         finally:
             set_state(uploader_busy=False, uploader_started=False)
@@ -802,6 +879,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
         if get_state("pairing_active"):
             led.play_pairing()
             if oled:
+                update_oled_context()
                 oled.show_pairing()
                 oled.tick()
             time.sleep_ms(50)
@@ -821,6 +899,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                     set_state(pairing_active=True, portal_requested=False, hb_ok=False)
                     diag.mark_boot_completed("pairing_portal_running")
                     if oled:
+                        update_oled_context()
                         oled.show_pairing()
                         oled.tick(force=True)
                 finally:
@@ -862,6 +941,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             else:
                 led.play_sync_fail()
             if oled:
+                update_oled_context()
                 oled.show_sync_idle(get_state("hb_ok"), pending_count=pending_count, low_power=get_state("low_power_mode"))
         
         if sync_btn.value() == 0:
@@ -902,6 +982,11 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
     print(f"[System] Session file: {log_file}")
     if oled:
         track_status = track_eng.get_status()
+        oled.set_context(
+            battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+            sd_ok=sm.sd_mounted,
+            sd_pct=get_storage_used_percent(sm),
+        )
         oled.show_logging_started(log_file, track_name=track_status.get("track_name"), force=True)
         oled.tick(force=True)
     
@@ -1111,6 +1196,11 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
                             led.set_track_mode(True)
                         if oled:
                             track_status = track_eng.get_status()
+                            oled.set_context(
+                                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                                sd_ok=sm.sd_mounted,
+                                sd_pct=get_storage_used_percent(sm),
+                            )
                             oled.show_track_event(event, track_name=track_status.get("track_name"), sector=(track_status.get("current_sector", 0) + 1))
                 except Exception as e:
                     if loop_count % 100 == 0:
@@ -1138,7 +1228,7 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
         if loop_count % 100 == 0:
             try:
                 # Use calibrated microvolt reading for better accuracy
-                vbat = (vbat_adc.read_uv() / 1000000.0) * 2.0
+                vbat = read_vbatt(vbat_adc)
                 if vbat > 0 and vbat < 3.55:
                     led.set_brightness(0.08)
                 elif vbat > 0 and vbat < 3.70:
@@ -1160,6 +1250,11 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
                         led.play_storage_critical()
                         print(f"[System] STORAGE CRITICAL: {s_info['used_kb']}/{s_info['total_kb']} KB")
                         if oled:
+                            oled.set_context(
+                                battery_pct=calculate_battery_percentage(vbat),
+                                sd_ok=sm.sd_mounted,
+                                sd_pct=get_storage_used_percent(sm),
+                            )
                             oled.show_storage_critical(s_info['used_kb'], s_info['total_kb'])
                     if usage > 0.98 and not stop_logging:
                         stop_logging = True
@@ -1171,6 +1266,11 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
                         flush_write_buf()
                         close_log_file()
                         if oled:
+                            oled.set_context(
+                                battery_pct=calculate_battery_percentage(vbat),
+                                sd_ok=sm.sd_mounted,
+                                sd_pct=get_storage_used_percent(sm),
+                            )
                             oled.show_message("LOG STOP", "Storage hard limit", log_file.split('/')[-1])
                             oled.tick(force=True)
             except:
