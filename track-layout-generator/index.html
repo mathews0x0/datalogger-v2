@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Track Layout Generator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <h1>Track Layout Generator</h1>
+        <p class="subtle">Align telemetry to a layout, place anchors, export canonical track data.</p>
+
+        <section class="panel">
+          <h2>Inputs</h2>
+          <label class="field">
+            <span>Layout Image or SVG</span>
+            <input id="layoutFile" type="file" accept=".png,.jpg,.jpeg,.svg,image/*" />
+            <small id="layoutFileName" class="file-name">No file selected</small>
+          </label>
+          <label class="field">
+            <span>Telemetry CSV</span>
+            <input id="csvFile" type="file" accept=".csv,text/csv" />
+            <small id="csvFileName" class="file-name">No file selected</small>
+          </label>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Min Speed</span>
+              <input id="minSpeed" type="number" step="1" value="20" />
+            </label>
+            <label class="field">
+              <span>Dark Threshold</span>
+              <input id="darkThreshold" type="number" step="1" value="210" />
+            </label>
+          </div>
+          <button id="autoAlignBtn" class="primary">Auto Align</button>
+        </section>
+
+        <section class="panel">
+          <h2>Transform</h2>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Translate X</span>
+              <input id="translateX" type="number" step="1" value="0" />
+            </label>
+            <label class="field">
+              <span>Translate Y</span>
+              <input id="translateY" type="number" step="1" value="0" />
+            </label>
+          </div>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Scale</span>
+              <input id="scale" type="number" step="0.001" value="1" />
+            </label>
+            <label class="field">
+              <span>Rotation Deg</span>
+              <input id="rotationDeg" type="number" step="0.1" value="0" />
+            </label>
+          </div>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Pivot X</span>
+              <input id="pivotX" type="number" step="1" value="0" />
+            </label>
+            <label class="field">
+              <span>Pivot Y</span>
+              <input id="pivotY" type="number" step="1" value="0" />
+            </label>
+          </div>
+          <div class="controls-row">
+            <button id="centerPivotBtn">Center Pivot</button>
+            <button id="resetTransformBtn">Reset Transform</button>
+          </div>
+          <div class="controls-row">
+            <button id="fitViewBtn">Fit View</button>
+            <button id="resetViewBtn">Reset View</button>
+          </div>
+          <label class="toggle">
+            <input id="dragMode" type="checkbox" checked />
+            <span>Drag Layout</span>
+          </label>
+        </section>
+
+        <section class="panel">
+          <h2>Anchors</h2>
+          <label class="toggle">
+            <input id="anchorMode" type="checkbox" />
+            <span>Anchor Mode</span>
+          </label>
+          <div class="controls-row">
+            <button id="undoAnchorBtn">Undo</button>
+            <button id="deleteAnchorBtn">Delete Selected</button>
+          </div>
+          <div class="controls-row">
+            <button id="clearAnchorsBtn">Clear Anchors</button>
+          </div>
+          <div class="field">
+            <span>Anchor Label</span>
+            <input id="anchorLabel" type="text" placeholder="start_finish_crossing_1" />
+          </div>
+          <div class="field">
+            <span>Anchor Type</span>
+            <input id="anchorType" type="text" placeholder="start_finish_crossing" />
+          </div>
+          <ol id="anchorList" class="anchor-list"></ol>
+        </section>
+
+        <section class="panel">
+          <h2>Export</h2>
+          <div class="controls-row">
+            <button id="exportJsonBtn" class="primary">Export JSON</button>
+            <button id="exportSvgBtn">Export SVG</button>
+          </div>
+          <div class="controls-row single-row">
+            <button id="exportPackageBtn">Export Package</button>
+          </div>
+          <pre id="status" class="status">Load a layout and telemetry CSV.</pre>
+        </section>
+      </aside>
+
+      <main class="canvas-wrap">
+        <canvas id="stage" width="1400" height="1000"></canvas>
+      </main>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

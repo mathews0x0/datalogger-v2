@@ -3090,3 +3090,115 @@ The major outcome was not just “OLED support added”, but:
 - preserved logging-first system priorities
 
 **Status:** ✅ Implemented and working on hardware after matching firmware boot to the validated raw controller wake sequence.
+
+---
+
+## 17. Canonical Track Layout Tooling (Implemented)
+
+**Date:** 2026-04-01 → 2026-04-02
+
+### Why This Was Needed
+
+Track outlines existed, and rider telemetry existed, but they were not enough by themselves to create a reusable canonical track reference.
+
+The operational need was:
+
+- align real rider telemetry to a clean track layout
+- preserve that alignment in a stable package
+- support repeated rider-line overlays on the same canonical map
+- avoid rebuilding layout geometry manually for every track or session
+
+PM decision:
+
+> _The system should treat track layout alignment as a first-class authoring workflow, not an ad hoc engineering script._
+
+### Tool Introduced
+
+A new local web app was created at:
+
+- `track-layout-generator/`
+
+This tool supports:
+
+- loading a track layout image or SVG
+- loading telemetry CSV
+- rough auto-alignment from telemetry to layout
+- manual refinement by translation, rotation, scale, and pivot
+- drag-based layout movement
+- zoom / pan workspace controls
+- anchor placement and labeling
+- export of canonical track metadata
+
+### Core Product Decision
+
+PM clarified that the canonical output should not be “just an image”.
+
+The correct artifact is a canonical package containing:
+
+- the layout asset
+- the canonical transform
+- optional semantic anchors
+- geo-reference basis from telemetry
+- sampled aligned GPS reference points
+
+This allows later rider sessions to be mapped into the same canonical track space without repeating full manual alignment.
+
+### Canonical Package Structure
+
+The package format was expanded to include:
+
+- embedded layout asset
+- telemetry auto-align metadata
+- final manual layout transform
+- optional anchors
+- geo-reference basis:
+  - `lat0`
+  - `lon0`
+  - `metersPerDegLat`
+  - `metersPerDegLon`
+- sampled aligned GPS references (`~75` points)
+
+This was the key PM shift:
+
+> _A canonical track package must be strong enough to support future sessions, not just reproduce one overlay._
+
+### Anchor Point Clarification
+
+PM clarified that anchor points are optional for phase-one canonicalization.
+
+They are useful for:
+
+- start / finish
+- pit entry / exit
+- sector boundaries
+- named turn references
+
+But they are not required just to render aligned rider lines.
+
+Decision:
+
+- canonical layout + transform is sufficient for baseline use
+- anchors are additive semantics, not a hard dependency
+
+### Asset Decision
+
+SVG was confirmed as the preferred canonical layout asset when clean enough, because it is:
+
+- scalable
+- stylable
+- suitable for overlays and future semantic decoration
+
+PNG remains acceptable as fallback, but SVG is the preferred long-term canonical asset.
+
+### Outcome
+
+The project now has an explicit authoring path for canonical track generation.
+
+That means:
+
+- track alignment is no longer a one-off experiment
+- canonical layouts can be created intentionally
+- future rider telemetry can be mapped onto stable track references
+- RaceSense admin upload can rely on a reusable package instead of manual memory
+
+**Status:** ✅ Implemented as a local authoring tool with canonical package export.
