@@ -106,6 +106,65 @@ class TrackMeta(db.Model):
     folder_name = db.Column(db.String(255))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class GlobalTrack(db.Model):
+    __tablename__ = 'global_tracks'
+    id = db.Column(db.Integer, primary_key=True)
+    track_id = db.Column(db.Integer, unique=True, nullable=False)
+    slug = db.Column(db.String(255), unique=True, nullable=False)
+    track_name = db.Column(db.String(255), nullable=False)
+    folder_name = db.Column(db.String(255), nullable=False)
+    package_version = db.Column(db.Integer, nullable=True)
+    layout_width = db.Column(db.Integer, nullable=True)
+    layout_height = db.Column(db.Integer, nullable=True)
+    has_canonical_layout = db.Column(db.Boolean, default=True)
+    match_metadata = db.Column(db.Text, nullable=True)
+    location = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "track_id": self.track_id,
+            "slug": self.slug,
+            "track_name": self.track_name,
+            "folder_name": self.folder_name,
+            "package_version": self.package_version,
+            "layout_width": self.layout_width,
+            "layout_height": self.layout_height,
+            "has_canonical_layout": self.has_canonical_layout,
+            "location": self.location,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+class UnmatchedTrackReport(db.Model):
+    __tablename__ = 'unmatched_track_reports'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    session_id = db.Column(db.String(100), nullable=False)
+    fallback_track_id = db.Column(db.Integer, nullable=False)
+    fallback_track_name = db.Column(db.String(255), nullable=False)
+    resolved_global_track_id = db.Column(db.Integer, nullable=True)
+    status = db.Column(db.String(20), default='open', nullable=False)
+    payload = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        import json
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "session_id": self.session_id,
+            "fallback_track_id": self.fallback_track_id,
+            "fallback_track_name": self.fallback_track_name,
+            "resolved_global_track_id": self.resolved_global_track_id,
+            "status": self.status,
+            "payload": json.loads(self.payload) if self.payload else None,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
 class TrackDayMeta(db.Model):
     __tablename__ = 'trackdays'
     id = db.Column(db.Integer, primary_key=True)

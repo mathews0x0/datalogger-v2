@@ -69,6 +69,16 @@ class TrackManager:
             print(f"Warning: Could not load track database from {path}")
             return []
 
+    @staticmethod
+    def _start_line_target(track: Dict):
+        sl = track.get("start_line") or {}
+        if "lat" in sl and "lon" in sl:
+            return sl.get("lat"), sl.get("lon"), sl.get("radius_m", 20.0)
+        center = sl.get("center") or {}
+        if "lat" in center and "lon" in center:
+            return center.get("lat"), center.get("lon"), sl.get("radius_m", 20.0)
+        return None, None, None
+
     def identify_track(self, session: Session) -> Optional[Dict]:
         """
         Identify which track this session belongs to.
@@ -76,13 +86,10 @@ class TrackManager:
         Strategy: Check if any sample is within start line radius of known tracks.
         """
         for track in self.tracks:
-            sl = track.get("start_line")
-            if not sl:
+            target_lat, target_lon, radius_m = self._start_line_target(track)
+            if target_lat is None or target_lon is None:
                 continue
-                
-            radius_km = sl.get("radius_m", 20.0) / 1000.0
-            target_lat = sl["lat"]
-            target_lon = sl["lon"]
+            radius_km = radius_m / 1000.0
             
             # Check samples
             for sample in session.samples:
@@ -97,12 +104,10 @@ class TrackManager:
         Identify track from a single GPS point (Real-time).
         """
         for track in self.tracks:
-            sl = track.get("start_line")
-            if not sl: continue
-                
-            radius_km = sl.get("radius_m", 20.0) / 1000.0
-            target_lat = sl["lat"]
-            target_lon = sl["lon"]
+            target_lat, target_lon, radius_m = self._start_line_target(track)
+            if target_lat is None or target_lon is None:
+                continue
+            radius_km = radius_m / 1000.0
             
             dist = haversine_distance(lat, lon, target_lat, target_lon)
             if dist < radius_km:

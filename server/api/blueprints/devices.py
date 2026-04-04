@@ -9,6 +9,7 @@ from api.models import db, User, DeviceToken
 import api.config as config
 import json
 from api.auth_utils import get_current_user_id
+from api.track_catalog import get_user_track_stats_dir, load_json_file, resolve_track, track_file_path
 
 devices_bp = Blueprint('devices', __name__)
 
@@ -178,37 +179,32 @@ def get_device_active_track():
         
         user = User.query.get(user_id)
         if user and user.active_track_id:
-            from api.helpers import get_track_folder
-            
-            folder_name = get_track_folder(user.active_track_id, user_id=user_id)
-            if folder_name:
-                track_dir = config.get_user_tracks_dir(user_id)
-                track_json_path = track_dir / folder_name / "track.json"
-                tbl_json_path = track_dir / folder_name / "tbl.json"
-                
+            resolved = resolve_track(user.active_track_id, user_id=user_id)
+            if resolved:
+                track_json_path = track_file_path(resolved, "track.json")
                 track_data = {}
                 if track_json_path.exists():
                     try:
-                        with open(track_json_path, 'r') as f:
-                            track_data = json.load(f)
-                    except: pass
-                    
+                        track_data = load_json_file(track_json_path)
+                    except Exception:
+                        track_data = {}
+
+                if resolved["track_scope"] == "global":
+                    tbl_json_path = get_user_track_stats_dir(user_id, user.active_track_id, resolved["track_name"]) / "tbl.json"
+                else:
+                    tbl_json_path = track_file_path(resolved, "tbl.json")
+
                 if tbl_json_path.exists():
                     try:
-                        with open(tbl_json_path, 'r') as f:
-                            raw_tbl = json.load(f)
-                            
-                        # Format TBL for ESP32 (List of floats for sectors)
-                        # TrackEngine.py expects: tbl['sectors'] = [time1, time2, ...]
+                        raw_tbl = load_json_file(tbl_json_path)
                         sectors_data = raw_tbl.get('sectors', [])
                         if isinstance(sectors_data, list):
-                            # Sort by index to ensure correct order
                             sorted_sectors = sorted(sectors_data, key=lambda x: x.get('sector_index', 0))
                             sectors_list = [s.get('best_time') for s in sorted_sectors]
                             track_data['tbl'] = {"sectors": sectors_list}
                     except Exception as e:
                         print(f"[active_track] TBL extraction error: {e}")
-                
+
                 if track_data:
                     response_data["active_track"] = track_data
                     

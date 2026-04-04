@@ -76,6 +76,11 @@ class SessionExporter:
             "track": {
                 "track_id": track_info.get("track_id", 0),
                 "track_name": track_info.get("track_name", "Unknown Track"),
+                "track_scope": track_info.get("track_scope", "user_fallback"),
+                "track_source": track_info.get("track_source", "session_generated"),
+                "has_canonical_layout": bool(track_info.get("has_canonical_layout")),
+                "package_version": track_info.get("package_version"),
+                "folder_name": track_info.get("folder_name"),
                 "sector_count": len(track_info.get("sectors", [])),
                 "sector_definition_source": {
                      "fastest_lap_session_id": track_info.get("start_line", {}).get("source_session", None),

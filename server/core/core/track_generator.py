@@ -145,8 +145,14 @@ class TrackGenerator:
 
         # 7. Build Track Dict
         track_data = {
+            "id": track_id,
             "track_id": track_id,
+            "name": track_name,
             "track_name": track_name,
+            "track_scope": "user_fallback",
+            "track_source": "session_generated",
+            "has_canonical_layout": False,
+            "folder_name": folder_name,
             "start_line": {
                 "lat": start_lat,
                 "lon": start_lon,
@@ -358,4 +364,3 @@ class TrackGenerator:
             indices.append(closest_idx)
             
         return sectors, indices
-

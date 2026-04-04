@@ -4,7 +4,7 @@ from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_req
 import os
 import json
 
-from api.models import db, User, SessionMeta, TrackMeta, TrackDayMeta, TeamMember
+from api.models import db, User, SessionMeta, TrackMeta, TrackDayMeta, TeamMember, GlobalTrack
 import api.config as config
 from api.helpers import robust_get_json
 from api.blueprints.sessions import load_trackdays
@@ -230,6 +230,8 @@ def compare_laps():
         return {
             "lap_info": lap,
             "telemetry": lap_telemetry,
+            "track_id": s_meta.track_id,
+            "track_scope": "global" if s_meta.track_id and GlobalTrack.query.filter_by(track_id=s_meta.track_id).first() else "user_fallback",
             "user_name": User.query.get(s_meta.user_id).name or f"User {s_meta.user_id}",
             "session_name": s_meta.session_name
         }, None
@@ -311,4 +313,3 @@ def compare_laps():
 # ============================================================================
 # API ROUTES
 # ============================================================================
-

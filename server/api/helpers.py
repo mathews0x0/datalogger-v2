@@ -4,7 +4,7 @@ import json
 import sys
 
 import api.config as config
-from api.models import db, TrackMeta, SessionMeta
+from api.models import db, TrackMeta, SessionMeta, GlobalTrack, UnmatchedTrackReport
 
 MIN_ESP_VERSION = "0.0.0"
 FIRMWARE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../firmware'))
@@ -54,7 +54,10 @@ def get_track_folder(track_id, user_id=None):
     if user_id:
         query = query.filter_by(user_id=user_id)
     track = query.first()
-    return track.folder_name if track else None
+    if track:
+        return track.folder_name
+    global_track = GlobalTrack.query.filter_by(track_id=track_id).first()
+    return global_track.folder_name if global_track else None
 
 def robust_get_json(url, timeout=3.0):
     """
@@ -102,29 +105,31 @@ def register_new_sessions(user_id):
                     
                     # 1. Ensure track is registered for THIS user
                     track_id = data.get('track', {}).get('track_id')
+                    track_scope = data.get('track', {}).get('track_scope') or 'user_fallback'
                     if track_id:
-                        track_meta = TrackMeta.query.filter_by(track_id=track_id, user_id=user_id).first()
-                        if not track_meta:
-                            print(f"    Registering missing track {track_id} for user {user_id}")
-                            track_meta = TrackMeta(
-                                track_id=track_id,
-                                user_id=user_id,
-                                track_name=data.get('track', {}).get('track_name') or f"Track {track_id}",
-                                folder_name=data.get('track', {}).get('folder_name') or f"track_{track_id}"
-                            )
-                            db.session.add(track_meta)
-                            db.session.commit() # Commit track before session
-                        else:
-                            # Sync: ensure session JSON uses the DB's authoritative track name
-                            json_track_name = data.get('track', {}).get('track_name')
-                            if json_track_name and json_track_name != track_meta.track_name:
-                                print(f"    Syncing track name for {track_id}: '{json_track_name}' -> '{track_meta.track_name}'")
-                                data['track']['track_name'] = track_meta.track_name
-                                try:
-                                    with open(sessions_dir / filename, 'w') as fw:
-                                        json.dump(data, fw, indent=2)
-                                except Exception as write_err:
-                                    print(f"    Failed to sync track name to session JSON: {write_err}")
+                        if track_scope == 'user_fallback':
+                            track_meta = TrackMeta.query.filter_by(track_id=track_id, user_id=user_id).first()
+                            if not track_meta:
+                                print(f"    Registering missing track {track_id} for user {user_id}")
+                                track_meta = TrackMeta(
+                                    track_id=track_id,
+                                    user_id=user_id,
+                                    track_name=data.get('track', {}).get('track_name') or f"Track {track_id}",
+                                    folder_name=data.get('track', {}).get('folder_name') or f"track_{track_id}"
+                                )
+                                db.session.add(track_meta)
+                                db.session.commit() # Commit track before session
+                            else:
+                                # Sync: ensure session JSON uses the DB's authoritative track name
+                                json_track_name = data.get('track', {}).get('track_name')
+                                if json_track_name and json_track_name != track_meta.track_name:
+                                    print(f"    Syncing track name for {track_id}: '{json_track_name}' -> '{track_meta.track_name}'")
+                                    data['track']['track_name'] = track_meta.track_name
+                                    try:
+                                        with open(sessions_dir / filename, 'w') as fw:
+                                            json.dump(data, fw, indent=2)
+                                    except Exception as write_err:
+                                        print(f"    Failed to sync track name to session JSON: {write_err}")
 
                     # 2. Register session if missing for this user
                     existing = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
@@ -142,6 +147,27 @@ def register_new_sessions(user_id):
                         )
                         db.session.add(sm)
                         new_found = True
+
+                        if track_id and track_scope == 'user_fallback':
+                            existing_report = UnmatchedTrackReport.query.filter_by(
+                                user_id=user_id,
+                                fallback_track_id=track_id,
+                                status='open'
+                            ).first()
+                            if not existing_report:
+                                report_payload = {
+                                    "track": data.get('track', {}),
+                                    "references": data.get('references', {}),
+                                    "source_file": data.get('meta', {}).get('source_file'),
+                                }
+                                db.session.add(UnmatchedTrackReport(
+                                    user_id=user_id,
+                                    session_id=session_id,
+                                    fallback_track_id=track_id,
+                                    fallback_track_name=data.get('track', {}).get('track_name') or f"Track {track_id}",
+                                    status='open',
+                                    payload=json.dumps(report_payload)
+                                ))
             except Exception as e:
                 print(f"Failed to auto-register session {filename}: {e}")
     

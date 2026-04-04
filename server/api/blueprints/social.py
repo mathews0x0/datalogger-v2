@@ -7,6 +7,7 @@ import json
 from api.models import db, User, TrackMeta, SessionMeta, Follow
 import api.config as config
 from sqlalchemy.orm import aliased
+from api.track_catalog import get_track_display_name
 
 social_bp = Blueprint('social', __name__)
 
@@ -89,7 +90,6 @@ def get_following_feed():
     
     feed = []
     for s in sessions_meta:
-        track = TrackMeta.query.filter_by(track_id=s.track_id).first()
         owner = User.query.get(s.user_id)
         
         feed.append({
@@ -98,7 +98,7 @@ def get_following_feed():
             'start_time': s.start_time,
             'duration_sec': s.duration_sec,
             'track_id': s.track_id,
-            'track_name': track.track_name if track else 'Unknown',
+            'track_name': get_track_display_name(s.track_id, user_id=s.user_id),
             'total_laps': s.total_laps,
             'best_lap_time': s.best_lap_time,
             'owner_name': owner.name if owner else "Unknown",
@@ -172,4 +172,3 @@ def get_user_stats(user_id):
 # ============================================================================
 # TEAM ENDPOINTS
 # ============================================================================
-

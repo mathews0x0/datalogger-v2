@@ -797,6 +797,32 @@
           </div>
         </div>
 
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <h3 style="margin-top: 0;">Central Track Packages</h3>
+          <div style="display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 1rem; align-items: start;">
+            <div>
+              <input type="text" id="adminTrackNameInput" class="filter-select" placeholder="Track name" style="margin-bottom: 0.5rem; width: 100%;">
+              <input type="text" id="adminTrackSlugInput" class="filter-select" placeholder="Optional slug" style="margin-bottom: 0.5rem; width: 100%;">
+              <input type="file" id="adminTrackPackageFile" accept="application/json,.json" class="filter-select" style="margin-bottom: 0.75rem; width: 100%;">
+              <button onclick="uploadAdminTrackPackage()" class="btn btn-primary btn-sm">Upload Track Package</button>
+              <p class="help-text" style="margin-top: 0.75rem;">Upload the canonical package JSON. Shared tracks become visible to all users immediately.</p>
+            </div>
+            <div id="adminTracksList" class="tracks-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+              <div class="loading">Loading global tracks...</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; margin-bottom:0.75rem;">
+            <h3 style="margin:0;">Unmatched Track Review Queue</h3>
+            <button onclick="loadAdminTrackData()" class="btn btn-sm">Refresh</button>
+          </div>
+          <div id="adminUnmatchedTracks">
+            <div class="loading">Loading unmatched tracks...</div>
+          </div>
+        </div>
+
         <!-- Admin Toolbar -->
         <div class="filter-bar" style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap;">
           <div style="flex: 2; min-width: 200px; position: relative;">

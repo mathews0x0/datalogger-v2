@@ -21,3 +21,12 @@ This document tracks high-priority technical tasks and architectural improvement
 - [ ] **Global Race Visualization (Multi-Rider)**
     - **Concept**: Calculate and render precise movement for all concurrent riders on a track using the synchronized absolute `gps_epoch` timestamps.
     - **Execution**: If users are running RaceSense simultaneously and share their sessions publicly, display a live/replay "Race View" where users are accurately shown chasing each other corner-by-corner.
+
+## 🗺️ Canonical Track System
+- [ ] **Persist Session-to-Package Alignment Server-Side**
+    - **Current Issue**: Shared canonical layouts now render in lap detail, comparison, and playback, but the final small rotation/translation correction is still computed client-side from sampled GPS points.
+    - **Proposed Fix**: Persist a per-session canonical correction artifact during analysis so all views use the same deterministic alignment and the browser does not need to estimate a corrective transform at render time.
+
+- [ ] **Admin Tooling for Shared Track Lifecycle**
+    - **Current Issue**: Shared master track upload and guarded delete exist, but there is no richer admin workflow for reviewing package quality, alignment confidence, or replacing an existing package version with explicit migration visibility.
+    - **Proposed Fix**: Add package validation diagnostics, alignment confidence previews, and a first-class “replace package version” flow.

@@ -68,18 +68,19 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 ### 🏁 Tracks & Circuits
 | Feature | Description | Frontend Files | Backend Files | Models |
 | :--- | :--- | :--- | :--- | :--- |
-| **Track List** | Global registry + User-specific tracks ridden. | `server/ui/app.js` (tracksView) | `server/api/blueprints/tracks.py` | `TrackMeta` |
-| **Sectors** | Define split points. Auto-detection of known tracks (MMRT, Kari, etc.). | `server/ui/app.js` (trackDetail) | `src/analysis/core/track_manager.py` | Track JSONs |
-| **Active Track** | Push current track metadata to the RS-Core for live timing. | `server/ui/app.js` (setActive) | `server/api/blueprints/devices.py` (ensureTrackSynced) | N/A |
+| **Track List** | User sees private fallback tracks plus only the shared master tracks they have actually matched a session against. | `server/ui/app.js` (tracksView) | `server/api/blueprints/tracks.py` | `TrackMeta`, `GlobalTrack` |
+| **Master Track Packages** | Admin uploads canonical track packages containing SVG layout, geo-reference, sampled GPS anchors, and transform metadata. | `server/ui/app.js` (adminView) | `server/api/blueprints/admin.py`, `server/api/track_catalog.py` | `GlobalTrack` |
+| **Sectors** | Shared master tracks are initialized with 7 sectors from the uploaded package start/finish basis; fallback tracks retain existing behavior. | `server/ui/app.js` (trackDetail) | `server/api/track_catalog.py`, `src/analysis/core/track_manager.py` | Track JSONs |
+| **Active Track** | Push current track metadata to the RS-Core for live timing. For shared master tracks, firmware receives the canonical track definition plus user-specific TBL overlay. | `server/ui/app.js` (setActive) | `server/api/blueprints/devices.py` (ensureTrackSynced) | N/A |
 | **Pit Lane** | Mark entry/exit to filter sessions for "Clean" track time only. | `server/ui/app.js` (markPitLane) | `server/api/blueprints/tracks.py` | JSON metadata |
 
 ### ⏱️ Sessions & Analysis
 | Feature | Description | Frontend Files | Backend Files | Models |
 | :--- | :--- | :--- | :--- | :--- |
 | **Lap Table** | Detailed lap times with **Standard Deviation (Consistency)** scoring. | `server/ui/app.js` (viewSession) | `server/api/blueprints/sessions.py` | `SessionMeta` |
-| **Ghost Lap™** | **Distance-based** telemetry alignment for frame-accurate comparison. | `server/ui/app.js` (showComparison) | `server/api/blueprints/leaderboards.py` (/api/compare) | N/A |
-| **Lap Detail** | Dual Maps: **Dynamics (G-Force Halo)** and **Speed Profile**. | `server/ui/app.js` (viewLapDetail) | `server/api/blueprints/sessions.py` | JSON Telemetry |
-| **Playback** | Interactive 2D Map Replay using **Leaflet** and **Synced Charts**. | `server/ui/app.js` (openPlayback) | N/A (UI only) | CSV / JSON |
+| **Ghost Lap™** | **Distance-based** telemetry alignment for frame-accurate comparison. For matched master tracks, both laps are projected onto the canonical package layout first. | `server/ui/app.js` (showComparison) | `server/api/blueprints/leaderboards.py` (/api/compare) | N/A |
+| **Lap Detail** | Dual Maps: **Dynamics (G-Force Halo)** and **Speed Profile**. Matched master tracks use canonical SVG layout with projected GPS overlays. | `server/ui/app.js` (viewLapDetail) | `server/api/blueprints/sessions.py` | JSON Telemetry |
+| **Playback** | Interactive 2D replay. Legacy fallback tracks still use raw GPS bounds; matched master tracks now use canonical SVG layout with projected telemetry overlays. | `server/ui/app.js` (openPlayback) | `server/api/blueprints/sessions.py` | CSV / JSON |
 | **Session Health** | GPS quality summary (fix dropouts), Track Temp, and IMU confidence. | `server/ui/app.js` (sectionContext)| `server/api/blueprints/sessions.py` | Analysis Result |
 | **Coach Corner** | Text/Voice notes anchored to specific laps or sectors. | `server/ui/app.js` (annotations) | `server/api/blueprints/annotations.py`| `Annotation` |
 
@@ -117,6 +118,12 @@ Data is stored in a per-user silo:
   - `trackdays.json`: Trackday groupings for that user.
   - `learning/`: Raw CSV logs before rotation to archives.
 
+Important current-state clarification:
+- Shared master tracks are **not** stored in user silos.
+- Canonical package assets live in `server/data/tracks/<slug>/`.
+- User silos still hold user-specific artifacts for the matched track, especially TBL and active-track overlays.
+- Session JSON is normalized at read time so older sessions can still resolve to a newly matched shared master track.
+
 ### 2. The Analysis Pipeline
 - **Job Creation**: `POST /api/process` creates a `Job` row (status: `queued`).
 - **Worker**: `worker.py` polls for jobs, spawns `run_analysis.py` as a subprocess.
@@ -126,7 +133,37 @@ Data is stored in a per-user silo:
   - `LapDetector`: Uses `StartLine` (lat/lon) and `distance_to_segment` logic.
   - `Comparator`: Interpolates two telemetry streams based on **Distance** (using cumulative sum of `speed * dt`) to calculate deltas.
 
-### 3. Identity & Permissions
+Track-resolution layering as of the canonical package rollout:
+- First attempt to identify a **shared global track** using start/finish proximity.
+- Then validate that candidate against the uploaded package metadata and sampled GPS anchor basis.
+- If accepted, mark the session as `track_scope=global` and `track_source=global_package`.
+- If no shared track matches, fall back to the existing per-user track generation path.
+- Fallback generation also creates an admin review signal so a missing shared master track can be uploaded later.
+
+### 3. Canonical Track Package System
+- **Authoring Tool**: `track-layout-generator/` is a static local app used to align layout artwork to telemetry and export canonical package JSON.
+- **Launcher**: `./track-generator.sh` starts that authoring tool on port `8080` by default.
+- **Package Contents**:
+  - embedded layout SVG
+  - geo-reference basis
+  - manual transform metadata
+  - semantic anchors such as start/finish or pit markers
+  - sampled GPS anchor points mapped into canonical layout space
+- **Admin Flow**:
+  - upload package in Admin
+  - package becomes a `GlobalTrack`
+  - shared layout is visible to a user only after one of their sessions resolves to that track
+- **Rendering Rule**:
+  - `global_package` track source => canonical layout everywhere possible
+  - `user_fallback` track source => legacy geometry/GPS rendering
+
+### 4. Current Known Gap
+- The canonical package pipeline is implemented end-to-end, but overlay alignment is still being tuned.
+- Package anchor fit is in place and session reads now resolve to canonical layouts correctly.
+- A client-side corrective pass currently refines session overlay rotation/translation against the package’s sampled GPS cloud.
+- The remaining likely follow-up is to move that final correction into a durable server-side alignment artifact rather than recalculating it in the browser.
+
+### 5. Identity & Permissions
 - **JWT**: Identity stored as `user_id` string in the token.
 - **Team Access**: Coaches and Owners can bypass `is_public` checks for their members' sessions (implemented in `leaderboards.py` and `sessions.py`).
 - **Subscription Tiers**: Enforced via `@require_tier` decorator in the backend and `user.subscription_tier` in the frontend UI.

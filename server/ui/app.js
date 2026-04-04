@@ -37,6 +37,8 @@ let trackSearchQuery = localStorage.getItem('ui:tracksSearch') || '';
 let sessionSearchQuery = localStorage.getItem('ui:sessionSearch') || '';
 let communitySearchQuery = localStorage.getItem('ui:communitySearch') || '';
 let adminUsersData = [];
+let adminTracksData = [];
+let adminUnmatchedTracks = [];
 let adminCurrentPage = 1;
 let adminPerPage = 50;
 let deviceTokensCache = [];
@@ -260,6 +262,7 @@ function showView(viewName) {
                 break;
             case 'admin':
                 loadAdminUsers();
+                loadAdminTrackData();
                 break;
             case 'process':
                 loadLearningFiles();
@@ -2414,6 +2417,7 @@ function renderTracksGrid(trackList) {
 
     container.innerHTML = filteredTracks.map(track => {
         const isActive = activeTrackId == track.track_id;
+        const isGlobal = track.track_scope === 'global';
         return `
         <div class="track-card ${isActive ? 'active' : ''}" onclick="viewTrack(${track.track_id})">
             <img src="${API_BASE}/api/tracks/${track.track_id}/map" 
@@ -2426,25 +2430,224 @@ function renderTracksGrid(trackList) {
                     ${isActive ? '<span class="badge success compact-badge">ACTIVE</span>' : ''}
                 </div>
                 <div class="track-meta">
+                    <span><i class="fas fa-database"></i> ${isGlobal ? 'Shared Track' : 'Private Fallback'}</span>
                     <span><i class="fas fa-history"></i> ${track.sessions_count || 0} sessions</span>
-                    <span><i class="fas fa-vector-square"></i> 7 sectors</span>
+                    <span><i class="fas fa-vector-square"></i> ${isGlobal ? 'Canonical layout' : 'Session geometry'}</span>
                 </div>
                 <div class="track-actions">
                     ${!isActive ? `
                     <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); setActiveTrack(${track.track_id})">
                         <i class="fas fa-bolt"></i> Set Active
                     </button>` : ''}
+                    ${isGlobal ? '' : `
                     <button class="btn small" onclick="event.stopPropagation(); renameTrack(${track.track_id}, '${track.track_name}')">
                         <i class="fas fa-edit"></i>
                     </button>
                     <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteTrack(${track.track_id}, '${track.track_name}')">
                         <i class="fas fa-trash"></i>
-                    </button>
+                    </button>`}
                 </div>
             </div>
         </div>
         `;
     }).join('');
+}
+
+function projectTelemetryToCanonicalRaw(layout, telemetry) {
+    if (!layout || !telemetry || !telemetry.lats || !telemetry.lons) return [];
+    const ref = layout.geo_reference;
+    const align = layout.auto_align;
+    if (!ref) return [];
+    const affineFit = layout.affine_fit;
+
+    return telemetry.lats.map((lat, index) => {
+        const lon = telemetry.lons[index];
+        const localX = (lon - ref.lon0) * ref.metersPerDegLon;
+        const localY = (ref.lat0 - lat) * ref.metersPerDegLat;
+        if (affineFit?.x_coeffs?.length === 3 && affineFit?.y_coeffs?.length === 3) {
+            return {
+                x: affineFit.x_coeffs[0] * localX + affineFit.x_coeffs[1] * localY + affineFit.x_coeffs[2],
+                y: affineFit.y_coeffs[0] * localX + affineFit.y_coeffs[1] * localY + affineFit.y_coeffs[2],
+            };
+        }
+        if (!align) return { x: localX, y: localY };
+        const theta = (align.rotationDeg || 0) * Math.PI / 180;
+        const cosT = Math.cos(theta);
+        const sinT = Math.sin(theta);
+        const scale = align.scale || 1;
+        const rotX = localX * cosT - localY * sinT;
+        const rotY = localX * sinT + localY * cosT;
+        return {
+            x: rotX * scale + align.translateX,
+            y: rotY * scale + align.translateY,
+        };
+    });
+}
+
+function rotatePointAround(point, center, angleRad) {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    const cosA = Math.cos(angleRad);
+    const sinA = Math.sin(angleRad);
+    return {
+        x: center.x + dx * cosA - dy * sinA,
+        y: center.y + dx * sinA + dy * cosA,
+    };
+}
+
+function nearestPointDistance(point, cloud) {
+    let best = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < cloud.length; i += 1) {
+        const dx = point.x - cloud[i].x;
+        const dy = point.y - cloud[i].y;
+        const dist = dx * dx + dy * dy;
+        if (dist < best) best = dist;
+    }
+    return best;
+}
+
+function estimateCanonicalCorrection(layout, projectedPoints) {
+    const template = (layout?.sampled_points || [])
+        .map(point => point?.canonical)
+        .filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (template.length < 12 || projectedPoints.length < 12) return null;
+
+    const sampleStep = Math.max(1, Math.floor(projectedPoints.length / 240));
+    const samples = projectedPoints.filter((_, index) => index % sampleStep === 0);
+    const templateCenter = template.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+    templateCenter.x /= template.length;
+    templateCenter.y /= template.length;
+
+    const sampleCenter = samples.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+    sampleCenter.x /= samples.length;
+    sampleCenter.y /= samples.length;
+
+    let best = {
+        angle: 0,
+        tx: templateCenter.x - sampleCenter.x,
+        ty: templateCenter.y - sampleCenter.y,
+        error: Number.POSITIVE_INFINITY,
+    };
+
+    const evaluate = (angleDeg, tx, ty) => {
+        const angleRad = angleDeg * Math.PI / 180;
+        let error = 0;
+        for (let i = 0; i < samples.length; i += 1) {
+            const rotated = rotatePointAround(samples[i], sampleCenter, angleRad);
+            const adjusted = { x: rotated.x + tx, y: rotated.y + ty };
+            error += nearestPointDistance(adjusted, template);
+        }
+        return error / samples.length;
+    };
+
+    const pass = (angleRange, angleStep, shiftRange, shiftStep, seed) => {
+        let localBest = seed;
+        for (let angle = seed.angle - angleRange; angle <= seed.angle + angleRange; angle += angleStep) {
+            for (let tx = seed.tx - shiftRange; tx <= seed.tx + shiftRange; tx += shiftStep) {
+                for (let ty = seed.ty - shiftRange; ty <= seed.ty + shiftRange; ty += shiftStep) {
+                    const error = evaluate(angle, tx, ty);
+                    if (error < localBest.error) {
+                        localBest = { angle, tx, ty, error };
+                    }
+                }
+            }
+        }
+        return localBest;
+    };
+
+    best = pass(8, 1, 90, 15, best);
+    best = pass(1.5, 0.25, 18, 3, best);
+
+    return best;
+}
+
+function applyCanonicalCorrection(points, correction) {
+    if (!correction) return points;
+    const center = points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+    center.x /= points.length || 1;
+    center.y /= points.length || 1;
+    const angleRad = correction.angle * Math.PI / 180;
+    return points.map(point => {
+        const rotated = rotatePointAround(point, center, angleRad);
+        return {
+            x: rotated.x + correction.tx,
+            y: rotated.y + correction.ty,
+        };
+    });
+}
+
+function projectTelemetryToCanonical(layout, telemetry) {
+    const projected = projectTelemetryToCanonicalRaw(layout, telemetry);
+    if (!projected.length) return projected;
+    const correction = estimateCanonicalCorrection(layout, projected);
+    return applyCanonicalCorrection(projected, correction);
+}
+
+function generateCanonicalTrackSVG(layout, telemetry = null, options = {}) {
+    const baseSvg = layout?.preview_svg_data_url || layout?.svg_data_url;
+    if (!layout || !baseSvg) {
+        return '<p class="help-text">Canonical layout unavailable</p>';
+    }
+
+    const width = layout.layout_width || 1200;
+    const height = layout.layout_height || 800;
+    const points = telemetry ? projectTelemetryToCanonical(layout, telemetry) : [];
+    const pathData = points.length
+        ? `M ${points.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}`
+        : '';
+    const stroke = options.stroke || '#c85b12';
+    const strokeWidth = options.strokeWidth || 8;
+
+    return `
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:${options.compact ? '0.5rem' : '1rem'}; margin:${options.title ? '1rem 0' : '0'};">
+            ${options.title ? `<h3 style="margin:0 0 1rem 0;">${options.title}</h3>` : ''}
+            <svg viewBox="0 0 ${width} ${height}" style="width:100%; height:auto; max-height:${options.maxHeight || 520}px;">
+                <image href="${baseSvg}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image>
+                ${pathData ? `<path d="${pathData}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"></path>` : ''}
+                ${points.length ? `<circle cx="${points[0].x}" cy="${points[0].y}" r="${Math.max(5, strokeWidth * 0.75)}" fill="#4CAF50" stroke="#111" stroke-width="2"></circle>` : ''}
+            </svg>
+        </div>
+    `;
+}
+
+function telemetryToSimpleArrays(telemetry) {
+    if (!telemetry) return null;
+    if (Array.isArray(telemetry)) {
+        return {
+            lats: telemetry.map(point => point.lat),
+            lons: telemetry.map(point => point.lon),
+            speeds: telemetry.map(point => point.speed),
+            times: telemetry.map(point => point.time)
+        };
+    }
+    return {
+        lats: telemetry.lat || telemetry.lats || [],
+        lons: telemetry.lon || telemetry.lons || [],
+        speeds: telemetry.speed || telemetry.speeds || [],
+        times: telemetry.time || telemetry.times || []
+    };
+}
+
+function generateCanonicalComparisonSVG(layout, telemetryA, telemetryB, options = {}) {
+    const baseSvg = layout?.preview_svg_data_url || layout?.svg_data_url;
+    if (!layout || !baseSvg) return '<p class="help-text">Canonical layout unavailable</p>';
+
+    const width = layout.layout_width || 1200;
+    const height = layout.layout_height || 800;
+    const first = projectTelemetryToCanonical(layout, telemetryToSimpleArrays(telemetryA));
+    const second = projectTelemetryToCanonical(layout, telemetryToSimpleArrays(telemetryB));
+    const pathA = first.length ? `M ${first.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}` : '';
+    const pathB = second.length ? `M ${second.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}` : '';
+
+    return `
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:${options.compact ? '0.5rem' : '1rem'};">
+            <svg viewBox="0 0 ${width} ${height}" style="width:100%; height:auto; max-height:${options.maxHeight || 520}px;">
+                <image href="${baseSvg}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image>
+                ${pathA ? `<path d="${pathA}" fill="none" stroke="#4CAF50" stroke-width="${options.strokeWidth || 10}" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"></path>` : ''}
+                ${pathB ? `<path d="${pathB}" fill="none" stroke="#F44336" stroke-width="${options.strokeWidth || 10}" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"></path>` : ''}
+            </svg>
+        </div>
+    `;
 }
 
 /**
@@ -2480,14 +2683,26 @@ async function viewTrack(trackId) {
         const track = await apiCall(`/api/tracks/${trackId}`);
 
         let mapDisplay = '';
-        try {
-            const geometry = await apiCall(`/api/tracks/${trackId}/geometry`, { displayError: false });
-            mapDisplay = generateTrackMapSVG(geometry, null, null, { title: '' });
-        } catch (e) {
-            mapDisplay = `<img src="${API_BASE}/api/tracks/${trackId}/map" 
-                 alt="${track.track_name}" 
-                 style="width: 100%; max-width: 600px; border-radius: 8px; margin: 1rem 0;"
-                 onerror="this.style.display='none'">`;
+        if (track.track_scope === 'global' && track.has_canonical_layout) {
+            try {
+                const layout = await apiCall(`/api/tracks/${trackId}/layout`, { displayError: false });
+                mapDisplay = generateCanonicalTrackSVG(layout, null, { maxHeight: 640 });
+            } catch (e) {
+                mapDisplay = `<img src="${API_BASE}/api/tracks/${trackId}/map" 
+                    alt="${track.track_name}" 
+                    style="width: 100%; max-width: 800px; border-radius: 8px; margin: 1rem 0;"
+                    onerror="this.style.display='none'">`;
+            }
+        } else {
+            try {
+                const geometry = await apiCall(`/api/tracks/${trackId}/geometry`, { displayError: false });
+                mapDisplay = generateTrackMapSVG(geometry, null, null, { title: '' });
+            } catch (e) {
+                mapDisplay = `<img src="${API_BASE}/api/tracks/${trackId}/map" 
+                     alt="${track.track_name}" 
+                     style="width: 100%; max-width: 600px; border-radius: 8px; margin: 1rem 0;"
+                     onerror="this.style.display='none'">`;
+            }
         }
 
         const isActive = activeTrackId == trackId;
@@ -2515,8 +2730,8 @@ async function viewTrack(trackId) {
                 <div class="stat-card">
                     <div class="stat-icon"><i class="fas fa-vector-square"></i></div>
                     <div class="stat-info">
-                        <div class="stat-label">Sectors</div>
-                        <div class="stat-value">7</div>
+                        <div class="stat-label">Track Type</div>
+                        <div class="stat-value" style="font-size: 1rem;">${track.track_scope === 'global' ? 'Shared Package' : 'Private Fallback'}</div>
                     </div>
                 </div>
                 <div class="stat-card">
@@ -3255,10 +3470,15 @@ async function loadTrackdayMap(trackId, trackName) {
     if (!mapContainer) return;
 
     try {
+        const track = await apiCall(`/api/tracks/${trackId}`, { displayError: false });
+        if (track?.track_scope === 'global' && track?.has_canonical_layout) {
+            const layout = await apiCall(`/api/tracks/${trackId}/layout`, { displayError: false });
+            mapContainer.innerHTML = generateCanonicalTrackSVG(layout, null, { maxHeight: 420 });
+            return;
+        }
         const geometry = await apiCall(`/api/tracks/${trackId}/geometry`);
         mapContainer.innerHTML = generateTrackMapSVG(geometry, null, null, { title: '' });
     } catch (e) {
-        // Fallback to static image
         mapContainer.innerHTML = `
             <img src="/api/tracks/${trackId}/map" 
                  alt="${trackName} Track Map" 
@@ -3485,6 +3705,7 @@ async function viewSession(sessionId, isPublicView = false, shareToken = null) {
 
         const session = await apiCall(endpoint);
         const isShared = session.is_shared_view || isPublicView;
+        window.currentComparisonSession = session;
 
         // Phase 7.1 Calculations
         const validLapsTimes = session.laps.filter(l => l.valid && l.lap_time > 0).map(l => l.lap_time);
@@ -4387,6 +4608,19 @@ async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
             ay: telemetry.ay ? indices.map(i => telemetry.ay[i]) : null
         };
 
+        let canonicalLapMap = null;
+        let canonicalLayout = null;
+        if (session.track.track_scope === 'global' && session.track.has_canonical_layout) {
+            try {
+                const layout = await apiCall(`/api/tracks/${session.track.track_id}/layout`, { displayError: false });
+                canonicalLayout = layout;
+                canonicalLapMap = generateCanonicalTrackSVG(layout, subset, { compact: true, stroke: '#ffffff', strokeWidth: 10, maxHeight: 340 });
+            } catch (e) {
+                canonicalLapMap = null;
+                canonicalLayout = null;
+            }
+        }
+
         // Metrics & Confidence
         const lapMetrics = session.analysis?.metrics?.laps?.find(x => x.lap_number === lapNumber);
         const imuConfidence = lapMetrics?.confidence || session.calibration?.confidence || "N/A";
@@ -4425,8 +4659,8 @@ async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
                     <h3 style="margin-top:0; font-size:1rem; display:flex; justify-content:space-between;">
                         Dynamics Map <span style="font-size:0.8em; opacity:0.6">⤢ Expand</span>
                     </h3>
-                    ${generateColorMapSVG(subset, 'imu', { small: true })}
-                    <p class="help-text" style="margin-top:0.5rem; font-size:0.8rem;">Accel(Grn) • Brake(Red) • Lat(Glow)</p>
+                    ${canonicalLapMap || generateColorMapSVG(subset, 'imu', { small: true })}
+                    <p class="help-text" style="margin-top:0.5rem; font-size:0.8rem;">${canonicalLapMap ? 'Canonical track package with projected lap line' : 'Accel(Grn) • Brake(Red) • Lat(Glow)'}</p>
                 </div>
                 
                 <!-- Speed Tooltip & Card -->
@@ -4437,8 +4671,8 @@ async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
                     <h3 style="margin-top:0; font-size:1rem; display:flex; justify-content:space-between;">
                          Speed Map <span style="font-size:0.8em; opacity:0.6">⤢ Expand</span>
                     </h3>
-                    ${generateColorMapSVG(subset, 'speed', { small: true })}
-                    <p class="help-text" style="margin-top:0.5rem; font-size:0.8rem;">Fast(Green) • Slow(Red)</p>
+                    ${canonicalLapMap || generateColorMapSVG(subset, 'speed', { small: true })}
+                    <p class="help-text" style="margin-top:0.5rem; font-size:0.8rem;">${canonicalLapMap ? 'Shared canonical layout with accurate projected racing line' : 'Fast(Green) • Slow(Red)'}</p>
                 </div>
             </div>
             
@@ -4493,7 +4727,7 @@ async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
         `;
 
         // Store for Modal access
-        window._currentLapData = { subset, lap };
+        window._currentLapData = { subset, lap, canonicalLayout };
 
     } catch (e) {
         container.innerHTML = `
@@ -4512,7 +4746,7 @@ async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
 window.openLapModal = function (mode) {
     const modal = document.getElementById('lapModal');
     const content = document.getElementById('lapModalContent');
-    const { subset, lap } = window._currentLapData;
+    const { subset, lap, canonicalLayout } = window._currentLapData;
 
     let html = '';
 
@@ -4520,7 +4754,7 @@ window.openLapModal = function (mode) {
         html = `
             <div class="card" style="margin-bottom:1rem; border:1px solid var(--primary);">
                 <h2 style="text-align:center; margin:0 0 1rem 0;">Rider Dynamics (Full View)</h2>
-                ${generateColorMapSVG(subset, 'imu', { small: false, sectors: lap.sector_times })}
+                ${canonicalLayout ? generateCanonicalTrackSVG(canonicalLayout, subset, { stroke: '#ffffff', strokeWidth: 12, maxHeight: 620 }) : generateColorMapSVG(subset, 'imu', { small: false, sectors: lap.sector_times })}
             </div>
             <div class="card">
                 <h3 style="margin-top:0;">G-Force Trace (Synced)</h3>
@@ -4531,7 +4765,7 @@ window.openLapModal = function (mode) {
         html = `
              <div class="card" style="margin-bottom:1rem; border:1px solid #4CAF50;">
                 <h2 style="text-align:center; margin:0 0 1rem 0;">Speed Profile (Full View)</h2>
-                ${generateColorMapSVG(subset, 'speed', { small: false, sectors: lap.sector_times })}
+                ${canonicalLayout ? generateCanonicalTrackSVG(canonicalLayout, subset, { stroke: '#ffffff', strokeWidth: 12, maxHeight: 620 }) : generateColorMapSVG(subset, 'speed', { small: false, sectors: lap.sector_times })}
             </div>
         `;
     }
@@ -4583,6 +4817,13 @@ async function showComparison() {
         const s2 = comparisonSlots[1];
 
         const data = await apiCall(`/api/compare?session1=${s1.sessionId}&lap1=${s1.lapNumber - 1}&session2=${s2.sessionId}&lap2=${s2.lapNumber - 1}`);
+        if (data.lap1?.track_scope === 'global' && data.lap1?.track_id && data.lap1.track_id === data.lap2?.track_id) {
+            try {
+                data.canonicalLayout = await apiCall(`/api/tracks/${data.lap1.track_id}/layout`, { displayError: false });
+            } catch (error) {
+                data.canonicalLayout = null;
+            }
+        }
 
         container.innerHTML = `
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
@@ -4639,18 +4880,20 @@ async function showComparison() {
             </div>
 
             <div class="card" style="margin-bottom: 1.5rem;">
-                <h3>Telemetry Overlay (MVP)</h3>
-                <p class="help-text">Side-by-side visualization coming in next update. For now, use sector times for comparison.</p>
-                <div style="display: flex; gap: 1rem;">
-                    <div style="flex: 1;">
-                        ${generateColorMapSVG(sliceTelemetry(data.lap1), 'speed', { small: true })}
-                        <p style="text-align: center; font-size: 0.8rem;">Lap 1 Speed Map</p>
-                    </div>
-                    <div style="flex: 1;">
-                        ${generateColorMapSVG(sliceTelemetry(data.lap2), 'speed', { small: true })}
-                        <p style="text-align: center; font-size: 0.8rem;">Lap 2 Speed Map</p>
-                    </div>
-                </div>
+                <h3>Telemetry Overlay</h3>
+                ${data.canonicalLayout
+                    ? generateCanonicalComparisonSVG(data.canonicalLayout, data.lap1.telemetry, data.lap2.telemetry, { maxHeight: 620, strokeWidth: 12 })
+                    : `<div style="display: flex; gap: 1rem;">
+                        <div style="flex: 1;">
+                            ${generateColorMapSVG(sliceTelemetry(data.lap1), 'speed', { small: true })}
+                            <p style="text-align: center; font-size: 0.8rem;">Lap 1 Speed Map</p>
+                        </div>
+                        <div style="flex: 1;">
+                            ${generateColorMapSVG(sliceTelemetry(data.lap2), 'speed', { small: true })}
+                            <p style="text-align: center; font-size: 0.8rem;">Lap 2 Speed Map</p>
+                        </div>
+                    </div>`
+                }
             </div>
         `;
     } catch (error) {
@@ -5372,6 +5615,7 @@ let currentComparisonData = null;
 async function initComparison(session) {
     const container = document.getElementById('comparisonContainer');
     if (!container) return;
+    window.currentComparisonSession = session;
 
     // Populate Dropdowns
     const laps = session.laps.filter(l => l.valid !== false);
@@ -5470,6 +5714,13 @@ async function runComparison(sessionId) {
 
     try {
         const res = await apiCall(`/api/compare?session1=${sessionId}&lap1=${ref}&session2=${sessionId}&lap2=${target}`);
+        if (window.currentComparisonSession?.track?.track_scope === 'global' && window.currentComparisonSession?.track?.has_canonical_layout) {
+            try {
+                res.canonicalLayout = await apiCall(`/api/tracks/${window.currentComparisonSession.track.track_id}/layout`, { displayError: false });
+            } catch (e) {
+                res.canonicalLayout = null;
+            }
+        }
         currentComparisonData = res;
 
         status.innerText = "";
@@ -5506,6 +5757,39 @@ function initReplayMap(data) {
     const container = document.getElementById('replayMap');
     const slider = document.getElementById('replaySlider');
     if (!container || !data.lat || !data.lat.length) return;
+
+    if (data.canonicalLayout?.svg_data_url || data.canonicalLayout?.preview_svg_data_url) {
+        const layout = data.canonicalLayout;
+        const refPoints = projectTelemetryToCanonical(layout, telemetryToSimpleArrays(data.lap1?.telemetry));
+        const targetPoints = projectTelemetryToCanonical(layout, telemetryToSimpleArrays(data.lap2?.telemetry));
+        const baseSvg = layout.preview_svg_data_url || layout.svg_data_url;
+        if (refPoints.length > 1 || targetPoints.length > 1) {
+            const refPath = refPoints.length ? `M ${refPoints.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}` : '';
+            const targetPath = targetPoints.length ? `M ${targetPoints.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}` : '';
+            container.innerHTML = `
+                <svg width="100%" height="100%" viewBox="0 0 ${layout.layout_width} ${layout.layout_height}">
+                    <image href="${baseSvg}" x="0" y="0" width="${layout.layout_width}" height="${layout.layout_height}" preserveAspectRatio="xMidYMid meet"></image>
+                    ${refPath ? `<path d="${refPath}" fill="none" stroke="#4CAF50" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>` : ''}
+                    ${targetPath ? `<path d="${targetPath}" fill="none" stroke="#F44336" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"></path>` : ''}
+                    <circle id="ghostRefDot" r="12" fill="#4CAF50" stroke="#fff" stroke-width="2" cx="-10" cy="-10" />
+                    <circle id="ghostTargetDot" r="12" fill="#F44336" stroke="#fff" stroke-width="2" cx="-10" cy="-10" />
+                </svg>
+            `;
+            replayState.project = (_, __, index, which = 'ref') => {
+                const points = which === 'target' ? targetPoints : refPoints;
+                if (!points.length) return [0, 0];
+                const point = points[Math.max(0, Math.min(points.length - 1, index || 0))];
+                return [point.x, point.y];
+            };
+            const maxTime = Math.max(data.ref_time[data.ref_time.length - 1], data.target_time[data.target_time.length - 1]);
+            replayState.duration = maxTime;
+            replayState.currentTime = 0;
+            slider.max = maxTime;
+            slider.value = 0;
+            updateReplayVisuals(0);
+            return;
+        }
+    }
 
     // 1. Calculate Bounds
     const lats = data.lat;
@@ -5623,8 +5907,8 @@ function updateReplayVisuals(time) {
     if (idxTgt === -1) idxTgt = data.target_time.length - 1;
 
     // Update Dots
-    const pRef = replayState.project(data.lat[idxRef], data.lon[idxRef]);
-    const pTgt = replayState.project(data.lat[idxTgt], data.lon[idxTgt]);
+    const pRef = replayState.project(data.lat[idxRef], data.lon[idxRef], idxRef, 'ref');
+    const pTgt = replayState.project(data.lat[idxTgt], data.lon[idxTgt], idxTgt, 'target');
 
     const dotRef = document.getElementById('ghostRefDot');
     const dotTgt = document.getElementById('ghostTargetDot');
@@ -6211,8 +6495,20 @@ let pbState = {
     // Heatmap Cache
     pathCache: null,
     mapMode: 'speed', // speed, accel, clean
-    bounds: null
+    bounds: null,
+    canonicalLayout: null,
+    layoutImage: null,
+    projectedPoints: null
 };
+
+function loadImageAsset(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        img.src = src;
+    });
+}
 
 async function openPlayback(sessionId, shareToken = null) {
     const modal = document.getElementById('playbackModal');
@@ -6223,7 +6519,10 @@ async function openPlayback(sessionId, shareToken = null) {
         active: true,
         playing: false,
         currentIndex: 0,
-        mapMode: 'speed'
+        mapMode: 'speed',
+        canonicalLayout: null,
+        layoutImage: null,
+        projectedPoints: null
     };
 
     // 2. Show Modal (Loading)
@@ -6248,6 +6547,24 @@ async function openPlayback(sessionId, shareToken = null) {
         pbState.session = session;
         pbState.data = telemetry;
         pbState.laps = session.laps;
+
+        if (session.track?.track_scope === 'global' && session.track?.has_canonical_layout) {
+            try {
+                pbState.canonicalLayout = await apiCall(`/api/tracks/${session.track.track_id}/layout`, { displayError: false });
+                const baseSvg = pbState.canonicalLayout?.preview_svg_data_url || pbState.canonicalLayout?.svg_data_url;
+                if (baseSvg) {
+                    pbState.layoutImage = await loadImageAsset(baseSvg);
+                }
+                pbState.projectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
+                    lats: telemetry.lat || [],
+                    lons: telemetry.lon || []
+                });
+            } catch (error) {
+                pbState.canonicalLayout = null;
+                pbState.layoutImage = null;
+                pbState.projectedPoints = null;
+            }
+        }
 
         // Load Annotations
         loadAnnotations(sessionId);
@@ -6332,6 +6649,22 @@ function fitTrackMap() {
     pbState.width = w;
     pbState.height = h;
 
+    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
+        const padding = 20;
+        const availW = w - padding * 2;
+        const availH = h - padding * 2;
+        const layoutW = pbState.canonicalLayout.layout_width || 1;
+        const layoutH = pbState.canonicalLayout.layout_height || 1;
+        const scaleX = availW / layoutW;
+        const scaleY = availH / layoutH;
+        pbState.scale = Math.min(scaleX, scaleY);
+        pbState.offsetX = padding + (availW - layoutW * pbState.scale) / 2;
+        pbState.offsetY = padding + (availH - layoutH * pbState.scale) / 2;
+        pbState.bounds = null;
+        renderStaticMap();
+        return;
+    }
+
     // Calculate Bounds
     const lats = pbState.data.lat;
     const lons = pbState.data.lon;
@@ -6388,6 +6721,17 @@ function project(lat, lon) {
     return { x, y };
 }
 
+function projectPlaybackPoint(index) {
+    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
+        const point = pbState.projectedPoints[Math.max(0, Math.min(pbState.projectedPoints.length - 1, index))];
+        return {
+            x: point.x * pbState.scale + pbState.offsetX,
+            y: point.y * pbState.scale + pbState.offsetY
+        };
+    }
+    return project(pbState.data.lat[index], pbState.data.lon[index]);
+}
+
 function renderStaticMap() {
     if (!pbState.pathCache) {
         pbState.pathCache = document.createElement('canvas');
@@ -6398,6 +6742,42 @@ function renderStaticMap() {
 
     const data = pbState.data;
     const count = data.lat.length;
+
+    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
+        if (pbState.layoutImage) {
+            ctx.drawImage(
+                pbState.layoutImage,
+                pbState.offsetX,
+                pbState.offsetY,
+                (pbState.canonicalLayout.layout_width || 1) * pbState.scale,
+                (pbState.canonicalLayout.layout_height || 1) * pbState.scale
+            );
+        }
+
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.lineWidth = 3;
+        for (let i = 0; i < count - 1; i++) {
+            const p1 = projectPlaybackPoint(i);
+            const p2 = projectPlaybackPoint(i + 1);
+            ctx.beginPath();
+            ctx.moveTo(p1.x, p1.y);
+            ctx.lineTo(p2.x, p2.y);
+            if (pbState.mapMode === 'speed') {
+                const s = data.speed[i] || 0;
+                ctx.strokeStyle = getHeatmapColor(s, 40, 200);
+            } else if (pbState.mapMode === 'accel') {
+                const ax = data.aligned_accel_x ? data.aligned_accel_x[i] : (data.ax ? data.ax[i] : 0);
+                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 0, ${Math.min(ax / 0.5, 1)})`;
+                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 0, 0, ${Math.min(Math.abs(ax) / 0.8, 1)})`;
+                else ctx.strokeStyle = '#444';
+            } else {
+                ctx.strokeStyle = '#555';
+            }
+            ctx.stroke();
+        }
+        return;
+    }
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -6578,7 +6958,7 @@ function drawFrame() {
         ctx.drawImage(pbState.pathCache, 0, 0);
     }
 
-    const p = project(data.lat[i], data.lon[i]);
+    const p = projectPlaybackPoint(i);
 
     // Dot
     ctx.beginPath();
@@ -7364,6 +7744,167 @@ async function loadAdminUsers(page = 1, query = '', tier = '', approval = '') {
         }
     } catch (e) {
         showToast('Failed to load users: ' + e.message, 'error');
+    }
+}
+
+async function loadAdminTrackData() {
+    try {
+        const [tracksResult, reportsResult] = await Promise.all([
+            apiCall('/api/admin/tracks'),
+            apiCall('/api/admin/tracks/unmatched')
+        ]);
+        adminTracksData = tracksResult.tracks || [];
+        adminUnmatchedTracks = reportsResult.reports || [];
+        renderAdminTracks();
+        renderAdminUnmatchedTracks();
+    } catch (error) {
+        const tracksEl = document.getElementById('adminTracksList');
+        const reportsEl = document.getElementById('adminUnmatchedTracks');
+        if (tracksEl) tracksEl.innerHTML = '<p class="help-text">Failed to load global tracks.</p>';
+        if (reportsEl) reportsEl.innerHTML = '<p class="help-text">Failed to load unmatched-track queue.</p>';
+    }
+}
+
+function renderAdminTracks() {
+    const container = document.getElementById('adminTracksList');
+    if (!container) return;
+    if (!adminTracksData.length) {
+        container.innerHTML = '<p class="help-text">No shared tracks uploaded yet.</p>';
+        return;
+    }
+
+    const escapeJsSingleQuoted = (value) => String(value || '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+
+    container.innerHTML = adminTracksData.map(track => `
+        <div class="track-card" style="cursor:default;">
+            <img src="${API_BASE}/api/tracks/${track.track_id}/map" alt="${track.track_name}" class="track-map">
+            <div class="track-info">
+                <div class="card-head-inline">
+                    <div class="track-name">${track.track_name}</div>
+                    <span class="badge compact-badge">v${track.package_version || 1}</span>
+                </div>
+                <div class="track-meta">
+                    <span><i class="fas fa-hashtag"></i> ${track.track_id}</span>
+                    <span><i class="fas fa-draw-polygon"></i> ${track.layout_width || '--'}×${track.layout_height || '--'}</span>
+                    <span><i class="fas fa-link"></i> ${track.matched_sessions_count || 0} matched sessions</span>
+                </div>
+                <div class="track-actions">
+                    <button class="btn btn-danger btn-sm" onclick="deleteAdminTrack(${track.track_id}, '${escapeJsSingleQuoted(track.track_name)}')">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderAdminUnmatchedTracks() {
+    const container = document.getElementById('adminUnmatchedTracks');
+    if (!container) return;
+    if (!adminUnmatchedTracks.length) {
+        container.innerHTML = '<p class="help-text">No unmatched fallback tracks waiting for review.</p>';
+        return;
+    }
+
+    const trackOptions = adminTracksData.map(track => `<option value="${track.track_id}">${track.track_name}</option>`).join('');
+    container.innerHTML = adminUnmatchedTracks.map(report => `
+        <div class="card" style="margin-bottom:0.75rem;">
+            <div style="display:flex; justify-content:space-between; gap:1rem; align-items:flex-start; flex-wrap:wrap;">
+                <div>
+                    <div style="font-weight:700;">${report.fallback_track_name}</div>
+                    <div class="help-text">Fallback track ${report.fallback_track_id} from session ${report.session_id}</div>
+                    <div class="help-text">Status: ${report.status}</div>
+                </div>
+                <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                    <select id="resolveTrackSelect${report.id}" class="filter-select" style="min-width:180px;">
+                        <option value="">Select shared track</option>
+                        ${trackOptions}
+                    </select>
+                    <button class="btn btn-primary btn-sm" onclick="resolveUnmatchedTrack(${report.id})">Resolve</button>
+                    <button class="btn btn-sm" onclick="ignoreUnmatchedTrack(${report.id})">Ignore</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+async function uploadAdminTrackPackage() {
+    const fileInput = document.getElementById('adminTrackPackageFile');
+    const trackNameInput = document.getElementById('adminTrackNameInput');
+    const trackSlugInput = document.getElementById('adminTrackSlugInput');
+    const file = fileInput?.files?.[0];
+    if (!file) {
+        showToast('Choose a package JSON file first', 'error');
+        return;
+    }
+
+    try {
+        const packageJson = JSON.parse(await file.text());
+        await apiCall('/api/admin/tracks/package', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                track_name: trackNameInput?.value?.trim() || undefined,
+                slug: trackSlugInput?.value?.trim() || undefined,
+                package: packageJson
+            })
+        });
+        showToast('Track package uploaded', 'success');
+        if (fileInput) fileInput.value = '';
+        if (trackNameInput) trackNameInput.value = '';
+        if (trackSlugInput) trackSlugInput.value = '';
+        loadAdminTrackData();
+        loadTracks();
+    } catch (error) {
+        showToast('Package upload failed: ' + error.message, 'error');
+    }
+}
+
+async function resolveUnmatchedTrack(reportId) {
+    const select = document.getElementById(`resolveTrackSelect${reportId}`);
+    const globalTrackId = select?.value;
+    if (!globalTrackId) {
+        showToast('Choose a shared track first', 'error');
+        return;
+    }
+    try {
+        await apiCall(`/api/admin/tracks/unmatched/${reportId}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ global_track_id: Number(globalTrackId), status: 'resolved' })
+        });
+        showToast('Unmatched track resolved', 'success');
+        loadAdminTrackData();
+    } catch (error) {
+        showToast('Resolve failed: ' + error.message, 'error');
+    }
+}
+
+async function ignoreUnmatchedTrack(reportId) {
+    try {
+        await apiCall(`/api/admin/tracks/unmatched/${reportId}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'ignored' })
+        });
+        showToast('Unmatched track ignored', 'success');
+        loadAdminTrackData();
+    } catch (error) {
+        showToast('Ignore failed: ' + error.message, 'error');
+    }
+}
+
+async function deleteAdminTrack(trackId, trackName) {
+    if (!confirm(`Delete shared track "${trackName}"? This only works when no matched sessions exist.`)) return;
+    try {
+        await apiCall(`/api/admin/tracks/${trackId}`, { method: 'DELETE' });
+        showToast('Shared track deleted', 'success');
+        loadAdminTrackData();
+        loadTracks();
+    } catch (error) {
+        showToast('Delete failed: ' + error.message, 'error');
     }
 }
 

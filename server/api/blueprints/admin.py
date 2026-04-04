@@ -1,8 +1,11 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
+import shutil
 
-from api.models import db, User, SessionMeta, TrackMeta, Team, TeamMember
+from api.models import db, User, SessionMeta, TrackMeta, Team, TeamMember, GlobalTrack, UnmatchedTrackReport
 from api.decorators import admin_required
+from api.track_catalog import TrackPackageError, upsert_global_track_package
+import api.config as config
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
 
@@ -225,3 +228,89 @@ def admin_set_tier_deprecated():
         "tier": new_tier,
         "_deprecated": "Use PUT /api/admin/users/<id>/tier instead"
     })
+
+@admin_bp.route('/tracks', methods=['GET'])
+@admin_required
+def admin_list_tracks():
+    tracks = GlobalTrack.query.order_by(GlobalTrack.track_name.asc()).all()
+    payload = []
+    for track in tracks:
+        item = track.to_dict()
+        item["matched_sessions_count"] = SessionMeta.query.filter_by(track_id=track.track_id).count()
+        payload.append(item)
+    return jsonify({"tracks": payload})
+
+@admin_bp.route('/tracks/package', methods=['POST'])
+@admin_required
+def admin_upload_track_package():
+    data = request.get_json() or {}
+    package = data.get('package') if 'package' in data else data
+    track_name = data.get('track_name') or data.get('name')
+    slug = data.get('slug')
+    track_id = data.get('track_id')
+
+    try:
+        global_track = upsert_global_track_package(track_name=track_name, package=package, slug=slug, track_id=track_id)
+        return jsonify({
+            "success": True,
+            "track": global_track.to_dict()
+        })
+    except TrackPackageError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+@admin_bp.route('/tracks/unmatched', methods=['GET'])
+@admin_required
+def admin_list_unmatched_tracks():
+    reports = UnmatchedTrackReport.query.order_by(UnmatchedTrackReport.created_at.desc()).all()
+    return jsonify({"reports": [report.to_dict() for report in reports]})
+
+@admin_bp.route('/tracks/unmatched/<int:report_id>/resolve', methods=['POST'])
+@admin_required
+def admin_resolve_unmatched_track(report_id):
+    report = UnmatchedTrackReport.query.get(report_id)
+    if not report:
+        return jsonify({"error": "Report not found"}), 404
+
+    data = request.get_json() or {}
+    status = data.get('status', 'resolved')
+    if status not in {'resolved', 'ignored', 'open'}:
+        return jsonify({"error": "Invalid status"}), 400
+
+    global_track_id = data.get('global_track_id')
+    if status == 'resolved':
+        if not global_track_id:
+            return jsonify({"error": "global_track_id is required when resolving"}), 400
+        global_track = GlobalTrack.query.filter_by(track_id=int(global_track_id)).first()
+        if not global_track:
+            return jsonify({"error": "Global track not found"}), 404
+        report.resolved_global_track_id = global_track.track_id
+    else:
+        report.resolved_global_track_id = None
+
+    report.status = status
+    db.session.commit()
+    return jsonify({"success": True, "report": report.to_dict()})
+
+@admin_bp.route('/tracks/<int:track_id>', methods=['DELETE'])
+@admin_required
+def admin_delete_track(track_id):
+    global_track = GlobalTrack.query.filter_by(track_id=track_id).first()
+    if not global_track:
+        return jsonify({"error": "Global track not found"}), 404
+
+    matched_sessions = SessionMeta.query.filter_by(track_id=track_id).count()
+    if matched_sessions > 0:
+        return jsonify({
+            "error": "Track cannot be deleted while matched sessions exist",
+            "matched_sessions_count": matched_sessions
+        }), 409
+
+    track_dir = config.get_global_track_dir(global_track.folder_name)
+    if track_dir.exists():
+        shutil.rmtree(track_dir, ignore_errors=True)
+
+    UnmatchedTrackReport.query.filter_by(resolved_global_track_id=track_id).update({"resolved_global_track_id": None})
+    User.query.filter_by(active_track_id=track_id).update({"active_track_id": None})
+    db.session.delete(global_track)
+    db.session.commit()
+    return jsonify({"success": True, "track_id": track_id})

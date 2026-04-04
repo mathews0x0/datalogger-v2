@@ -3202,3 +3202,118 @@ That means:
 - RaceSense admin upload can rely on a reusable package instead of manual memory
 
 **Status:** ✅ Implemented as a local authoring tool with canonical package export.
+
+## 2026-04-04: Canonical Track Package Rollout Into Product
+
+### Objective
+
+Take the canonical package concept from a local authoring experiment into the actual product runtime so RaceSense can stop drawing tracks purely from ad hoc rider session geometry.
+
+PM direction was explicit:
+
+- a shared master track package should become the central source of truth
+- users should see precise racing lines on top of that package layout
+- user-specific timing artifacts such as TBL, best laps, and active-track state must remain siloed
+- unknown tracks should still fall back to the existing auto-generated path
+
+### What Was Implemented
+
+The system now has a true shared track catalog:
+
+- `GlobalTrack` model for admin-managed canonical tracks
+- admin package upload endpoint and UI
+- package materialization into shared track storage under `server/data/tracks/<slug>/`
+- merged user-facing tracks API that combines:
+  - matched shared master tracks
+  - private fallback tracks
+
+Processing now follows a layered resolver:
+
+1. try to identify a shared master track
+2. validate candidate against package metadata
+3. if accepted, export the session as `global_package`
+4. otherwise fall back to per-user track generation
+
+Unknown fallback tracks now create an admin review signal instead of silently remaining isolated forever.
+
+### Important Product Decisions Captured
+
+#### Shared Track Visibility
+
+PM clarified that uploaded shared tracks should **not** appear to every rider immediately.
+
+Decision:
+
+- a shared master track becomes visible to a rider only after at least one of their sessions matches it
+
+This prevents the Tracks tab from turning into a global catalog of irrelevant circuits.
+
+#### Sector Standardization
+
+PM clarified that master tracks should default to exactly **7 sectors**, starting from the start / finish basis in the uploaded package.
+
+Decision:
+
+- sector generation runs during package ingest
+- start / finish anchor points in the package are authoritative
+- existing centerline data is used when available
+- sampled package GPS points can act as fallback geometry for sector derivation
+
+#### Shared Layout Rendering Rule
+
+PM clarified that any place in the app using track layout should prefer the canonical package once a session is matched.
+
+Decision:
+
+- shared master track => render canonical layout
+- fallback track => retain legacy geometry rendering
+
+### UI / Runtime Outcomes
+
+The following now use shared package layouts when available:
+
+- Tracks view
+- Track detail
+- Lap detail
+- Comparative analysis
+- Ghost lap replay / playback
+
+The package outline is recolored for the dark theme using a dark orange treatment to keep the layout legible on the black/grey product palette.
+
+### Hard Bugs Resolved During Rollout
+
+Several non-obvious issues were uncovered and fixed:
+
+- Alembic multiple-head migration conflict blocking startup
+- standalone analysis subprocess import dependency on `api.*`
+- mismatch between API-side and analysis-side data roots
+- track matching failure caused by legacy start-line assumptions
+- admin delete button generating malformed inline JS
+- session API returning stale `user_fallback` track metadata from old session JSON
+- canonical Y-axis sign mismatch between GPS math and package coordinate space
+- playback modal still using legacy raw GPS map path instead of the canonical layout path
+
+### Current Status
+
+This rollout achieved the main architectural goal:
+
+- RaceSense now has a centralized shared track package system
+- sessions can resolve to a canonical master track
+- shared canonical layouts can render rider telemetry overlays in product views
+- user-specific performance data remains siloed
+
+### Current Caveat
+
+The final overlay alignment is improved but not fully closed out.
+
+What is true now:
+
+- package GPS anchor fitting is implemented
+- session rendering uses many sampled GPS references from the package
+- an additional client-side correction pass refines small rotation / translation drift
+
+What is still likely needed:
+
+- promote the final per-session correction from a browser-side estimate into a durable server-side alignment artifact
+
+That is the remaining gap between “working canonical overlays” and “production-grade, deterministic overlay precision”.

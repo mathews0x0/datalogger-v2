@@ -14,8 +14,31 @@ from api.models import db, User, SessionMeta, TrackMeta, TeamMember
 from api.decorators import require_tier, local_only
 import api.config as config
 from api.helpers import get_track_folder
+from api.track_catalog import get_track_display_name, resolve_track
 
 sessions_bp = Blueprint('sessions', __name__)
+
+
+def _sync_session_track_metadata(session_data, session_meta):
+    if not session_meta or not session_meta.track_id:
+        return session_data
+
+    resolved = resolve_track(session_meta.track_id, user_id=session_meta.user_id)
+    if not resolved:
+        return session_data
+
+    track_payload = session_data.get('track') or {}
+    track_payload.update({
+        "track_id": resolved["track_id"],
+        "track_name": resolved["track_name"],
+        "track_scope": resolved["track_scope"],
+        "track_source": resolved["track_source"],
+        "has_canonical_layout": bool(resolved["has_canonical_layout"]),
+        "package_version": resolved["package_version"],
+        "folder_name": resolved["folder_name"],
+    })
+    session_data['track'] = track_payload
+    return session_data
 
 @sessions_bp.route('/api/sessions')
 @jwt_required()
@@ -48,9 +71,7 @@ def get_sessions():
     
     sessions = []
     for s in sessions_meta:
-        # Get track name for response
-        track = TrackMeta.query.filter_by(track_id=s.track_id).first()
-        track_name = track.track_name if track else 'Unknown'
+        track_name = get_track_display_name(s.track_id, user_id=s.user_id)
         
         # Get owner name
         owner = User.query.get(s.user_id)
@@ -100,6 +121,7 @@ def get_session(session_id):
         
     with open(session_file, 'r') as f:
         session_data = json.load(f)
+    session_data = _sync_session_track_metadata(session_data, s_meta)
     
     # Add privacy info from DB
     session_data['is_public'] = s_meta.is_public
@@ -205,6 +227,7 @@ def get_shared_session(token):
         
     with open(session_file, 'r') as f:
         session_data = json.load(f)
+    session_data = _sync_session_track_metadata(session_data, s_meta)
     
     # Add owner info
     owner = User.query.get(s_meta.user_id)
@@ -242,9 +265,7 @@ def get_public_sessions():
     
     sessions = []
     for s in sessions_meta:
-        # Get track name for response
-        track = TrackMeta.query.filter_by(track_id=s.track_id).first()
-        track_name = track.track_name if track else 'Unknown'
+        track_name = get_track_display_name(s.track_id, user_id=s.user_id)
         
         # Get owner name
         owner = User.query.get(s.user_id)

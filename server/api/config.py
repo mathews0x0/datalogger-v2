@@ -9,10 +9,12 @@ DATA_DIR = PROJECT_ROOT / "data"
 # Sub-directories
 LEARNING_DIR = DATA_DIR / "learning"
 TRACKS_DIR = DATA_DIR / "tracks"
+GLOBAL_TRACKS_DIR = TRACKS_DIR
 SESSIONS_DIR = DATA_DIR / "sessions"
 METADATA_DIR = DATA_DIR / "metadata"
 REGISTRY_FILE = METADATA_DIR / "registry.json"
 SECTOR_COUNT = 7
+GLOBAL_TRACK_ID_MIN = 1_000_000
 
 
 
@@ -41,5 +43,16 @@ def get_user_learning_dir(user_id):
 def get_user_tracks_dir(user_id):
     """Get the tracks directory for a specific user"""
     t_dir = get_user_dir(user_id) / "tracks"
+    t_dir.mkdir(parents=True, exist_ok=True)
+    return t_dir
+
+def get_global_tracks_dir():
+    """Get the shared global tracks directory."""
+    GLOBAL_TRACKS_DIR.mkdir(parents=True, exist_ok=True)
+    return GLOBAL_TRACKS_DIR
+
+def get_global_track_dir(folder_name):
+    """Get a specific shared global track directory."""
+    t_dir = get_global_tracks_dir() / folder_name
     t_dir.mkdir(parents=True, exist_ok=True)
     return t_dir
