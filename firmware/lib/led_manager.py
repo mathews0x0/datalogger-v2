@@ -23,9 +23,12 @@ class LEDManager:
         self.np = neopixel.NeoPixel(self.pin, count)
         self.count = count
         self._scaled_buf = bytearray(count * 3)
-        
-        self.onboard_neo_pin = Pin(onboard_neo_pin, Pin.OUT)
-        self.onboard_np = neopixel.NeoPixel(self.onboard_neo_pin, 1)
+
+        self.onboard_neo_pin = None
+        self.onboard_np = None
+        if onboard_neo_pin is not None:
+            self.onboard_neo_pin = Pin(onboard_neo_pin, Pin.OUT)
+            self.onboard_np = neopixel.NeoPixel(self.onboard_neo_pin, 1)
         
         self.onboard_led = Pin(onboard_led_pin, Pin.OUT)
         
@@ -219,8 +222,9 @@ class LEDManager:
         # Performance optimization: if brightness is 1.0, just write.
         if self.brightness >= 0.98:
             self.np.write()
-            self.onboard_np.buf[:] = self.np.buf[:3]
-            self.onboard_np.write()
+            if self.onboard_np is not None:
+                self.onboard_np.buf[:] = self.np.buf[:3]
+                self.onboard_np.write()
             return
 
         src = self.np.buf
@@ -229,16 +233,18 @@ class LEDManager:
             dst[i] = int(src[i] * self.brightness)
         src[:] = dst
         self.np.write()
-        self.onboard_np.buf[:] = dst[:3]
-        self.onboard_np.write()
+        if self.onboard_np is not None:
+            self.onboard_np.buf[:] = dst[:3]
+            self.onboard_np.write()
 
     def clear(self):
         with self._lock:
             self._state = "OFF"
             self._fill_buf(ca.OFF)
             self.np.write()
-            self.onboard_np.buf[:] = self.np.buf[:3]
-            self.onboard_np.write()
+            if self.onboard_np is not None:
+                self.onboard_np.buf[:] = self.np.buf[:3]
+                self.onboard_np.write()
 
     def set_state(self, state): self._set_state(state)
 

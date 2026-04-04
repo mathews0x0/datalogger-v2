@@ -20,6 +20,7 @@ The heart of the project is the **RS-Core** hardware module. It is a compact, ba
 - **GPS Data**: Latitude, longitude, altitude, and speed at 10Hz/25Hz.
 - **IMU Data**: 6-axis motion (Leaning angles, longitudinal/lateral G-force) at high frequency.
 - **Autonomous Recording**: No phone connection is required while riding. It starts recording based on movement and auto-uploads when it detects a known WiFi network.
+- **Rider-Facing TFT UX (current development path)**: a 2.8" ILI9341 + XPT2046 display now renders boot, setup, sync, and logging state directly on-device using a dedicated SPI bus separate from the SD card.
 
 ### 🌐 The Platform
 The platform consists of:
@@ -167,6 +168,19 @@ Track-resolution layering as of the canonical package rollout:
 - **JWT**: Identity stored as `user_id` string in the token.
 - **Team Access**: Coaches and Owners can bypass `is_public` checks for their members' sessions (implemented in `leaderboards.py` and `sessions.py`).
 - **Subscription Tiers**: Enforced via `@require_tier` decorator in the backend and `user.subscription_tier` in the frontend UI.
+
+### 6. Current Device UI State
+- The original OLED path still exists and is kept as a hybrid fallback in firmware.
+- The active development display path is now the 2.8" TFT + touch panel under `firmware/lib/tft_ui.py`.
+- The TFT currently handles:
+  - enlarged splash / boot presentation
+  - large SD / IMU / GPS health cards
+  - decision window YES / NO touch routing
+  - first-time setup and pairing screens
+  - sync queue / upload / heartbeat / result states
+  - logging summary with satellite count and current session filename
+- The display currently shows battery percentage and SD usage percentage in the header.
+- Important temporary caveat: upload showing `0 pending` after a trial run does not necessarily indicate a sync bug. The most recent observed failure mode was SD `EIO` during session file open, which prevents a file from existing to upload in the first place.
 
 ---
 

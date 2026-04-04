@@ -22,6 +22,21 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
     *   **Feedback NeoPixel (IO4)**: 16x LED matrix. Main status & lap feedback.
     *   **Onboard NeoPixel (IO6)**: 1x LED. Mirrors Feedback NeoPixel color at all times.
     *   **Blue Debug LED (GPIO 2)**: Legacy debug indicator.
+*   **Validated Development Display**:
+    *   **TFT**: Generic 2.8" 240x320 SPI TFT using **ILI9341** controller.
+    *   **Touch**: Resistive touchscreen using **XPT2046** controller.
+    *   **Validated dedicated SPI bus (temporary bring-up mapping)**:
+        *   `TFT/T_CLK` on **IO15**
+        *   `TFT/T_DIN` on **IO16**
+        *   `TFT/T_OUT` on **IO9**
+        *   `TFT_CS` on **IO5**
+        *   `TFT_DC` on **IO6**
+        *   `TOUCH_CS` on **IO7**
+        *   temporary battery remap to **IO14**
+    *   **Required panel ties**:
+        *   `LED/BL` -> `3V3`
+        *   `RST` -> `3V3` or `EN`
+    *   This display path is currently used for boot / sync / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
     *   2.4GHz WiFi with **Stealth Provisioning** (OS probe suppression for Success/204). Only active in Sync Mode.
@@ -53,6 +68,8 @@ Operationally, that means:
     *   **Fast Red Blink**: (DECISION_IMU_SD_FAILED) IMU or SD (or both) have failed.
     *   **Solid Red**: (DECISION_GPS_FAIL) No NMEA detected. Device **holds** here indefinitely until GPS is recovered or SYNC button pressed.
     *   **Button pressed** during window → **SYNC MODE**.
+    *   **TFT touch YES** during window → **SYNC MODE** (temporary display path).
+    *   **TFT touch NO** during window and GPS OK → **LOGGING MODE**.
     *   **Exit condition**: 10s passed AND GPS OK → **LOGGING MODE**.
 
 ### **LOGGING MODE (Default — No Radio)**
@@ -78,6 +95,11 @@ Operationally, that means:
 *   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is now applied to actual LED output, not just animation choice.
 *   **Deferred Pairing Transition**: Long press (>3s) requests Pairing Mode, but the firmware now waits for active network work to quiesce before switching into AP + Captive Portal.
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
+*   **Temporary TFT UX path**:
+    *   large first-time setup screen
+    *   sync decision YES/NO touch targets
+    *   pairing, WiFi, heartbeat, queue, upload, result, idle, and logging summary screens
+    *   battery % and SD % shown in TFT header
 
 ---
 
@@ -115,6 +137,18 @@ The `LEDManager` uses semantic methods. Direct state strings are no longer used 
 | Sync: Low Battery | Reduced brightness + reduced TX power | Existing sync state colors, dimmed |
 | Pairing Mode | Breathing fade | Blue |
 | **SETUP_NEEDED** | **Balanced Rainbow**| **Complex Blends (no primary RGB)** |
+
+### **Temporary TFT Bring-Up Notes**
+
+The current validated display/touch bring-up on PSRAM firmware deliberately repurposes three original RS-Core pins:
+
+- `IO5`: used as `TFT_CS` instead of hardware sync button
+- `IO6`: used as `TFT_DC` instead of onboard NeoPixel
+- `IO7`: used as `TOUCH_CS` instead of the original battery ADC net
+
+To preserve battery monitoring during this phase, the firmware currently remaps battery sensing to `IO14`.
+
+This is a development-time wiring compromise, not the final production pinout.
 
 ### **CSV Log Format (Dual-Rate V2)**
 Logs are saved in the `/sd/learning/` or `/data/learning/` directory.

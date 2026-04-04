@@ -3317,3 +3317,143 @@ What is still likely needed:
 - promote the final per-session correction from a browser-side estimate into a durable server-side alignment artifact
 
 That is the remaining gap between “working canonical overlays” and “production-grade, deterministic overlay precision”.
+
+## 2026-04-05: TFT Touchscreen Bring-Up on PSRAM Firmware
+
+### Objective
+
+Replace the tiny debug-only display path with a proper rider-facing TFT workflow and make it usable in the actual RS-Core boot flow:
+
+- larger splash and boot screens on the 2.8" panel
+- touch-driven decision window for entering sync
+- first-time setup / pairing / sync / logging state visibility
+- preserve PSRAM firmware usage
+- stop fighting the SD card by moving the display off the SD SPI bus
+
+### What Was Validated
+
+The generic red 2.8" SPI TFT module was validated as:
+
+- **TFT controller**: `ILI9341`
+- **Touch controller**: `XPT2046`
+
+Initial bring-up succeeded with standalone workbench scripts and raw touch calibration. The major validation milestones were:
+
+1. TFT color-fill bring-up confirmed panel wiring and control signaling.
+2. Touch controller came alive only after wiring the dedicated touch bus pins (`T_CLK`, `T_DIN`, `T_OUT`) in parallel with the display SPI lines.
+3. Resistive touch was calibrated successfully with a tap-driven corner routine.
+4. The TFT path was then integrated into the actual firmware boot flow.
+
+### Critical Firmware Discovery
+
+The first PSRAM MicroPython build exposed a subtle but important compatibility issue:
+
+- `GPIO38` was valid
+- `GPIO36` and `GPIO37` returned `invalid pin`
+
+That meant the earlier temporary `36/37/38` mapping that worked on the non-PSRAM build could not be used on the PSRAM build.
+
+This was not a soldering problem. It was a firmware pin-exposure difference.
+
+### Temporary Pin Ownership Decision
+
+To keep momentum while staying on PSRAM firmware, the following temporary repurpose decision was made:
+
+- `IO5` -> `TFT_CS`
+- `IO6` -> `TFT_DC`
+- `IO7` -> `TOUCH_CS`
+- `IO14` -> temporary battery ADC remap
+
+Temporarily disabled:
+
+- physical sync button
+- onboard NeoPixel
+
+This got the display path alive again on the PSRAM build.
+
+### Structural Fix: Dedicated Second SPI Bus
+
+The SD card and TFT originally shared the same SPI bus. That caused intermittent storage failures during logging and sync-path confusion.
+
+After probing candidate pins on the PSRAM build, the following second SPI bus was validated as firmware-visible:
+
+- `IO15`
+- `IO16`
+- `IO9`
+
+The TFT/touch bus was therefore moved to:
+
+- `SCK` -> `IO15`
+- `MOSI` -> `IO16`
+- `MISO` -> `IO9`
+
+while keeping control lines on:
+
+- `TFT_CS` -> `IO5`
+- `TFT_DC` -> `IO6`
+- `TOUCH_CS` -> `IO7`
+
+This isolates the display from the SD card bus and is the correct long-term direction for reliable storage behavior on the current hardware revision.
+
+### Firmware UX Integration
+
+A new TFT UI module was added and expanded in stages:
+
+- `firmware/lib/tft_ui.py`
+
+The TFT now covers:
+
+- enlarged splash screen
+- larger boot sequence presentation
+- large SD / IMU / GPS status cards
+- YES / NO touch decision window
+- first-time setup screen
+- pairing / WiFi / heartbeat / queue / upload / result / idle sync screens
+- logging summary with:
+  - satellite count
+  - current session filename
+  - GPS status
+  - battery percentage
+  - SD usage percentage
+
+### Important Debugging Outcome
+
+At one point sync appeared broken because the TFT showed:
+
+- successful heartbeat / ACK
+- `Pending: 0`
+
+This was not enough evidence to call upload broken.
+
+The more important runtime observation was:
+
+- logging had failed with SD `EIO` while opening the session file
+
+So in that case, there was nothing to upload. The real fault path was storage/file-open, not the heartbeat logic.
+
+### Current Status
+
+What is working:
+
+- TFT boot sequence integrated into main firmware
+- first-time setup screen on TFT
+- touch calibration validated
+- touch decision routing implemented
+- dedicated TFT/touch SPI bus mapped in firmware
+- battery % and SD % shown in TFT header
+- larger rider-facing state screens implemented
+
+What remains under active refinement:
+
+- final SD logging reliability after the display bus split
+- sync/upload verification after a successful session file is created on SD
+- visual polish beyond scaled bitmap-font rendering
+
+### Product Direction Captured
+
+This session changed the device UX direction materially:
+
+- the TFT is no longer a bench-only experiment
+- it is now part of the actual RS-Core runtime path
+- the small OLED path remains as a hybrid fallback for now
+- the larger display is now the preferred direction for rider-visible boot / sync / setup UX

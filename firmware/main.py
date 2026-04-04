@@ -27,8 +27,8 @@ TRACK_RESPONSE_READ_SIZE = 1024
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_LED_FEEDBACK = 4    # Feedback NeoPixel (16-LED matrix)
-PIN_BUTTON_SYNC = 5     # Sync Button (GND-btn-IO5, active LOW)
-PIN_LED_ONBOARD = 6     # Onboard NeoPixel (1 LED, mirrors feedback)
+PIN_BUTTON_SYNC = None  # Temporarily disabled; IO5 used for TFT_CS
+PIN_LED_ONBOARD = None  # Temporarily disabled; IO6 used for TFT_DC
 PIN_GPS_RX = 18
 PIN_GPS_TX = 17
 PIN_I2C_SDA = 21
@@ -38,8 +38,14 @@ PIN_SD_MOSI = 11
 PIN_SD_MISO = 13
 PIN_SD_CS = 10
 PIN_SD_CD = 3           # Card Detect
-PIN_BATTERY_ADC = 7      # VBAT-SENSE (100k/100k divider)
+PIN_BATTERY_ADC = 14     # Temporary battery sense remap
 PIN_DEBUG_LED = 2       # Blue Debug LED
+PIN_TFT_CS = 5
+PIN_TFT_DC = 6
+PIN_TOUCH_CS = 7
+PIN_TFT_SCK = 15
+PIN_TFT_MOSI = 16
+PIN_TFT_MISO = 9
 
 # Sensitivity constants now handled by IMU driver class
 
@@ -88,6 +94,17 @@ def get_storage_used_percent(sm):
         return int(round((info['used_kb'] * 100.0) / info['total_kb']))
     except Exception:
         return None
+
+
+def prepare_shared_spi_bus():
+    # Keep TFT control lines idle. TFT now uses a dedicated SPI bus.
+    for pin_no, value in ((PIN_TFT_CS, 1), (PIN_TOUCH_CS, 1), (PIN_TFT_DC, 0)):
+        if pin_no is None:
+            continue
+        try:
+            machine.Pin(pin_no, machine.Pin.OUT, value=value)
+        except Exception as e:
+            print("[SPI] Pin prep failed on", pin_no, e)
 
 
 def raw_oled_wake(i2c, label="wake"):
@@ -148,11 +165,16 @@ def setup():
     # 2. Power Stability Delay
     print("Stabilizing power...")
     time.sleep_ms(1000)
+
+    # Ensure shared SPI peripherals are idle before SD init.
+    prepare_shared_spi_bus()
     
     # 3. Battery Monitor
     diag.record_phase("BOOT_BATTERY_INIT")
-    vbat_adc = machine.ADC(machine.Pin(PIN_BATTERY_ADC))
-    vbat_adc.atten(machine.ADC.ATTN_11DB)
+    vbat_adc = None
+    if PIN_BATTERY_ADC is not None:
+        vbat_adc = machine.ADC(machine.Pin(PIN_BATTERY_ADC))
+        vbat_adc.atten(machine.ADC.ATTN_11DB)
 
     # 4. Mount SD Card (Native ESP32 SD driver — proven working in full_system_test.py)
     sd_mounted = False
@@ -168,6 +190,7 @@ def setup():
     # 5. Session Manager
     sm = SessionManager(sd_mounted=sd_mounted)
     oled = None
+    tft = None
     if sd_mounted:
         s_info = sm.get_active_storage_info()
         if s_info:
@@ -269,6 +292,32 @@ def setup():
     track_eng = TrackEngine()
     track_eng.load_track()
 
+    # 8.5 TFT boot UI init. This board shares SPI with SD and only handles boot/decision UX for now.
+    try:
+        from lib.tft_ui import TFTBootUI
+        tft = TFTBootUI(
+            pin_sck=PIN_TFT_SCK,
+            pin_mosi=PIN_TFT_MOSI,
+            pin_miso=PIN_TFT_MISO,
+            pin_tft_cs=PIN_TFT_CS,
+            pin_tft_dc=PIN_TFT_DC,
+            pin_touch_cs=PIN_TOUCH_CS,
+        )
+        tft.show_startup_logo()
+        time.sleep_ms(600)
+        tft.show_boot(
+            "Device status",
+            sd_ok=sd_mounted,
+            imu_ok=imu is not None,
+            gps_ok=sentences_received >= 5,
+            gps_baud=115200,
+            gps_rate_hz=10,
+        )
+        print("[TFT] Boot UI initialized")
+    except Exception as e:
+        tft = None
+        print("[TFT] Init failed:", e)
+
     # 9. OLED late init. The panel reliably wakes only after the rest of boot has settled.
     try:
         time.sleep_ms(600)
@@ -294,7 +343,7 @@ def setup():
     imu_ok = imu is not None
     gps_ok = sentences_received >= 5
 
-    return led, gps, imu, sm, track_eng, oled, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
+    return led, gps, imu, sm, track_eng, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
 
 def main():
     prev_state, current_state = diag.boot_start()
@@ -304,10 +353,12 @@ def main():
         if prev_state.get("exception"):
             print("[Diag] Previous exception:", prev_state.get("exception"))
 
-    led, gps, imu, sm, track_eng, oled, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received = setup()
+    led, gps, imu, sm, track_eng, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received = setup()
     
     # --- Sync Button (IO5) ---
-    sync_btn = machine.Pin(PIN_BUTTON_SYNC, machine.Pin.IN, machine.Pin.PULL_UP)
+    sync_btn = None
+    if PIN_BUTTON_SYNC is not None:
+        sync_btn = machine.Pin(PIN_BUTTON_SYNC, machine.Pin.IN, machine.Pin.PULL_UP)
     
     # --- FIRST-TIME SETUP CHECK ---
     # If no WiFi credentials exist, skip button check and go straight to pairing
@@ -316,9 +367,11 @@ def main():
     if not config.get('ssid'):
         print("\n[System] No WiFi configured — First-time setup! Entering Pairing Mode.")
         diag.record_phase("SYNC_SETUP_NEEDED")
+        if tft:
+            tft.show_message("SETUP", "No WiFi configured", "Entering sync")
         if oled:
             oled.show_first_time_setup()
-        run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc)
+        run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc)
         return  # Never reaches here (sync mode loops forever)
     
     # --- 10-SECOND DECISION WINDOW ---
@@ -377,12 +430,29 @@ def main():
             remaining_ms = 10000 - elapsed
             oled.show_decision(sd_mounted, imu_ok, gps_ok, gps_sentences=sentences_received, countdown_ms=remaining_ms)
             oled.tick(force=True)
+        if tft:
+            tft.set_context(
+                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                sd_ok=sd_mounted,
+                sd_pct=get_storage_used_percent(sm),
+            )
+            remaining_ms = 10000 - elapsed
+            tft.show_decision(sd_mounted, imu_ok, gps_ok, gps_sentences=sentences_received, countdown_ms=remaining_ms)
         
         # Check button (active LOW — pressed when value() == 0)
-        if sync_btn.value() == 0:
+        if sync_btn and sync_btn.value() == 0:
             sync_requested = True
             print("[System] SYNC button pressed! Entering Sync Mode.")
             break
+        if tft:
+            touch_action = tft.decision_touch()
+            if touch_action == "yes":
+                sync_requested = True
+                print("[System] SYNC requested from touchscreen.")
+                break
+            if touch_action == "no" and gps_ok:
+                print("[System] LOGGING selected from touchscreen.")
+                break
         
         # Exit condition: 10s passed AND GPS is okay
         # If GPS is NOT okay, we stay here forever (or until SYNC is pressed)
@@ -400,21 +470,23 @@ def main():
     if sync_requested:
         print("\n[System] ==> SYNC MODE")
         diag.record_phase("MODE_SYNC")
-        run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc)
+        prepare_shared_spi_bus()
+        run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc)
     else:
         print("\n[System] ==> LOGGING MODE")
         diag.record_phase("MODE_LOGGING")
         # Kill all radios immediately
         from lib.wifi_manager import stop_wifi
         stop_wifi()
-        logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt)
+        prepare_shared_spi_bus()
+        logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt)
 
 
 # ==================================================================
 # SYNC MODE — WiFi upload / Pairing. No logging.
 # ==================================================================
 
-def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
+def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc):
     """
     Exclusive sync mode. No telemetry logging occurs.
     
@@ -433,6 +505,12 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
     def update_oled_context():
         if oled:
             oled.set_context(
+                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                sd_ok=sm.sd_mounted,
+                sd_pct=get_storage_used_percent(sm),
+            )
+        if tft:
+            tft.set_context(
                 battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
                 sd_ok=sm.sd_mounted,
                 sd_pct=get_storage_used_percent(sm),
@@ -456,6 +534,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                 update_oled_context()
                 oled.show_first_time_setup()
                 oled.tick()
+            if tft:
+                tft.show_first_time_setup()
             time.sleep_ms(50)
     
     elif config.get('ssid'):
@@ -467,6 +547,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             update_oled_context()
             oled.show_sync_searching(config.get('ssid', ''))
             oled.tick(force=True)
+        if tft:
+            tft.show_sync_searching(config.get('ssid', ''))
         
         gc.collect()
         sta = network.WLAN(network.STA_IF)
@@ -515,6 +597,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                     update_oled_context()
                     oled.show_sync_connected(config.get('ssid', ''), sta.ifconfig()[0])
                     oled.tick(force=True)
+                if tft:
+                    tft.show_sync_connected(config.get('ssid', ''), sta.ifconfig()[0])
                 wdt.feed()
                 time.sleep(1)  # Brief visual confirmation
                 wdt.feed()
@@ -528,6 +612,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             if oled:
                 update_oled_context()
                 oled.show_message("SYNC FAIL", "WiFi connect failed", config.get('ssid', ''))
+            if tft:
+                tft.show_message("SYNC FAIL", "WiFi connect failed", config.get('ssid', ''))
             sta.active(False)
             gc.collect()
     
@@ -633,6 +719,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             if oled:
                 update_oled_context()
                 oled.show_heartbeat("URL error", detail=str(e))
+            if tft:
+                tft.show_heartbeat("URL error", detail=str(e))
             return False
 
         # Gather Telemetry
@@ -675,6 +763,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             if oled:
                 update_oled_context()
                 oled.show_heartbeat("Sending", host=host, detail="POST /ping")
+            if tft:
+                tft.show_heartbeat("Sending", host=host, detail="POST /ping")
             
             # 1. Opening Raw Socket
             ai = socket.getaddrinfo(host, port)[0]
@@ -705,6 +795,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                 if oled:
                     update_oled_context()
                     oled.show_heartbeat("ACK OK", host=host, detail="Heartbeat accepted")
+                if tft:
+                    tft.show_heartbeat("ACK OK", host=host, detail="Heartbeat accepted")
                 time.sleep(1) # Visual confirmation
                 success = True
             else:
@@ -712,6 +804,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                 if oled:
                     update_oled_context()
                     oled.show_heartbeat("Rejected", host=host, detail=resp_line.strip())
+                if tft:
+                    tft.show_heartbeat("Rejected", host=host, detail=resp_line.strip())
             
             # 5. Active Track Pull (Separate connection for safety)
             if success:
@@ -774,6 +868,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                                     if oled:
                                         update_oled_context()
                                         oled.show_track_sync(track_info.get('track_name') or track_info.get('name', 'Unknown'))
+                                    if tft:
+                                        tft.show_track_sync(track_info.get('track_name') or track_info.get('name', 'Unknown'))
                                 else:
                                     print("[Sync] Active track is null on server.")
                             else:
@@ -793,6 +889,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             if oled:
                 update_oled_context()
                 oled.show_heartbeat("Network error", host=host if 'host' in locals() else "", detail=str(e))
+            if tft:
+                tft.show_heartbeat("Network error", host=host if 'host' in locals() else "", detail=str(e))
         finally:
             if ss: ss.close()
             if s: s.close()
@@ -815,27 +913,50 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             if oled:
                 update_oled_context()
                 oled.show_sync_queue(pending)
+            if tft:
+                tft.show_sync_queue(pending)
 
             def upload_status(event, **info):
-                if not oled:
+                if not oled and not tft:
                     return
-                update_oled_context()
+                if oled:
+                    update_oled_context()
                 if event == "queue":
-                    oled.show_sync_queue(info.get("files", []))
+                    if oled:
+                        oled.show_sync_queue(info.get("files", []))
+                    if tft:
+                        tft.show_sync_queue(info.get("files", []))
                 elif event in ("upload_start", "upload_progress", "upload_done"):
-                    oled.show_sync_upload(
-                        info.get("filename", ""),
-                        info.get("file_index", 0),
-                        info.get("total_files", 1),
-                        info.get("sent_bytes", 0),
-                        info.get("total_bytes", 0),
-                        info.get("global_current", 0),
-                        info.get("global_total", 0),
-                    )
+                    if oled:
+                        oled.show_sync_upload(
+                            info.get("filename", ""),
+                            info.get("file_index", 0),
+                            info.get("total_files", 1),
+                            info.get("sent_bytes", 0),
+                            info.get("total_bytes", 0),
+                            info.get("global_current", 0),
+                            info.get("global_total", 0),
+                        )
+                    if tft:
+                        tft.show_sync_upload(
+                            info.get("filename", ""),
+                            info.get("file_index", 0),
+                            info.get("total_files", 1),
+                            info.get("sent_bytes", 0),
+                            info.get("total_bytes", 0),
+                            info.get("global_current", 0),
+                            info.get("global_total", 0),
+                        )
                     if event == "upload_done":
-                        oled.show_sync_result(True, info.get("filename", ""), "Archived")
+                        if oled:
+                            oled.show_sync_result(True, info.get("filename", ""), "Archived")
+                        if tft:
+                            tft.show_sync_result(True, info.get("filename", ""), "Archived")
                 elif event == "upload_failed":
-                    oled.show_sync_result(False, info.get("filename", ""), "Request failed")
+                    if oled:
+                        oled.show_sync_result(False, info.get("filename", ""), "Request failed")
+                    if tft:
+                        tft.show_sync_result(False, info.get("filename", ""), "Request failed")
 
             if pending:
                 print(f"[Sync] Starting upload of {len(pending)} file(s)...")
@@ -848,24 +969,32 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                     if oled:
                         update_oled_context()
                         oled.show_sync_result(True, detail="All files uploaded")
+                    if tft:
+                        tft.show_sync_result(True, detail="All files uploaded")
                 else:
                     print("[Sync] One or more uploads failed.")
                     led_ref.play_heartbeat_error()
                     if oled:
                         update_oled_context()
                         oled.show_sync_result(False, detail="One or more uploads failed")
+                    if tft:
+                        tft.show_sync_result(False, detail="One or more uploads failed")
             else:
                 print("[Sync] No pending files.")
                 led_ref.play_idle()
                 if oled:
                     update_oled_context()
                     oled.show_sync_queue([])
+                if tft:
+                    tft.show_sync_queue([])
         except Exception as e:
             print(f"[Sync] Uploader Thread Fatal: {e}")
             led_ref.play_heartbeat_error()
             if oled:
                 update_oled_context()
                 oled.show_sync_result(False, detail=str(e))
+            if tft:
+                tft.show_sync_result(False, detail=str(e))
         finally:
             set_state(uploader_busy=False, uploader_started=False)
 
@@ -912,6 +1041,8 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
                 update_oled_context()
                 oled.show_pairing()
                 oled.tick()
+            if tft:
+                tft.show_pairing()
             time.sleep_ms(50)
             continue
 
@@ -973,8 +1104,10 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
             if oled:
                 update_oled_context()
                 oled.show_sync_idle(get_state("hb_ok"), pending_count=pending_count, low_power=get_state("low_power_mode"))
+            if tft:
+                tft.show_sync_idle(get_state("hb_ok"), pending_count=pending_count, low_power=get_state("low_power_mode"))
         
-        if sync_btn.value() == 0:
+        if sync_btn and sync_btn.value() == 0:
             if press_start == 0:
                 press_start = time.ticks_ms()
             elif time.ticks_diff(time.ticks_ms(), press_start) > 3000:
@@ -994,7 +1127,7 @@ def run_sync_mode(led, sm, oled, sync_btn, wdt, vbat_adc):
 # LOGGING MODE — Pure telemetry capture. No radio.
 # ==================================================================
 
-def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
+def logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt):
     """
     Dual-rate logging loop:
       - IMU sampled at 100 Hz (every tick)
@@ -1008,6 +1141,7 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
     print("\n[System] Logging Active — 100Hz IMU / 10Hz GPS — All radios OFF")
     diag.record_phase("LOGGING_START")
     diag.mark_boot_completed("logging_loop_running")
+    prepare_shared_spi_bus()
     log_file = sm.get_log_file()
     print(f"[System] Session file: {log_file}")
     if oled:
@@ -1019,6 +1153,9 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
         )
         oled.show_logging_started(log_file, track_name=track_status.get("track_name"), force=True)
         oled.tick(force=True)
+    if tft:
+        track_status = track_eng.get_status()
+        tft.show_logging_started(log_file, track_name=track_status.get("track_name"), force=True)
     
     # RTC sync flag
     rtc_synced = False
@@ -1232,6 +1369,9 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
                                 sd_pct=get_storage_used_percent(sm),
                             )
                             oled.show_track_event(event, track_name=track_status.get("track_name"), sector=(track_status.get("current_sector", 0) + 1))
+                        if tft:
+                            track_status = track_eng.get_status()
+                            tft.show_track_event(event, track_name=track_status.get("track_name"), sector=(track_status.get("current_sector", 0) + 1))
                 except Exception as e:
                     if loop_count % 100 == 0:
                         print(f"TrackEng Error: {e}")
@@ -1270,6 +1410,9 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, vbat_adc, wdt):
         
         # ── 5. STORAGE CHECK (every 1000th tick = ~10s) ──
         if loop_count % 1000 == 0:
+            if tft:
+                track_status = track_eng.get_status()
+                tft.show_logging_live(log_file, sats=fix.get('satellites', 0), gps_ok=fix.get('valid', False), track_name=track_status.get("track_name"))
             try:
                 s_info = sm.get_active_storage_info()
                 if s_info and s_info['total_kb'] > 0:
