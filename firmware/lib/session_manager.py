@@ -101,11 +101,59 @@ class SessionManager:
     def list_sessions(self):
         """List all session files stored on active storage"""
         with self.lock:
+            return [entry["name"] for entry in self._scan_pending_entries_locked()]
+
+    def list_session_entries(self):
+        """List pending session entries across active and fallback storage."""
+        with self.lock:
+            return self._scan_pending_entries_locked()
+
+    def _candidate_session_dirs(self):
+        dirs = [self.active_dir]
+        if self.sd_mounted and self.flash_sessions not in dirs:
+            dirs.append(self.flash_sessions)
+        if '/sessions' not in dirs:
+            dirs.append('/sessions')
+        return dirs
+
+    def _scan_pending_entries_locked(self):
+        entries = []
+        seen = set()
+        for directory in self._candidate_session_dirs():
             try:
-                files = os.listdir(self.active_dir)
-                return [f for f in files if f.endswith('.csv')]
+                files = os.listdir(directory)
             except OSError:
-                return []
+                continue
+            for fname in files:
+                if not fname.endswith('.csv'):
+                    continue
+                path = directory + '/' + fname
+                if path in seen:
+                    continue
+                seen.add(path)
+                try:
+                    size = os.stat(path)[6]
+                except Exception:
+                    size = 0
+                entries.append({
+                    "name": fname,
+                    "path": path,
+                    "dir": directory,
+                    "size": size,
+                })
+        return entries
+
+    def get_pending_summary(self):
+        """Return pending file count and total size for sync UI."""
+        with self.lock:
+            entries = self._scan_pending_entries_locked()
+            count = len(entries)
+            total_bytes = 0
+            names = []
+            for entry in entries:
+                total_bytes += int(entry.get("size", 0) or 0)
+                names.append(entry.get("name", ""))
+            return {"count": count, "total_bytes": total_bytes, "names": names}
     
     def get_session_data(self, filename):
         """Read session file content for cloud upload"""
@@ -130,6 +178,29 @@ class SessionManager:
                 return True
             except Exception as e:
                 print(f"Error archiving {filename}: {e}")
+                return False
+
+    def archive_session_entry(self, entry):
+        """Archive a session entry after successful sync, preserving source dir."""
+        if not entry:
+            return False
+        fpath = entry.get("path")
+        directory = entry.get("dir") or self.active_dir
+        filename = entry.get("name") or (fpath.split("/")[-1] if fpath else "")
+        if not fpath or not filename:
+            return False
+        archive_dir = directory + '/uploaded'
+        with self.lock:
+            try:
+                try:
+                    os.mkdir(archive_dir)
+                except OSError:
+                    pass
+                os.rename(fpath, archive_dir + '/' + filename)
+                print(f"Archived synced session: {filename} ({directory})")
+                return True
+            except Exception as e:
+                print(f"Error archiving {filename} from {directory}: {e}")
                 return False
     
     def get_storage_info(self):

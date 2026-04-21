@@ -188,12 +188,9 @@ except: pass"
     
     if [ -d "drivers" ]; then
         echo -e "${CYAN}Syncing drivers/...${NC}"
-        # Explicit driver list to exclude bmi270 and __pycache__
-        DRIVERS_LIST=("bmi323.py" "gps.py" "sdcard.py" "oled.py")
-        for driver in "${DRIVERS_LIST[@]}"; do
-            if [ -f "drivers/$driver" ]; then
-                $MPREMOTE_CMD connect "$PORT" cp "drivers/$driver" :drivers/
-            fi
+        for f in drivers/*.py; do
+            [ -e "$f" ] || continue
+            $MPREMOTE_CMD connect "$PORT" cp "$f" :drivers/
         done
     fi
     
@@ -236,14 +233,15 @@ except Exception as e:
 }
 
 do_sync_drivers_only() {
-    echo -e "${YELLOW}Synchronizing drivers to ESP32 root...${NC}"
-    DRIVERS=("bmi323.py" "gps.py" "sdcard.py" "oled.py")
-    for driver in "${DRIVERS[@]}"; do
-        if [ -f "drivers/$driver" ]; then
-            echo "Pushing $driver..."
-            $MPREMOTE_CMD connect "$PORT" cp "drivers/$driver" : 
+    echo -e "${YELLOW}Synchronizing drivers to /drivers on ESP32...${NC}"
+    $MPREMOTE_CMD connect "$PORT" mkdir /drivers 2>/dev/null || true
+    for f in drivers/*.py; do
+        if [ -e "$f" ]; then
+            echo "Pushing $(basename "$f")..."
+            $MPREMOTE_CMD connect "$PORT" cp "$f" :drivers/
         else
-            echo -e "${RED}Warning: drivers/$driver not found!${NC}"
+            echo -e "${RED}Warning: no driver files found!${NC}"
+            break
         fi
     done
     echo -e "${GREEN}Drivers Sync Complete!${NC}"

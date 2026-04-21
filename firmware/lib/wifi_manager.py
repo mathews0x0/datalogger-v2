@@ -16,6 +16,11 @@ def _get_unique_ap_name():
     return 'RS-Core-' + mac[-4:].upper()
 
 
+def get_unique_ap_name():
+    """Public helper for screens that need to show the setup AP name."""
+    return _get_unique_ap_name()
+
+
 def load_device_config():
     """Load saved device configuration (WiFi + token)."""
     try:

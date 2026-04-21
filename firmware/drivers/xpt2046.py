@@ -3,6 +3,7 @@ class XPT2046:
     CMD_Y = 0x90
     CMD_Z1 = 0xB0
     CMD_Z2 = 0xC0
+    TOUCH_Z_MIN = 1200
 
     def __init__(self, spi, cs, irq=None, calibration=None, baudrate=2_000_000):
         self.spi = spi
@@ -45,17 +46,32 @@ class XPT2046:
             return 0
         return z1 + (4095 - z2)
 
+    def _is_idle_raw(self, raw):
+        if raw is None:
+            return True
+        x = raw["x"]
+        y = raw["y"]
+        z = raw["z"]
+        if x == 0x0FFF and y == 0x0FFF and z == 0:
+            return True
+        # Observed untouched state for this panel/board.
+        if x < 32 and 1980 <= y <= 2120 and z < 2400:
+            return True
+        return False
+
+    def _looks_pressed(self, raw):
+        if self._is_idle_raw(raw):
+            return False
+        if raw["z"] >= self.TOUCH_Z_MIN:
+            return True
+        # Some light touches report weak pressure but valid non-idle X/Y.
+        return raw["x"] > 64 and not (1980 <= raw["y"] <= 2120)
+
     def touched(self):
         if self.irq is not None:
             return self.irq.value() == 0
         raw = self.read_raw(samples=2, _skip_touch_check=True)
-        if raw is None:
-            return False
-        z = raw["z"]
-        # This panel idles around x=0, y=2047, z≈2050 when untouched.
-        if raw["x"] < 32 and 2000 <= raw["y"] <= 2095 and z < 2300:
-            return False
-        return z >= 2300
+        return self._looks_pressed(raw)
 
     def read_raw(self, samples=5, _skip_touch_check=False):
         if not _skip_touch_check and not self.touched():
@@ -73,9 +89,27 @@ class XPT2046:
         return {"x": x, "y": y, "z": z}
 
     def read(self):
-        raw = self.read_raw()
-        if raw is None:
+        values_x = []
+        values_y = []
+        values_z = []
+        # Do not rely on a single touched() gate. Resistive panels often have
+        # one or two noisy first samples at contact.
+        for _ in range(6):
+            raw = self.read_raw(samples=2, _skip_touch_check=True)
+            if self._looks_pressed(raw):
+                values_x.append(raw["x"])
+                values_y.append(raw["y"])
+                values_z.append(raw["z"])
+                if len(values_x) >= 3:
+                    break
+        if not values_x:
             return None
+
+        values_x.sort()
+        values_y.sort()
+        values_z.sort()
+        mid = len(values_x) // 2
+        raw = {"x": values_x[mid], "y": values_y[mid], "z": values_z[mid]}
 
         cfg = self.calibration
         x = raw["x"]

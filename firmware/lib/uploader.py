@@ -166,8 +166,9 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
         status_path = base_path + '/status'
         complete_path = base_path + '/complete'
     except Exception as e:
-        print(f"[Sync] URL Parse Error: {e}")
-        return False, 0, 0
+        detail = "URL parse error"
+        print(f"[Sync] {detail}: {e}")
+        return False, 0, 0, detail
 
     offset = 0
     s = None
@@ -211,6 +212,9 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
                     total_bytes=total_size,
                     global_current=global_current + offset,
                     global_total=global_total,
+                    batch_count=0,
+                    total_batches=total_batches,
+                    detail="Resume check",
                 )
             except:
                 pass
@@ -285,20 +289,23 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
                                     file_index=file_index,
                                     total_files=total_files,
                                     sent_bytes=offset,
-                                    total_bytes=total_size,
-                                    global_current=global_current + offset,
-                                    global_total=global_total,
-                                    batch_count=batch_count,
+                                total_bytes=total_size,
+                                global_current=global_current + offset,
+                                global_total=global_total,
+                                batch_count=batch_count,
                                     total_batches=total_batches,
+                                    detail="Streaming batch %d/%d" % (batch_count, total_batches),
                                 )
                             except:
                                 pass
                     else:
-                        print(f'[Sync] HTTP Error: {status_line.strip()}')
-                        return False, offset, offset
+                        detail = status_line.strip() or "HTTP error"
+                        print(f'[Sync] HTTP Error: {detail}')
+                        return False, offset, offset, detail
                 except Exception as batch_e:
-                    print(f'[Sync] Socket Error at offset {offset}: {batch_e}')
-                    return False, offset, offset
+                    detail = "Socket error: %s" % batch_e
+                    print(f'[Sync] {detail} at offset {offset}')
+                    return False, offset, offset, detail
 
         # 4. Finalize on the SAME connection
         print(f'[Sync] Finalizing {fname} ({batch_count} batches, {offset} bytes)...')
@@ -317,20 +324,24 @@ def _upload_file_persistent(filepath, fname, api_url, token, led=None, wdt=None,
                                 total_bytes=total_size,
                                 global_current=global_current + total_size,
                                 global_total=global_total,
+                                batch_count=batch_count,
+                                total_batches=total_batches,
+                                detail="Archive pending",
                             )
                         except:
                             pass
-                    return True, batch_count, offset
+                    return True, batch_count, offset, ""
                 print(f'[Sync] Finalize rejected, retry {attempt + 1}')
             except Exception as fin_e:
                 print(f'[Sync] Finalize error: {fin_e}')
             time.sleep_ms(500)
 
-        return False, batch_count, offset
+        return False, batch_count, offset, "Finalize failed"
 
     except Exception as e:
-        print(f"[Sync] Connection Error: {e}")
-        return False, 0, offset
+        detail = "Connection error: %s" % e
+        print(f"[Sync] {detail}")
+        return False, 0, offset, detail
     finally:
         if ss:
             ss.close()
@@ -350,47 +361,53 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None, status_cb=None):
     if not token or not api_url:
         return False
 
-    files = session_mgr.list_sessions()
-    if not files:
+    entries = session_mgr.list_session_entries()
+    if not entries:
         return True
 
     # Pre-calculate global total size
     global_total_size = 0
-    valid_files = []
-    for fname in files:
-        filepath = session_mgr.active_dir + '/' + fname
+    valid_entries = []
+    for entry in entries:
+        fname = entry.get('name', '')
+        filepath = entry.get('path', '')
+        if not fname or not filepath:
+            continue
         if _validate_session(filepath):
             try:
-                global_total_size += os.stat(filepath)[6]
-                valid_files.append(fname)
+                entry['size'] = os.stat(filepath)[6]
+                global_total_size += entry['size']
+                valid_entries.append(entry)
             except:
                 pass
         else:
-            session_mgr.delete_session(fname)
+            session_mgr.archive_session_entry(entry)
 
-    print(f'[Sync] Batch Mode: {len(valid_files)} files pending ({global_total_size / (1024 * 1024):.2f} MB total)')
+    print(f'[Sync] Batch Mode: {len(valid_entries)} files pending ({global_total_size / (1024 * 1024):.2f} MB total)')
     if status_cb:
         try:
-            status_cb("queue", files=valid_files, global_total=global_total_size)
+            status_cb("queue", files=[entry.get('name', '') for entry in valid_entries], global_total=global_total_size)
         except:
             pass
 
-    success_count = len(files) - len(valid_files)
+    success_count = len(entries) - len(valid_entries)
     global_current = 0
 
-    for i, fname in enumerate(valid_files):
+    for i, entry in enumerate(valid_entries):
         try:
-            filepath = session_mgr.active_dir + '/' + fname
+            fname = entry.get('name', '')
+            filepath = entry.get('path', '')
             ok = False
             file_bytes_sent = 0
+            fail_detail = ""
 
             for attempt in range(MAX_RETRIES):
-                ok, _, file_bytes_sent = _upload_file_persistent(
+                ok, _, file_bytes_sent, fail_detail = _upload_file_persistent(
                     filepath, fname, api_url, token, led, wdt, lock,
                     global_total=global_total_size,
                     global_current=global_current,
                     file_index=i,
-                    total_files=len(valid_files),
+                    total_files=len(valid_entries),
                     status_cb=status_cb,
                 )
                 if ok:
@@ -400,7 +417,7 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None, status_cb=None):
                 gc.collect()
 
             if ok:
-                session_mgr.delete_session(fname)
+                session_mgr.archive_session_entry(entry)
                 success_count += 1
             elif status_cb:
                 try:
@@ -408,11 +425,12 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None, status_cb=None):
                         "upload_failed",
                         filename=fname,
                         file_index=i,
-                        total_files=len(valid_files),
+                        total_files=len(valid_entries),
                         sent_bytes=file_bytes_sent,
                         total_bytes=os.stat(filepath)[6],
                         global_current=global_current + file_bytes_sent,
                         global_total=global_total_size,
+                        detail=fail_detail or "Upload failed",
                     )
                 except:
                     pass
@@ -422,4 +440,4 @@ def sync_all(session_mgr, led=None, wdt=None, lock=None, status_cb=None):
         except Exception as e:
             print(f'[Sync] Error {fname}: {e}')
 
-    return success_count == len(files)
+    return success_count == len(entries)

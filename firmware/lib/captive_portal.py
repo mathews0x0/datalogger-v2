@@ -241,6 +241,14 @@ def save_device_config(ssid, password, token, api_url):
         print("[Portal] Save error:", e)
         return False
 
+
+def load_device_config():
+    try:
+        with open(DEVICE_CONFIG_PATH, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
 def _parse_params(raw_str):
     """Parse params from query string or POST body."""
     params = {}
@@ -357,11 +365,13 @@ def start_captive_portal(led=None, ap_ip='192.168.4.1'):
                 body = req.split('\r\n\r\n', 1)[1] if '\r\n\r\n' in req else ''
                 params.update(_parse_params(body))
             
-            # PROVISIONING LOGIC
-            ssid = params.get('ssid', '')
-            pw = params.get('password', params.get('pass', ''))
-            token = params.get('token', '')
-            api = params.get('api_url', 'https://racesense.in/api/upload')
+            # PROVISIONING LOGIC. If no URL/form params are supplied, pre-fill
+            # the setup form from saved device config so existing WiFi is clear.
+            saved = load_device_config()
+            ssid = params.get('ssid', saved.get('ssid', ''))
+            pw = params.get('password', params.get('pass', saved.get('password', '')))
+            token = params.get('token', saved.get('token', ''))
+            api = params.get('api_url', saved.get('api_url', 'https://racesense.in/api/upload'))
             
             if method == 'POST' or (ssid and token):
                 # Magic Link or Form Submit: Save and Reboot

@@ -36,7 +36,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
     *   **Required panel ties**:
         *   `LED/BL` -> `3V3`
         *   `RST` -> `3V3` or `EN`
-    *   This display path is currently used for boot / sync / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
+    *   This display path is currently used for boot / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
     *   2.4GHz WiFi with **Stealth Provisioning** (OS probe suppression for Success/204). Only active in Sync Mode.
@@ -68,8 +68,9 @@ Operationally, that means:
     *   **Fast Red Blink**: (DECISION_IMU_SD_FAILED) IMU or SD (or both) have failed.
     *   **Solid Red**: (DECISION_GPS_FAIL) No NMEA detected. Device **holds** here indefinitely until GPS is recovered or SYNC button pressed.
     *   **Button pressed** during window → **SYNC MODE**.
-    *   **TFT touch YES** during window → **SYNC MODE** (temporary display path).
-    *   **TFT touch NO** during window and GPS OK → **LOGGING MODE**.
+    *   **TFT touch `SYNC`** during window → **SYNC MODE**.
+    *   **TFT touch `SET`** during window → Settings (`WIFI`, `CALIB`, `BACK`).
+    *   **TFT touch `LOG`** during window and GPS OK → **LOGGING MODE**.
     *   **Exit condition**: 10s passed AND GPS OK → **LOGGING MODE**.
 
 ### **LOGGING MODE (Default — No Radio)**
@@ -96,10 +97,20 @@ Operationally, that means:
 *   **Deferred Pairing Transition**: Long press (>3s) requests Pairing Mode, but the firmware now waits for active network work to quiesce before switching into AP + Captive Portal.
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 *   **Temporary TFT UX path**:
-    *   large first-time setup screen
-    *   sync decision YES/NO touch targets
-    *   pairing, WiFi, heartbeat, queue, upload, result, idle, and logging summary screens
+    *   large first-time setup screen showing the actual setup AP name
+    *   sync decision `SYNC` / `SET` / `LOG` touch targets
+    *   settings screen with `WIFI`, `CALIB`, and `BACK`
+    *   pairing and WiFi screens showing saved SSID or setup AP name where applicable
+    *   heartbeat screen shown as rider-facing red/green heart status
+    *   queue, single-screen upload, result, idle, and logging summary screens
+    *   upload screen shows one overall progress bar, percentage, ETA, current file, file index, and chunk count
+    *   per-file archive messages are suppressed on TFT; archive remains background behavior
     *   battery % and SD % shown in TFT header
+*   **Touch calibration**:
+    *   Runs once if `/data/metadata/touch.json` is missing.
+    *   Can be rerun from Settings -> `CALIB`.
+    *   Uses five points: top-left, top-right, bottom-right, bottom-left, center.
+    *   Calibration is per-device and should be preserved with other metadata.
 
 ---
 

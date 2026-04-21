@@ -27,6 +27,8 @@ class OLEDStatus:
         self._battery_pct_filtered = None
         self._sd_ok = None
         self._sd_pct = None
+        self._ram_used_mb = None
+        self._ram_total_mb = None
         try:
             if (controller or "sh1106").lower() == "ssd1306":
                 self._display = SSD1306_I2C(width, height, i2c, addr=addr)
@@ -46,7 +48,7 @@ class OLEDStatus:
     def is_enabled(self):
         return self._enabled and self._display is not None
 
-    def set_context(self, battery_pct=None, sd_ok=None, sd_pct=None):
+    def set_context(self, battery_pct=None, sd_ok=None, sd_pct=None, ram_used_mb=None, ram_total_mb=None):
         if battery_pct is not None:
             try:
                 battery_pct = int(battery_pct)
@@ -69,6 +71,16 @@ class OLEDStatus:
                 self._sd_pct = max(0, min(100, int(sd_pct)))
             except Exception:
                 self._sd_pct = None
+        if ram_used_mb is not None:
+            try:
+                self._ram_used_mb = max(0.0, float(ram_used_mb))
+            except Exception:
+                self._ram_used_mb = None
+        if ram_total_mb is not None:
+            try:
+                self._ram_total_mb = max(0.0, float(ram_total_mb))
+            except Exception:
+                self._ram_total_mb = None
 
     def _max_chars(self, reserve_px=0):
         usable = max(0, self._width - reserve_px - SAFE_RIGHT_PX)
@@ -145,12 +157,20 @@ class OLEDStatus:
         if footer:
             self._draw_center(self._height - CHAR_H, footer, 1)
 
+    def _draw_ram_row(self, y):
+        if self._ram_used_mb is None or self._ram_total_mb is None:
+            return False
+        self._draw_text(0, y, "RAM %.1f/%.1fM" % (self._ram_used_mb, self._ram_total_mb), 1)
+        return True
+
     def _render_screen(self, title, lines=None, footer=None, progress=None):
         self._display.fill(0)
         self._draw_header(title)
         y = 16
         self._draw_status_row(y, 1)
         y += 10
+        if self._draw_ram_row(y):
+            y += 10
         if lines:
             for line in lines[:4]:
                 self._draw_text(0, y, line)
@@ -219,14 +239,16 @@ class OLEDStatus:
             lines.append("GPS %s/%sHz" % (gps_baud, gps_rate_hz))
         return self._show("screen", "BOOT", lines, "Starting", None)
 
-    def show_decision(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None):
+    def show_decision(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False):
         lines = [
             "SD: " + ("OK" if sd_ok else "ERR"),
             "IMU: " + ("OK" if imu_ok else "ERR"),
             "GPS: " + ("OK" if gps_ok else ("WAIT %d/5" % gps_sentences)),
         ]
         footer = "Press sync to upload"
-        if countdown_ms is not None and gps_ok:
+        if paused:
+            footer = "Timer paused"
+        elif countdown_ms is not None and gps_ok:
             footer = "Sync in %ds" % max(0, countdown_ms // 1000)
         return self._show("screen", "SYNC?", lines, footer, None)
 
@@ -248,6 +270,13 @@ class OLEDStatus:
     def show_sync_connected(self, ssid, ip):
         return self._show("screen", "SYNC", ["WiFi connected", ssid or "", ip or ""], "Cloud handshake", None)
 
+    def show_sync_wifi_failed(self, ssid="", allow_retry=True):
+        lines = ["WiFi connect failed"]
+        if ssid:
+            lines.append(str(ssid))
+        footer = "Tap scan on TFT" if allow_retry else "Use pairing"
+        return self._show("screen", "SYNC FAIL", lines, footer, None)
+
     def show_heartbeat(self, state, host="", detail=""):
         lines = [state]
         if host:
@@ -259,14 +288,15 @@ class OLEDStatus:
     def show_track_sync(self, track_name):
         return self._show("screen", "TRACK", ["Server track", track_name or "None"], "Track metadata", None)
 
-    def show_sync_queue(self, files):
+    def show_sync_queue(self, files, allow_reboot=False):
         if not files:
             lines = ["No pending files"]
         else:
             lines = ["%d file(s)" % len(files)]
             for fname in files[:3]:
                 lines.append(_short_name(fname))
-        return self._show("screen", "SYNC QUEUE", lines, "Awaiting upload", None)
+        footer = "Tap reboot on TFT" if allow_reboot else "Awaiting upload"
+        return self._show("screen", "SYNC QUEUE", lines, footer, None)
 
     def show_sync_upload(self, filename, file_index, total_files, sent_bytes, total_bytes, global_current=0, global_total=0):
         pct = 0 if total_bytes <= 0 else int((sent_bytes * 100) / total_bytes)
@@ -279,14 +309,14 @@ class OLEDStatus:
             footer = "Global %d%%" % int((global_current * 100) / global_total)
         return self._show("screen", "SYNCING", lines, footer, (pct, 100))
 
-    def show_sync_result(self, ok, filename="", detail=""):
+    def show_sync_result(self, ok, filename="", detail="", allow_reboot=False):
         title = "SYNC OK" if ok else "SYNC FAIL"
         lines = []
         if filename:
             lines.append(_short_name(filename))
         if detail:
             lines.append(str(detail))
-        footer = "Upload complete" if ok else "Retry later"
+        footer = "Tap reboot on TFT" if allow_reboot else ("Upload complete" if ok else "Retry later")
         return self._show("screen", title, lines, footer, None)
 
     def show_sync_idle(self, hb_ok, pending_count=0, low_power=False):
@@ -295,9 +325,20 @@ class OLEDStatus:
             lines.append("Battery: low")
         return self._show("screen", "SYNC READY", lines, "Hold to pair", None)
 
-    def show_logging_started(self, filename, track_name=None, force=False):
+    def show_logging_started(self, filename, track_name=None, elapsed_minutes=0, force=False):
         lines = [_short_name(filename)]
         lines.append(track_name or "No active track")
+        lines.append("T+%dm" % max(0, int(elapsed_minutes)))
+        return self._show("screen", "LOGGING", lines, "", None)
+
+    def show_logging_live(self, filename, sats=0, gps_ok=False, track_name=None, elapsed_minutes=0):
+        lines = [
+            _short_name(filename),
+            (track_name or "No active track"),
+            "SATS %d" % max(0, int(sats or 0)),
+            "GPS " + ("OK" if gps_ok else "WAIT"),
+            "T+%dm" % max(0, int(elapsed_minutes)),
+        ]
         return self._show("screen", "LOGGING", lines, "", None)
 
     def show_track_event(self, event, track_name=None, sector=None):

@@ -175,12 +175,17 @@ Track-resolution layering as of the canonical package rollout:
 - The TFT currently handles:
   - enlarged splash / boot presentation
   - large SD / IMU / GPS health cards
-  - decision window YES / NO touch routing
-  - first-time setup and pairing screens
-  - sync queue / upload / heartbeat / result states
+  - decision window `SYNC` / `SET` / `LOG` touch routing
+  - settings screen with `WIFI`, `CALIB`, and `BACK`
+  - first-time setup and pairing screens showing saved WiFi or the actual setup AP name
+  - one-time and on-demand 5-point touch calibration stored at `/data/metadata/touch.json`
+  - sync queue / upload / heartbeat / result / idle states
+  - single-screen sync upload progress with overall percentage, ETA, current file, file index, and chunk count
   - logging summary with satellite count and current session filename
 - The display currently shows battery percentage and SD usage percentage in the header.
-- Important temporary caveat: upload showing `0 pending` after a trial run does not necessarily indicate a sync bug. The most recent observed failure mode was SD `EIO` during session file open, which prevents a file from existing to upload in the first place.
+- The heartbeat screen is rider-facing: a red heart while contacting cloud, green after ACK. Technical cloud/auth details stay in serial logs.
+- Per-file archive messages are not shown to the rider during sync. Archive happens in the background while the TFT remains on the sync progress screen.
+- Typography caveat: MicroPython `framebuf.text()` is an 8x8 bitmap font. Avoid scaled bitmap text for polish; future TFT typography should use a pluggable custom font renderer.
 
 ---
 

@@ -45,7 +45,9 @@ Your ESP32-S3 should have the following structure:
 ├── main.py             # Entry point (Starts Heartbeat thread)
 ├── data/
 │   └── metadata/
-│       └── device.json # (Auto-generated) WiFi & API credentials
+│       ├── device.json # (Auto-generated) WiFi & API credentials
+│       ├── track.json  # Active track metadata
+│       └── touch.json  # Per-device TFT touch calibration
 ├── drivers/
 │   ├── gps.py          # Neo-M8N driver
 │   ├── bmi323.py       # IMU driver
@@ -58,6 +60,8 @@ Your ESP32-S3 should have the following structure:
     ├── uploader.py      # background IoT Heartbeat & Upload thread
     └── captive_portal.py # Magic Link provisioning portal
 ```
+
+Normal firmware sync preserves `/data/metadata/`. Delete only `/data/metadata/touch.json` if you want to force the one-time TFT 5-point calibration to run again.
 
 ---
 

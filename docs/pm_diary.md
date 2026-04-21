@@ -3457,3 +3457,92 @@ This session changed the device UX direction materially:
 - it is now part of the actual RS-Core runtime path
 - the small OLED path remains as a hybrid fallback for now
 - the larger display is now the preferred direction for rider-visible boot / sync / setup UX
+
+## 2026-04-21: TFT UX, Sync Screen, Settings, and Touch Calibration Iteration
+
+### Objective
+
+Turn the TFT from a functional status surface into a more deliberate RaceSense device UI while improving sync-mode clarity and touch reliability.
+
+### UI Direction
+
+The TFT theme was moved toward the RaceSense orange/black visual language:
+
+- black / dark neutral panels
+- RaceSense orange for primary actions and progress
+- white primary text
+- muted gray secondary text
+- red reserved for errors
+
+The boot presentation was also simplified away from a photo-style logo treatment and toward a centered RaceSense wordmark style.
+
+### Decision Window and Settings
+
+The decision window was changed from the older YES / NO style into three explicit actions:
+
+- `SYNC`
+- `SET`
+- `LOG`
+
+`SET` opens a settings screen with:
+
+- `WIFI`
+- `CALIB`
+- `BACK`
+
+`WIFI` enters the setup / captive portal path. `CALIB` reruns touch calibration. `BACK` returns to the decision window.
+
+### Touch Calibration
+
+Touch reliability improved materially after adding per-device calibration.
+
+Calibration now:
+
+- runs automatically once if `/data/metadata/touch.json` is missing
+- can be rerun from Settings -> `CALIB`
+- uses five target points:
+  - top-left
+  - top-right
+  - bottom-right
+  - bottom-left
+  - center
+- saves calibration under `/data/metadata/touch.json`
+
+This keeps calibration alongside device metadata such as WiFi credentials and active track data, so normal firmware sync does not erase it.
+
+### WiFi Setup Visibility
+
+The setup and settings screens were adjusted so the rider sees the correct WiFi context:
+
+- saved SSID is shown in Settings
+- first-time setup and pairing screens show the actual `RS-Core-XXXX` setup AP name
+- the captive portal pre-fills saved SSID / token / API values from `/data/metadata/device.json`
+
+### Sync Mode UX
+
+The sync flow was simplified for the rider:
+
+- WiFi search and connected states now use cleaner text
+- heartbeat is shown as a red heart while contacting cloud and green after ACK
+- the upload screen stays on one persistent sync progress screen
+- only overall percentage, one progress bar, ETA, current file, file index, and chunk count are shown
+- per-file archive messages are not shown on TFT
+
+Archive still happens in the background after successful upload, but the TFT no longer interrupts the sync progress screen for each file.
+
+### Sync Reliability Fixes
+
+The sync file discovery path was widened so pending sessions are not missed when files are on active storage, flash fallback storage, or legacy session paths.
+
+The uploader and TFT queue UI now share the same pending-session source of truth.
+
+### Typography Finding
+
+A key visual limitation was identified:
+
+- MicroPython `framebuf.text()` is an 8x8 bitmap font
+- scaling it up creates visibly pixelated text
+- the current firmware should avoid scaled bitmap text where possible
+- future polish should use a pluggable custom font renderer rather than tying typography directly into `tft_ui.py`
+
+This keeps the door open for generated MicroPython font assets, LVGL, or a later native display renderer without rewriting the screen state model.

@@ -93,6 +93,8 @@ class ILI9341:
     def set_rotation(self, rotation):
         rotation = rotation % 4
         self.rotation = rotation
+        # This panel wants BGR color order together with the framebuffer
+        # byte-swap performed in tft_ui.show().
         madctl = (0x48, 0x28, 0x88, 0xE8)[rotation]
         self.write_cmd(0x36, bytearray([madctl]))
         if rotation % 2:
