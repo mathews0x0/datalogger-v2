@@ -23,7 +23,7 @@ class ILI9341:
         self.baudrate = baudrate
         self._xbuf = bytearray(4)
         self._ybuf = bytearray(4)
-        self._color_chunk = bytearray(512)
+        self._color_chunk = bytearray(4096)
 
         self.cs.init(self.cs.OUT, value=1)
         self.dc.init(self.dc.OUT, value=1)

@@ -3,6 +3,14 @@ import framebuf
 import machine
 import ujson
 import os
+try:
+    import micropython
+except ImportError:
+    class _MicroPythonCompat:
+        @staticmethod
+        def native(func):
+            return func
+    micropython = _MicroPythonCompat()
 
 from drivers.ili9341 import ILI9341
 try:
@@ -70,7 +78,7 @@ class TFTBootUI:
         self._fb = framebuf.FrameBuffer(self._buf, self.width, self.height, framebuf.RGB565)
         self._mono_buf = bytearray(self.width)
         self._mono_fb = framebuf.FrameBuffer(self._mono_buf, self.width, 8, framebuf.MONO_VLSB)
-        self._tx_buf = bytearray(512)
+        self._tx_buf = bytearray(4096)
         self._last_touch_ms = 0
         self._battery_pct = None
         self._sd_pct = None
@@ -205,6 +213,25 @@ class TFTBootUI:
             return None, now
         return self._touch.read(), now
 
+    @micropython.native
+    def _write_swapped_from_buffer(self, start, length):
+        src = self._buf
+        tx = self._tx_buf
+        tx_len = len(tx)
+        end = start + length
+        pos = start
+        while pos < end:
+            chunk_len = min(tx_len, end - pos)
+            if chunk_len & 1:
+                chunk_len -= 1
+            i = 0
+            while i < chunk_len:
+                tx[i] = src[pos + i + 1]
+                tx[i + 1] = src[pos + i]
+                i += 2
+            self._spi.write(memoryview(tx)[:chunk_len])
+            pos += chunk_len
+
     def show(self):
         self._display.set_window(0, 0, self.width - 1, self.height - 1)
         self._display._activate_spi()
@@ -213,22 +240,7 @@ class TFTBootUI:
         # MicroPython's framebuf.RGB565 byte order can differ from what the
         # ILI9341 expects over SPI on this board. Swap each 16-bit pixel before
         # transfer so orange/amber UI colors land correctly on-panel.
-        src = self._buf
-        tx = self._tx_buf
-        src_len = len(src)
-        tx_len = len(tx)
-        for start in range(0, src_len, tx_len):
-            chunk_len = tx_len
-            if start + chunk_len > src_len:
-                chunk_len = src_len - start
-            if chunk_len & 1:
-                chunk_len -= 1
-            i = 0
-            while i < chunk_len:
-                tx[i] = src[start + i + 1]
-                tx[i + 1] = src[start + i]
-                i += 2
-            self._spi.write(memoryview(tx)[:chunk_len])
+        self._write_swapped_from_buffer(0, len(self._buf))
         self._display.cs.value(1)
 
     def _show_region(self, x, y, w, h):
@@ -250,24 +262,20 @@ class TFTBootUI:
         self._display._activate_spi()
         self._display.cs.value(0)
         self._display.dc.value(1)
-        tx = self._tx_buf
-        tx_len = len(tx)
-        for row in range(y, y + h):
-            src_start = ((row * self.width) + x) * 2
-            src_end = src_start + (w * 2)
-            pos = src_start
-            while pos < src_end:
-                chunk_len = min(tx_len, src_end - pos)
-                if chunk_len & 1:
-                    chunk_len -= 1
-                i = 0
-                while i < chunk_len:
-                    tx[i] = self._buf[pos + i + 1]
-                    tx[i + 1] = self._buf[pos + i]
-                    i += 2
-                self._spi.write(memoryview(tx)[:chunk_len])
-                pos += chunk_len
+        if x == 0 and w == self.width:
+            self._write_swapped_from_buffer((y * self.width) * 2, w * h * 2)
+        else:
+            for row in range(y, y + h):
+                self._write_swapped_from_buffer(((row * self.width) + x) * 2, w * 2)
         self._display.cs.value(1)
+
+    def _show_regions(self, regions):
+        for region in regions:
+            self._show_region(region[0], region[1], region[2], region[3])
+
+    def _start_region_screen(self):
+        self._fb.fill(self._c_bg)
+        self._display.fill(self._c_bg)
 
     def _text(self, x, y, text, color=0xFFFF, bg=None):
         return self._font().draw_text(self._fb, int(x), int(y), str(text), style="ui", color=color, bg=bg)
@@ -802,7 +810,7 @@ class TFTBootUI:
         key = ("decision", bool(sd_ok), bool(imu_ok), bool(gps_ok), str(track_name))
         if self._skip_same_render(key):
             return True
-        self._fb.fill(self._c_bg)
+        self._start_region_screen()
         self._centered_scaled(22, "RaceSense", scale=2, color=self._c_accent_soft)
         self._status_line(18, 64, "GPS", gps_ok)
         self._status_line(117, 64, "IMU", imu_ok)
@@ -814,7 +822,12 @@ class TFTBootUI:
         self._button(10, 176, 96, 50, "SYNC", self._c_accent, self._c_bg)
         self._icon_button(112, 176, 96, 50, "gear", self._c_panel_alt, self._c_text)
         self._button(214, 176, 96, 50, "LOG", self._c_panel_alt, self._c_text)
-        self.show()
+        self._show_regions((
+            (0, 18, 320, 30),
+            (0, 58, 320, 40),
+            (18, 116, 284, 42),
+            (10, 176, 300, 50),
+        ))
         return True
 
     def show_settings(self, ssid="", auto_log_enabled=True):
@@ -822,7 +835,7 @@ class TFTBootUI:
         key = ("settings", str(ssid), bool(auto_log_enabled))
         if self._skip_same_render(key):
             return True
-        self._fb.fill(self._c_bg)
+        self._start_region_screen()
         self._header("SETTINGS")
         self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
         self._centered_scaled(58, "Device setup", scale=2, color=self._c_text)
@@ -835,7 +848,11 @@ class TFTBootUI:
         self._toggle(214, 136, 64, 32, auto_log_enabled)
         self._button(18, 194, 138, 38, "WIFI", self._c_accent, self._c_bg)
         self._button(164, 194, 138, 38, "CALIB", self._c_panel_alt, self._c_text)
-        self.show()
+        self._show_regions((
+            (0, 0, 320, 86),
+            (18, 92, 284, 94),
+            (18, 194, 284, 38),
+        ))
         return True
 
     def show_first_time_setup(self, ap_name="RS-Core AP"):

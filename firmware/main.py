@@ -613,6 +613,7 @@ def main():
                 settings_rendered = False
                 tft.invalidate()
                 print("[System] Settings opened from touchscreen.")
+                continue
             if touch_action == "no" and gps_ok:
                 if paused:
                     paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
