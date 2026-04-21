@@ -36,7 +36,9 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
     *   **Required panel ties**:
         *   `LED/BL` -> `3V3`
         *   `RST` -> `3V3` or `EN`
-    *   This display path is currently used for boot / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
+    *   This display path is currently used for boot / decision / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
+    *   TFT typography uses generated MicroPython font assets under `firmware/lib/tft_fonts/` instead of scaled `framebuf.text()`.
+    *   The boot logo is stored as a raw RGB565 asset at `/lib/tft_boot_logo.raw` and streamed directly to the ILI9341 window for faster startup.
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
     *   2.4GHz WiFi with **Stealth Provisioning** (OS probe suppression for Success/204). Only active in Sync Mode.
@@ -69,9 +71,10 @@ Operationally, that means:
     *   **Solid Red**: (DECISION_GPS_FAIL) No NMEA detected. Device **holds** here indefinitely until GPS is recovered or SYNC button pressed.
     *   **Button pressed** during window → **SYNC MODE**.
     *   **TFT touch `SYNC`** during window → **SYNC MODE**.
-    *   **TFT touch `SET`** during window → Settings (`WIFI`, `CALIB`, `BACK`).
+    *   **TFT gear button** during window → Settings (`WIFI`, `CALIB`, `BACK`, Auto Log toggle).
     *   **TFT touch `LOG`** during window and GPS OK → **LOGGING MODE**.
-    *   **Exit condition**: 10s passed AND GPS OK → **LOGGING MODE**.
+    *   **Exit condition**: 10s passed AND GPS OK AND Auto Log enabled → **LOGGING MODE**.
+    *   If Auto Log is disabled in `/data/metadata/device.json`, the rider must tap `LOG`.
 
 ### **LOGGING MODE (Default — No Radio)**
 *   All WiFi radios are killed immediately.
@@ -97,15 +100,18 @@ Operationally, that means:
 *   **Deferred Pairing Transition**: Long press (>3s) requests Pairing Mode, but the firmware now waits for active network work to quiesce before switching into AP + Captive Portal.
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 *   **Temporary TFT UX path**:
-    *   large first-time setup screen showing the actual setup AP name
-    *   sync decision `SYNC` / `SET` / `LOG` touch targets
-    *   settings screen with `WIFI`, `CALIB`, and `BACK`
+    *   clean RaceSense boot logo, with no diagnostic copy on the TFT boot screen
+    *   simplified decision screen showing GPS / IMU / SD status icons plus active track name
+    *   sync decision `SYNC` / gear / `LOG` touch targets
+    *   settings screen with `WIFI`, `CALIB`, `BACK`, and Auto Log ON/OFF
     *   pairing and WiFi screens showing saved SSID or setup AP name where applicable
+    *   WiFi search animation with SSID at the bottom
     *   heartbeat screen shown as rider-facing red/green heart status
     *   queue, single-screen upload, result, idle, and logging summary screens
-    *   upload screen shows one overall progress bar, percentage, ETA, current file, file index, and chunk count
+    *   upload screen shows one overall progress bar, large percentage, ETA with h/m/s units, current file, file index, and chunk count
     *   per-file archive messages are suppressed on TFT; archive remains background behavior
-    *   battery % and SD % shown in TFT header
+    *   logging screens avoid showing session filenames; technical logs stay on serial output
+    *   boot and decision screens deliberately avoid battery/RAM/log noise
 *   **Touch calibration**:
     *   Runs once if `/data/metadata/touch.json` is missing.
     *   Can be rerun from Settings -> `CALIB`.

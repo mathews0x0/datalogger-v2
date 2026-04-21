@@ -58,10 +58,25 @@ Your ESP32-S3 should have the following structure:
     ├── session_manager.py # Storage abstraction (SD vs Flash)
     ├── track_engine.py # Lap/Sector logic
     ├── uploader.py      # background IoT Heartbeat & Upload thread
+    ├── tft_ui.py        # ILI9341/XPT2046 rider-facing TFT UI
+    ├── tft_boot_logo.py # TFT boot logo metadata
+    ├── tft_boot_logo.raw # raw RGB565 RaceSense boot logo asset
+    ├── tft_fonts/       # generated TFT font package
+    │   ├── renderer.py
+    │   ├── ui.py
+    │   └── data.py
     └── captive_portal.py # Magic Link provisioning portal
 ```
 
 Normal firmware sync preserves `/data/metadata/`. Delete only `/data/metadata/touch.json` if you want to force the one-time TFT 5-point calibration to run again.
+
+Clean sync must copy nested `lib` packages and raw assets. The current `flashtool.sh` and `push_to_device.sh` copy:
+
+- `lib/*.py`
+- `lib/*.raw`
+- `lib/*/*.py`
+
+This is required for the TFT custom fonts and `tft_boot_logo.raw`.
 
 ---
 
@@ -74,7 +89,7 @@ Normal firmware sync preserves `/data/metadata/`. Delete only `/data/metadata/to
     *   The captive portal stores `/data/metadata/device.json` on the device and then reboots.
 2. **Manual Config**: (Fallback) You can manually create `/data/metadata/device.json` with the following structure:
     ```json
-    {"ssid": "...", "password": "...", "api_url": "https://racesense.in/api/upload", "token": "rsk_..."}
+    {"ssid": "...", "password": "...", "api_url": "https://racesense.in/api/upload", "token": "rsk_...", "auto_log_enabled": true}
     ```
 
 ---

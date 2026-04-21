@@ -81,6 +81,7 @@ class TFTBootUI:
         self._touch_debounce_ms = 180
         self._sync_upload_screen_key = None
         self._sync_upload_values = None
+        self._boot_logo_visible = False
         self._c_bg = 0x0000
         self._c_panel = 0x18C3
         self._c_panel_alt = 0x2945
@@ -92,7 +93,13 @@ class TFTBootUI:
         self._c_good = 0x068D
         self._c_warn = 0xFD00
         self._c_bad = 0xF9CC
-        self.clear()
+        self._fb.fill(self._c_bg)
+
+    def _font(self):
+        if not hasattr(self, "_font_renderer"):
+            from lib.tft_fonts import renderer
+            self._font_renderer = renderer
+        return self._font_renderer
 
     def _load_touch_calibration(self):
         try:
@@ -161,6 +168,7 @@ class TFTBootUI:
     def clear(self, color=0x0000):
         self._fb.fill(color)
         self._last_render_key = None
+        self._boot_logo_visible = False
         self.show()
 
     def _skip_render(self, key, min_interval_ms=250):
@@ -170,6 +178,9 @@ class TFTBootUI:
         self._last_render_key = key
         self._last_render_ms = now
         return False
+
+    def invalidate(self):
+        self._last_render_key = None
 
     def show(self):
         self._display.set_window(0, 0, self.width - 1, self.height - 1)
@@ -235,119 +246,47 @@ class TFTBootUI:
                 pos += chunk_len
         self._display.cs.value(1)
 
-    def _text(self, x, y, text, color=0xFFFF):
-        self._fb.text(str(text), int(x), int(y), color)
+    def _text(self, x, y, text, color=0xFFFF, bg=None):
+        return self._font().draw_text(self._fb, int(x), int(y), str(text), style="ui", color=color, bg=bg)
+
+    def _text_data(self, x, y, text, color=0xFFFF, bg=None):
+        return self._font().draw_text(self._fb, int(x), int(y), str(text), style="data", color=color, bg=bg)
+
+    def _text_width(self, text, style="ui"):
+        return self._font().text_width(str(text), style=style)
+
+    def _fit_text_px(self, text, max_w, style="ui"):
+        text = str(text)
+        if self._text_width(text, style) <= max_w:
+            return text
+        if max_w <= self._text_width("...", style):
+            return ""
+        out = text
+        while out and self._text_width(out + "...", style) > max_w:
+            out = out[:-1]
+        return out + "..." if out else ""
 
     def _text_scaled(self, x, y, text, scale=2, color=0xFFFF):
-        # Keep the built-in bitmap font at native size only. Enlarging the
-        # 8x8 source font is what made the UI look pixelated.
         self._text(x, y, text, color)
 
     def _centered_scaled(self, y, text, scale=2, color=0xFFFF):
-        width = len(str(text)) * 8
+        width = self._text_width(text, "ui")
         x = max(0, (self.width - width) // 2)
         self._text(x, y, text, color)
 
     def _big_value_width(self, text, scale=4):
-        w = 0
-        for ch in str(text):
-            if ch.isdigit():
-                w += 5 * scale
-            elif ch in (":", "."):
-                w += 2 * scale
-            elif ch in ("/", "%"):
-                w += 4 * scale
-            elif ch == "-":
-                w += 4 * scale
-            else:
-                w += 5 * scale
-        return max(0, w - scale)
+        return self._text_width(text, "data")
 
-    def _big_value(self, x, y, text, scale=4, color=None, shadow=True):
+    def _big_value(self, x, y, text, scale=4, color=None, shadow=True, bg=None):
         color = self._c_accent if color is None else color
         text = str(text)
         if shadow:
             self._big_value(x + 1, y + 1, text, scale=scale, color=self._c_bg, shadow=False)
-        cx = int(x)
-        for ch in text:
-            cx += self._big_char(cx, int(y), ch, int(scale), color)
-            cx += int(scale)
+        self._text_data(x, y, text, color, bg=bg)
 
     def _centered_big_value(self, y, text, scale=4, color=None):
         x = max(0, (self.width - self._big_value_width(text, scale)) // 2)
         self._big_value(x, y, text, scale=scale, color=color)
-
-    def _big_char(self, x, y, ch, s, color):
-        segs = {
-            "0": "abcdef",
-            "1": "bc",
-            "2": "abged",
-            "3": "abgcd",
-            "4": "fgbc",
-            "5": "afgcd",
-            "6": "afgecd",
-            "7": "abc",
-            "8": "abcdefg",
-            "9": "abfgcd",
-        }
-        t = max(2, s)
-        w = 4 * s
-        h = 7 * s
-        if ch in segs:
-            active = segs[ch]
-            if "a" in active:
-                self._fb.fill_rect(x + t, y, w - (2 * t), t, color)
-            if "b" in active:
-                self._fb.fill_rect(x + w - t, y + t, t, (h // 2) - t, color)
-            if "c" in active:
-                self._fb.fill_rect(x + w - t, y + (h // 2), t, (h // 2) - t, color)
-            if "d" in active:
-                self._fb.fill_rect(x + t, y + h - t, w - (2 * t), t, color)
-            if "e" in active:
-                self._fb.fill_rect(x, y + (h // 2), t, (h // 2) - t, color)
-            if "f" in active:
-                self._fb.fill_rect(x, y + t, t, (h // 2) - t, color)
-            if "g" in active:
-                self._fb.fill_rect(x + t, y + (h // 2) - (t // 2), w - (2 * t), t, color)
-            return 5 * s
-        if ch == ":":
-            self._fb.fill_rect(x, y + (2 * s), t, t, color)
-            self._fb.fill_rect(x, y + (5 * s), t, t, color)
-            return 2 * s
-        if ch == ".":
-            self._fb.fill_rect(x, y + (6 * s), t, t, color)
-            return 2 * s
-        if ch == "-":
-            self._fb.fill_rect(x, y + (3 * s), 3 * s, t, color)
-            return 4 * s
-        if ch == "/":
-            for i in range(0, 7 * s, max(1, s // 2)):
-                self._fb.fill_rect(x + (3 * s) - ((i * 3) // 7), y + i, t, max(1, s // 2), color)
-            return 4 * s
-        if ch == "%":
-            self._fb.fill_rect(x, y, t, t, color)
-            self._fb.fill_rect(x + (3 * s), y + (6 * s), t, t, color)
-            for i in range(0, 7 * s, max(1, s // 2)):
-                self._fb.fill_rect(x + (3 * s) - ((i * 3) // 7), y + i, t, max(1, s // 2), color)
-            return 4 * s
-        glyphs = {
-            "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
-            "m": ("00000", "00000", "11010", "10101", "10101", "10101", "10101"),
-            "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
-            "k": ("10000", "10000", "10010", "10100", "11000", "10100", "10010"),
-            "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
-            "s": ("00000", "00000", "01110", "10000", "01110", "00001", "11110"),
-        }
-        glyph = glyphs.get(ch)
-        if glyph:
-            dot = max(1, s - 1)
-            for gy, row in enumerate(glyph):
-                for gx, bit in enumerate(row):
-                    if bit == "1":
-                        self._fb.fill_rect(x + (gx * s), y + (gy * s), dot, dot, color)
-            return 5 * s
-        self._text(x, y + s, ch, color)
-        return 8
 
     def _truncate_text(self, text, max_chars):
         text = str(text)
@@ -382,15 +321,49 @@ class TFTBootUI:
                 if mask[byte_index] & (0x80 >> (bit_index & 7)):
                     self._fb.pixel(x + dx, y + dy, color)
 
+    def _draw_raw_rgb565(self, x, y, w, h, path):
+        if w <= 0 or h <= 0:
+            return False
+        try:
+            f = open(path, "rb")
+        except Exception as e:
+            print("[TFT] Boot logo raw open failed:", e)
+            return False
+        try:
+            self._display.set_window(x, y, x + w - 1, y + h - 1)
+            self._display._activate_spi()
+            self._display.cs.value(0)
+            self._display.dc.value(1)
+            while True:
+                chunk = f.read(1024)
+                if not chunk:
+                    break
+                self._spi.write(chunk)
+            self._display.cs.value(1)
+            return True
+        except Exception as e:
+            try:
+                self._display.cs.value(1)
+            except Exception:
+                pass
+            print("[TFT] Boot logo raw draw failed:", e)
+            return False
+        finally:
+            try:
+                f.close()
+            except Exception:
+                pass
+
     def _brand_wordmark(self, y):
         # Approximate the web wordmark: clean white title with a restrained
         # RaceSense orange glow, centered in the boot panel.
         word = "RaceSense"
-        x = (self.width - (len(word) * 8)) // 2
+        x = (self.width - self._text_width(word, "ui")) // 2
         self._text(x + 1, y + 1, word, self._c_accent)
         self._text(x, y, word, self._c_text)
-        self._fb.fill_rect(78, y + 14, 164, 2, self._c_accent)
-        self._text(116, y + 24, "ride faster. ride smarter.", self._c_text_muted)
+        self._fb.fill_rect(78, y + 20, 164, 2, self._c_accent)
+        tagline = "ride faster. ride smarter."
+        self._text((self.width - self._text_width(tagline, "ui")) // 2, y + 28, tagline, self._c_text_muted)
 
     def _title_block(self, eyebrow, title, subtitle="", panel_y=48, panel_h=168):
         self._fb.fill(self._c_bg)
@@ -402,18 +375,18 @@ class TFTBootUI:
             self._centered_scaled(panel_y + 18 + (title_scale * 12), subtitle, scale=1, color=self._c_text_muted)
 
     def _status_pill(self, x, y, w, label, value, accent=None):
-        self._fb.fill_rect(x, y, w, 28, self._c_panel)
-        self._fb.rect(x, y, w, 28, self._c_panel_alt)
-        self._text(x + 8, y + 5, self._truncate_text(label, 8), self._c_text_muted)
+        self._fb.fill_rect(x, y, w, 34, self._c_panel)
+        self._fb.rect(x, y, w, 34, self._c_panel_alt)
+        self._text(x + 7, y + 3, self._fit_text_px(label, w - 14, "ui"), self._c_text_muted, bg=self._c_panel)
         value_color = self._c_text if accent is None else accent
-        self._text(x + 8, y + 16, self._truncate_text(value, max(4, (w - 16) // 8)), value_color)
+        self._text(x + 7, y + 18, self._fit_text_px(value, w - 14, "ui"), value_color, bg=self._c_panel)
 
     def _label_value(self, x, y, label, value, w=0):
-        label = self._truncate_text(label, 10)
-        value = self._truncate_text(value, 18 if w <= 0 else max(6, w // 8))
+        label = self._fit_text_px(label, 76 if w <= 0 else max(40, w // 2), "ui")
+        value = self._fit_text_px(value, 170 if w <= 0 else max(40, w - 44), "ui")
         self._text(x, y, label, self._c_text_muted)
         if w > 0:
-            value_x = x + w - (len(value) * 8)
+            value_x = x + w - self._text_width(value, "ui")
             if value_x < x + 40:
                 value_x = x + 40
         else:
@@ -448,13 +421,16 @@ class TFTBootUI:
 
     def _format_eta(self, seconds):
         if seconds is None:
-            return "--:--"
+            return "--"
         seconds = max(0, int(seconds))
+        hours = seconds // 3600
+        if hours > 0:
+            return "%dh %02dm" % (hours, (seconds % 3600) // 60)
         minutes = seconds // 60
         secs = seconds % 60
-        if minutes >= 100:
-            return "%dm" % minutes
-        return "%02d:%02d" % (minutes, secs)
+        if minutes > 0:
+            return "%dm %02ds" % (minutes, secs)
+        return "%ds" % secs
 
     def _reset_sync_metrics(self):
         self._sync_started_ms = None
@@ -511,9 +487,73 @@ class TFTBootUI:
     def _button(self, x, y, w, h, label, fill, fg=0xFFFF):
         self._fb.fill_rect(x, y, w, h, fill)
         self._fb.rect(x, y, w, h, self._c_text_dim)
-        tx = x + max(4, (w - (len(label) * 8)) // 2)
-        ty = y + max(4, (h - 8) // 2)
-        self._text(tx, ty, label, fg)
+        label = self._fit_text_px(label, w - 10, "ui")
+        tx = x + max(4, (w - self._text_width(label, "ui")) // 2)
+        ty = y + max(3, (h - self._font().height("ui")) // 2)
+        self._text(tx, ty, label, fg, bg=fill)
+
+    def _gear_icon(self, cx, cy, color, bg):
+        for x, y, w, h in (
+            (cx - 3, cy - 14, 6, 5),
+            (cx - 3, cy + 9, 6, 5),
+            (cx - 14, cy - 3, 5, 6),
+            (cx + 9, cy - 3, 5, 6),
+            (cx - 11, cy - 11, 5, 5),
+            (cx + 6, cy - 11, 5, 5),
+            (cx - 11, cy + 6, 5, 5),
+            (cx + 6, cy + 6, 5, 5),
+        ):
+            self._fb.fill_rect(x, y, w, h, color)
+        self._fb.fill_rect(cx - 9, cy - 9, 18, 18, color)
+        self._fb.fill_rect(cx - 4, cy - 4, 8, 8, bg)
+
+    def _icon_button(self, x, y, w, h, icon, fill, fg=0xFFFF):
+        self._fb.fill_rect(x, y, w, h, fill)
+        self._fb.rect(x, y, w, h, self._c_text_dim)
+        if icon == "gear":
+            self._gear_icon(x + (w // 2), y + (h // 2), fg, fill)
+
+    def _toggle(self, x, y, w, h, enabled):
+        fill = self._c_accent if enabled else self._c_panel_alt
+        knob = self._c_bg if enabled else self._c_text_dim
+        self._fb.fill_rect(x, y, w, h, fill)
+        self._fb.rect(x, y, w, h, self._c_text_dim)
+        k = h - 8
+        kx = x + w - k - 4 if enabled else x + 4
+        self._fb.fill_rect(kx, y + 4, k, k, knob)
+
+    def _status_icon(self, cx, cy, ok):
+        color = self._c_good if ok else self._c_bad
+        self._fb.fill_rect(cx - 11, cy - 11, 22, 22, color)
+        self._fb.rect(cx - 11, cy - 11, 22, 22, self._c_text_dim)
+        if ok:
+            self._fb.fill_rect(cx - 6, cy, 4, 8, self._c_bg)
+            self._fb.fill_rect(cx - 2, cy + 4, 12, 4, self._c_bg)
+            self._fb.fill_rect(cx + 5, cy - 5, 4, 13, self._c_bg)
+        else:
+            for i in range(-6, 7):
+                self._fb.fill_rect(cx + i, cy + i, 3, 3, self._c_bg)
+                self._fb.fill_rect(cx + i, cy - i, 3, 3, self._c_bg)
+
+    def _status_line(self, x, y, label, ok):
+        self._fb.fill_rect(x, y, 86, 34, self._c_panel)
+        self._fb.rect(x, y, 86, 34, self._c_panel_alt)
+        self._text(x + 8, y + 10, label, self._c_text, bg=self._c_panel)
+        self._status_icon(x + 68, y + 17, ok)
+
+    def _wifi_bars(self, cx, y, frame, color):
+        frame = int(frame or 0) % 4
+        widths = (84, 58, 32)
+        heights = (34, 22, 10)
+        for i in range(3):
+            active = i <= frame
+            c = color if active else self._c_panel_alt
+            w = widths[i]
+            h = heights[i]
+            x0 = cx - (w // 2)
+            yy = y + (i * 18)
+            self._fb.rect(x0, yy, w, h, c)
+            self._fb.fill_rect(cx - 3, yy + h - 5, 6, 6, c)
 
     def _draw_heart(self, cx, cy, color, scale=8):
         # Blocky but readable at TFT resolution; about 1 inch on this panel.
@@ -670,19 +710,21 @@ class TFTBootUI:
 
     def _header(self, title, color=None):
         color = self._c_accent if color is None else color
-        self._fb.fill_rect(0, 0, self.width, 34, color)
-        self._centered_scaled(7, title, scale=2, color=self._c_bg)
+        self._fb.fill_rect(0, 0, self.width, 40, color)
+        title_x = max(0, (self.width - self._text_width(title, "ui")) // 2)
+        self._text(title_x, 5, title, self._c_bg, bg=color)
         if self._battery_pct is not None:
-            self._text(8, 24, "BAT %d%%" % self._battery_pct, self._c_bg)
+            self._text(8, 24, "BAT %d%%" % self._battery_pct, self._c_bg, bg=color)
         if self._ram_used_mb is not None and self._ram_total_mb is not None:
             ram = "RAM %.1f/%.1f" % (self._ram_used_mb, self._ram_total_mb)
-            x = max(88, (self.width - (len(ram) * 8)) // 2)
-            self._text(x, 24, ram, self._c_bg)
+            x = max(88, (self.width - self._text_width(ram, "ui")) // 2)
+            self._text(x, 24, ram, self._c_bg, bg=color)
         if self._sd_ok is not None:
             sd_label = "SD --"
             if self._sd_ok:
                 sd_label = "SD %d%%" % (self._sd_pct if self._sd_pct is not None else 0)
-            self._text(self.width - 56, 24, sd_label, self._c_bg if self._sd_ok else self._c_bg)
+            sd_x = self.width - self._text_width(sd_label, "ui") - 8
+            self._text(sd_x, 24, sd_label, self._c_bg, bg=color)
 
     def _status_card(self, x, y, label, ok):
         color = 0x07E0 if ok else 0xF800
@@ -691,15 +733,14 @@ class TFTBootUI:
         self._text_scaled(x + 20, y + 38, "OK" if ok else "ERR", scale=2, color=color)
 
     def show_startup_logo(self):
+        from lib.tft_boot_logo import BOOT_LOGO_H, BOOT_LOGO_PATH, BOOT_LOGO_W
         self._fb.fill(self._c_bg)
-        self._header("RS-CORE")
-        self._draw_panel(12, 48, 296, 122, border=self._c_panel_alt, fill=self._c_bg)
-        self._text(28, 62, "MOTORCYCLE TELEMETRY", self._c_text_muted)
-        self._brand_wordmark(86)
-        self._draw_panel(22, 182, 276, 38, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(34, 191, "RS-CORE V2", self._c_text_muted)
-        self._text(34, 203, "Booting telemetry stack", self._c_text)
-        self._progress_bar(34, 214, 252, 6, 38, fill=self._c_accent, border=self._c_panel_alt, bg=self._c_panel_alt)
+        x = (self.width - BOOT_LOGO_W) // 2
+        y = (self.height - BOOT_LOGO_H) // 2
+        if self._draw_raw_rgb565(x, y, BOOT_LOGO_W, BOOT_LOGO_H, BOOT_LOGO_PATH):
+            self._boot_logo_visible = True
+            return True
+        self._boot_logo_visible = True
         self.show()
         return True
 
@@ -721,76 +762,51 @@ class TFTBootUI:
         return True
 
     def show_boot(self, stage, sd_ok=None, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, storage_info=None, force=False):
-        self._fb.fill(self._c_bg)
-        self._header("BOOT")
-        self._text(28, 54, "DEVICE STATUS", self._c_text_muted)
-        self._centered_scaled(72, stage, scale=3 if len(str(stage)) <= 16 else 2, color=self._c_text)
-        self._status_pill(22, 118, 86, "SD", "Mounted" if sd_ok else "Check", self._c_accent if sd_ok else self._c_bad)
-        self._status_pill(117, 118, 86, "IMU", "Ready" if imu_ok else "Check", self._c_accent if imu_ok else self._c_bad)
-        self._status_pill(212, 118, 86, "GPS", "10Hz lock" if gps_ok else "Waiting", self._c_accent if gps_ok else self._c_bad)
-        self._draw_panel(22, 170, 276, 46, border=self._c_panel_alt, fill=self._c_panel)
-        detail = "Bringing up display and storage"
-        if gps_baud is not None and gps_rate_hz is not None:
-            detail = "GPS %s / %sHz" % (gps_baud, gps_rate_hz)
-        self._text(34, 184, self._truncate_text(detail, 30), self._c_text_muted)
-        progress = 34
-        if sd_ok is not None:
-            progress += 22
-        if imu_ok is not None:
-            progress += 22
-        if gps_ok is not None and gps_ok:
-            progress += 22
-        self._progress_bar(34, 200, 252, 8, progress, fill=self._c_accent, border=self._c_panel_alt, bg=self._c_panel_alt)
-        self.show()
+        if not self._boot_logo_visible or force:
+            self.show_startup_logo()
         return True
 
-    def show_decision(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False):
+    def show_decision(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False, auto_log_enabled=True, track_name=""):
         self._touch_mode = "decision"
         countdown_s = -1
         if countdown_ms is not None:
             countdown_s = max(0, int(countdown_ms) // 1000)
-        key = ("decision", bool(sd_ok), bool(imu_ok), bool(gps_ok), int(gps_sentences or 0), countdown_s, bool(paused))
+        key = ("decision", bool(sd_ok), bool(imu_ok), bool(gps_ok), int(gps_sentences or 0), countdown_s, bool(paused), bool(auto_log_enabled), str(track_name))
         if self._skip_render(key, 250):
             return True
         self._fb.fill(self._c_bg)
-        self._header("READY")
-        self._text(22, 54, "SYNC NOW?", self._c_text_muted)
-        headline = "Timer paused" if paused else ("Auto log in %02ds" % countdown_s if countdown_ms is not None and gps_ok else ("Waiting for GPS %d/5" % gps_sentences if not gps_ok else "Sync or start logging"))
-        self._centered_scaled(72, headline, scale=3 if len(headline) <= 16 else 2, color=self._c_text if gps_ok or paused else self._c_bad)
-        self._status_pill(22, 118, 64, "SD", "OK" if sd_ok else "ERR", self._c_accent if sd_ok else self._c_bad)
-        self._status_pill(94, 118, 64, "IMU", "OK" if imu_ok else "ERR", self._c_accent if imu_ok else self._c_bad)
-        self._status_pill(166, 118, 76, "GPS", "LOCKED" if gps_ok else "WAIT", self._c_accent if gps_ok else self._c_bad)
-        self._status_pill(250, 118, 48, "TRK", "RDY", self._c_accent)
-        self._draw_panel(22, 154, 276, 44, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(32, 162, "Choose mode", self._c_text_muted)
-        self._text(192, 162, "Touch center", self._c_text_dim)
-        self._button(34, 170, 76, 28, "SYNC", self._c_accent, self._c_bg)
-        self._button(118, 170, 86, 28, "SET", self._c_panel_alt, self._c_text)
-        self._button(212, 170, 76, 28, "LOG", self._c_panel_alt, self._c_text)
-        self._draw_panel(22, 206, 276, 24, border=self._c_panel_alt, fill=self._c_panel)
-        hint = "Sync cloud data, settings, or start logging"
-        if not gps_ok:
-            hint = "GPS lock required before auto logging"
-        self._text(28, 214, self._truncate_text(hint, 33), self._c_text_muted)
+        self._centered_scaled(22, "RaceSense", scale=2, color=self._c_accent_soft)
+        self._status_line(18, 64, "GPS", gps_ok)
+        self._status_line(117, 64, "IMU", imu_ok)
+        self._status_line(216, 64, "SD", sd_ok)
+        self._draw_panel(18, 116, 284, 42, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(30, 126, "TRACK", self._c_text_muted, bg=self._c_panel)
+        name = self._fit_text_px(track_name or "No track", 190, "ui")
+        self._text(98, 126, name, self._c_text if track_name else self._c_text_dim, bg=self._c_panel)
+        self._button(10, 176, 96, 50, "SYNC", self._c_accent, self._c_bg)
+        self._icon_button(112, 176, 96, 50, "gear", self._c_panel_alt, self._c_text)
+        self._button(214, 176, 96, 50, "LOG", self._c_panel_alt, self._c_text)
         self.show()
         return True
 
-    def show_settings(self, ssid=""):
+    def show_settings(self, ssid="", auto_log_enabled=True):
         self._touch_mode = "settings"
-        key = ("settings", str(ssid))
+        key = ("settings", str(ssid), bool(auto_log_enabled))
         if self._skip_render(key, 250):
             return True
         self._fb.fill(self._c_bg)
         self._header("SETTINGS")
-        self._button(12, 42, 74, 28, "BACK", self._c_panel_alt, self._c_text)
-        self._centered_scaled(56, "Device setup", scale=2, color=self._c_text)
-        self._draw_panel(22, 88, 276, 106, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(34, 102, "SAVED WIFI", self._c_text_muted)
+        self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
+        self._centered_scaled(58, "Device setup", scale=2, color=self._c_text)
+        self._draw_panel(18, 92, 284, 94, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(30, 104, "SAVED WIFI", self._c_text_muted, bg=self._c_panel)
         wifi_label = self._truncate_text(ssid or "Not configured", 28)
-        self._text(34, 116, wifi_label, self._c_text if ssid else self._c_bad)
-        self._button(34, 146, 116, 34, "WIFI", self._c_accent, self._c_bg)
-        self._button(170, 146, 116, 34, "CALIB", self._c_panel_alt, self._c_text)
-        self._centered_scaled(214, "WiFi opens setup portal", scale=1, color=self._c_text_muted)
+        self._text(30, 120, self._fit_text_px(wifi_label, 260, "ui"), self._c_text if ssid else self._c_bad, bg=self._c_panel)
+        self._text(30, 146, "AUTO LOG", self._c_text_muted, bg=self._c_panel)
+        self._text(124, 146, "ON" if auto_log_enabled else "OFF", self._c_text if auto_log_enabled else self._c_bad, bg=self._c_panel)
+        self._toggle(214, 136, 64, 32, auto_log_enabled)
+        self._button(18, 194, 138, 38, "WIFI", self._c_accent, self._c_bg)
+        self._button(164, 194, 138, 38, "CALIB", self._c_panel_alt, self._c_text)
         self.show()
         return True
 
@@ -800,19 +816,20 @@ class TFTBootUI:
     def show_pairing(self, ssid_hint="RS-Core AP"):
         return self.show_message("PAIRING", "Setup hotspot\n" + str(ssid_hint), "Open portal")
 
-    def show_sync_searching(self, ssid):
+    def show_sync_searching(self, ssid, frame=0):
         self._touch_mode = None
         self._reset_sync_upload_screen()
-        key = ("sync_searching", str(ssid))
-        if self._skip_render(key, 500):
+        key = ("sync_searching", str(ssid), int(frame or 0) % 4)
+        if self._skip_render(key, 180):
             return True
         self._fb.fill(self._c_bg)
-        self._header("SYNC")
-        self._draw_panel(18, 54, 284, 132, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(34, 72, "CONNECTING TO", self._c_text_muted)
-        self._centered_scaled(98, self._truncate_text(str(ssid or "Saved WiFi"), 18), scale=2, color=self._c_text)
-        self._progress_bar(44, 148, 232, 8, 42, fill=self._c_accent, border=self._c_panel_alt, bg=self._c_bg)
-        self._centered_scaled(210, "Keep hotspot nearby", scale=1, color=self._c_text_muted)
+        self._header("WIFI")
+        self._draw_panel(18, 52, 284, 146, border=self._c_panel_alt, fill=self._c_panel)
+        self._wifi_bars(160, 72, frame, self._c_accent)
+        self._centered_scaled(170, "Searching", scale=2, color=self._c_text)
+        self._draw_panel(18, 206, 284, 26, border=self._c_panel_alt, fill=self._c_bg)
+        ssid_label = self._fit_text_px(str(ssid or "Saved WiFi"), 260, "ui")
+        self._text((self.width - self._text_width(ssid_label, "ui")) // 2, 213, ssid_label, self._c_text_muted, bg=self._c_bg)
         self.show()
         return True
 
@@ -875,9 +892,9 @@ class TFTBootUI:
             for name in files[:3]:
                 self._text(34, y, self._truncate_text(str(name).split("/")[-1], 26), self._c_text)
                 y += 14
-        self._button(16, 194, 136, 30, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(10, 190, 142, 40, "PAIR", self._c_panel_alt, self._c_text)
         if allow_reboot:
-            self._button(168, 194, 136, 30, "REBOOT", self._c_accent, self._c_bg)
+            self._button(168, 190, 142, 40, "REBOOT", self._c_accent, self._c_bg)
         else:
             self._centered_scaled(204, "Awaiting upload", scale=1, color=self._c_text_muted)
         self.show()
@@ -901,31 +918,33 @@ class TFTBootUI:
             self._header("SYNC")
             self._draw_panel(12, 46, 296, 178, border=self._c_panel_alt, fill=self._c_panel)
             self._text(24, 62, "OVERALL PROGRESS", self._c_text_muted)
-            self._text(24, 148, "CURRENT FILE", self._c_text_muted)
-            self._text(24, 188, "ETA", self._c_text_muted)
-            self._text(176, 188, "CHUNKS", self._c_text_muted)
+            self._text(24, 144, "CURRENT FILE", self._c_text_muted)
+            self._text(24, 184, "ETA", self._c_text_muted)
+            self._text(176, 184, "CHUNKS", self._c_text_muted)
             self.show()
         if self._sync_upload_values == values and self._skip_render(("sync_upload_hold", values), 220):
             return True
         self._sync_upload_values = values
 
-        self._fb.fill_rect(22, 78, 276, 54, self._c_panel)
-        self._big_value(24, 82, "%d%%" % global_pct, scale=5, color=self._c_accent)
+        pct_text = "%d%%" % global_pct
+        self._fb.fill_rect(22, 78, 276, 58, self._c_panel)
+        self._big_value((self.width - self._big_value_width(pct_text)) // 2, 78, pct_text, scale=5, color=self._c_accent, bg=self._c_panel)
         self._progress_bar(24, 124, 262, 10, global_pct, fill=self._c_accent, border=self._c_panel_alt, bg=self._c_bg)
-        self._show_region(22, 78, 276, 58)
+        self._show_region(22, 76, 276, 62)
 
-        self._fb.fill_rect(22, 160, 276, 18, self._c_panel)
-        self._text(24, 160, short_name, self._c_text)
-        self._text(236, 160, "%d/%d" % (int(file_index or 0) + 1, int(total_files or 1)), self._c_text_dim)
-        self._show_region(22, 158, 276, 24)
+        self._fb.fill_rect(22, 156, 276, 20, self._c_panel)
+        self._text(24, 156, short_name, self._c_text, bg=self._c_panel)
+        file_pos = "%d/%d" % (int(file_index or 0) + 1, int(total_files or 1))
+        self._text(288 - self._text_width(file_pos, "ui"), 156, file_pos, self._c_text_dim, bg=self._c_panel)
+        self._show_region(22, 154, 276, 24)
 
-        self._fb.fill_rect(22, 202, 124, 26, self._c_panel)
-        self._big_value(24, 202, eta_text, scale=3, color=self._c_text, shadow=False)
-        self._show_region(22, 200, 124, 30)
+        self._fb.fill_rect(22, 198, 140, 30, self._c_panel)
+        self._big_value(24, 202, eta_text, scale=3, color=self._c_text, shadow=False, bg=self._c_panel)
+        self._show_region(22, 196, 140, 34)
 
-        self._fb.fill_rect(174, 202, 116, 26, self._c_panel)
-        self._big_value(176, 202, chunks, scale=3, color=self._c_text, shadow=False)
-        self._show_region(174, 200, 116, 30)
+        self._fb.fill_rect(166, 198, 128, 30, self._c_panel)
+        self._big_value(168, 202, self._fit_text_px(chunks, 124, "data"), scale=3, color=self._c_text, shadow=False, bg=self._c_panel)
+        self._show_region(166, 196, 128, 34)
         return True
 
     def show_sync_result(self, ok, filename="", detail="", allow_reboot=False):
@@ -947,9 +966,9 @@ class TFTBootUI:
                 if line:
                     self._centered_scaled(y, self._truncate_text(line, 22), scale=2, color=self._c_text_dim)
                     y += 22
-        self._button(16, 186, 136, 38, "RE-PAIR", self._c_panel, self._c_text)
+        self._button(10, 184, 142, 44, "RE-PAIR", self._c_panel, self._c_text)
         if allow_reboot:
-            self._button(168, 186, 136, 38, "REBOOT", self._c_accent, self._c_bg)
+            self._button(168, 184, 142, 44, "REBOOT", self._c_accent, self._c_bg)
         else:
             self._centered_scaled(204, "Retry later", scale=1, color=self._c_text_muted)
         self.show()
@@ -984,9 +1003,9 @@ class TFTBootUI:
         result_text = last_result or ("Ready to upload" if pending_count else "Nothing pending")
         self._text(24, 136, "LAST RESULT", self._c_text_muted)
         self._text(24, 150, self._truncate_text(result_text, 32), self._c_text)
-        self._button(16, 194, 136, 30, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(10, 190, 142, 40, "PAIR", self._c_panel_alt, self._c_text)
         if allow_reboot:
-            self._button(168, 194, 136, 30, "REBOOT", self._c_accent, self._c_bg)
+            self._button(168, 190, 142, 40, "REBOOT", self._c_accent, self._c_bg)
         else:
             self._centered_scaled(204, "Hold button or tap", scale=1, color=self._c_text_muted)
         self.show()
@@ -1005,30 +1024,35 @@ class TFTBootUI:
         if ssid:
             self._centered_scaled(106, self._truncate_text(str(ssid), 20), scale=2, color=self._c_text_dim)
         if allow_retry:
-            self._button(16, 186, 136, 38, "SCAN WIFI", self._c_accent, self._c_bg)
-            self._button(168, 186, 136, 38, "RE-PAIR", self._c_panel, self._c_text)
+            self._button(10, 184, 142, 44, "SCAN WIFI", self._c_accent, self._c_bg)
+            self._button(168, 184, 142, 44, "RE-PAIR", self._c_panel, self._c_text)
         else:
-            self._button(16, 186, 136, 38, "RE-PAIR", self._c_panel, self._c_text)
+            self._button(10, 184, 142, 44, "RE-PAIR", self._c_panel, self._c_text)
         self.show()
         return True
 
     def show_logging_started(self, filename, track_name=None, elapsed_minutes=0, force=False):
         self._touch_mode = None
-        body = str(filename).split("/")[-1]
-        if track_name:
-            body += "\n" + str(track_name)
-        return self.show_message("LOGGING", body, "T+%dm" % max(0, int(elapsed_minutes)))
+        self._fb.fill(self._c_bg)
+        self._header("LOGGING", color=self._c_good)
+        self._centered_scaled(82, "Recording", scale=2, color=self._c_text)
+        self._draw_panel(18, 130, 284, 42, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(30, 140, "TRACK", self._c_text_muted, bg=self._c_panel)
+        name = self._fit_text_px(track_name or "No track", 190, "ui")
+        self._text(98, 140, name, self._c_text if track_name else self._c_text_dim, bg=self._c_panel)
+        self.show()
+        return True
 
     def show_logging_live(self, filename, sats=0, gps_ok=False, track_name=None, elapsed_minutes=0):
         self._touch_mode = None
         self._fb.fill(0x0000)
         self._header("LOGGING", color=0x07E0 if gps_ok else 0xF800)
-        self._centered_scaled(54, str(filename).split("/")[-1], scale=2, color=0xFFFF)
-        self._centered_scaled(94, "SATS %d" % max(0, int(sats or 0)), scale=3, color=0xFFE0 if sats < 4 else 0x07E0)
-        self._centered_scaled(150, "GPS OK" if gps_ok else "GPS SEARCH", scale=2, color=0x07E0 if gps_ok else 0xF800)
-        if track_name:
-            self._centered_scaled(194, str(track_name)[:16], scale=2, color=0xFFFF)
-        self._centered_scaled(216, "T+%dm" % max(0, int(elapsed_minutes)), scale=2, color=0xFFFF)
+        self._status_line(28, 62, "GPS", gps_ok)
+        self._draw_panel(28, 112, 264, 44, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(42, 126, "TRACK", self._c_text_muted, bg=self._c_panel)
+        name = self._fit_text_px(track_name or "No track", 168, "ui")
+        self._text(112, 126, name, self._c_text if track_name else self._c_text_dim, bg=self._c_panel)
+        self._centered_scaled(188, "T+%dm" % max(0, int(elapsed_minutes)), scale=2, color=0xFFFF)
         self.show()
         return True
 
@@ -1055,17 +1079,17 @@ class TFTBootUI:
         y = point["sy"]
         print("[TFT] touch:", x, y, self._touch_mode)
         if self._touch_mode in ("sync_repair", "sync_done"):
-            if 8 <= x <= 160 and 180 <= y <= 236:
+            if 0 <= x <= 164 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "repair"
-            if self._touch_mode == "sync_done" and 160 <= x <= 312 and 180 <= y <= 236:
+            if self._touch_mode == "sync_done" and 156 <= x <= 319 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "reboot"
         if self._touch_mode == "sync_retry":
-            if 8 <= x <= 160 and 180 <= y <= 236:
+            if 0 <= x <= 164 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "retry_wifi"
-            if 160 <= x <= 312 and 180 <= y <= 236:
+            if 156 <= x <= 319 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "repair"
         return None
@@ -1082,15 +1106,15 @@ class TFTBootUI:
         print("[TFT] touch:", x, y)
         # Keep the active area centered, but generous enough for calibration
         # drift and imperfect finger taps on the resistive panel.
-        if y < 142 or y > 220:
+        if y < 150 or y > 239:
             return None
-        if 16 <= x <= 108:
+        if 0 <= x <= 109:
             self._last_touch_ms = now
             return "yes"
-        if 109 <= x <= 220:
+        if 110 <= x <= 210:
             self._last_touch_ms = now
             return "settings"
-        if 221 <= x <= 306:
+        if 211 <= x <= 319:
             self._last_touch_ms = now
             return "no"
         return None
@@ -1105,13 +1129,16 @@ class TFTBootUI:
         x = point["sx"]
         y = point["sy"]
         print("[TFT] touch:", x, y, self._touch_mode)
-        if 8 <= x <= 92 and 36 <= y <= 78:
+        if 0 <= x <= 116 and 40 <= y <= 92:
             self._last_touch_ms = now
             return "back"
-        if 28 <= x <= 158 and 136 <= y <= 190:
+        if 188 <= x <= 304 and 124 <= y <= 188:
+            self._last_touch_ms = now
+            return "toggle_auto_log"
+        if 0 <= x <= 160 and 189 <= y <= 239:
             self._last_touch_ms = now
             return "wifi"
-        if 162 <= x <= 292 and 136 <= y <= 190:
+        if 160 <= x <= 319 and 189 <= y <= 239:
             self._last_touch_ms = now
             return "calibrate"
         return None

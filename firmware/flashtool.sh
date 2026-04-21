@@ -167,6 +167,11 @@ except: pass"
     $MPREMOTE_CMD connect "$PORT" mkdir /data 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /data/metadata 2>/dev/null
     $MPREMOTE_CMD connect "$PORT" mkdir /sd 2>/dev/null
+    for dir in lib/*; do
+        [ -d "$dir" ] || continue
+        [[ "$dir" == *"__pycache__"* ]] && continue
+        $MPREMOTE_CMD connect "$PORT" mkdir "/$dir" 2>/dev/null
+    done
 
     # Step 3: Push all files fresh
     echo -e "${CYAN}Copying Python root files...${NC}"
@@ -183,6 +188,15 @@ except: pass"
         for f in lib/*.py; do
             [ -e "$f" ] || continue
             $MPREMOTE_CMD connect "$PORT" cp "$f" :lib/
+        done
+        for f in lib/*.raw; do
+            [ -e "$f" ] || continue
+            $MPREMOTE_CMD connect "$PORT" cp "$f" :lib/
+        done
+        for f in lib/*/*.py; do
+            [ -e "$f" ] || continue
+            [[ "$f" == *"__pycache__"* ]] && continue
+            $MPREMOTE_CMD connect "$PORT" cp "$f" ":$f"
         done
     fi
     

@@ -173,19 +173,22 @@ Track-resolution layering as of the canonical package rollout:
 - The original OLED path still exists and is kept as a hybrid fallback in firmware.
 - The active development display path is now the 2.8" TFT + touch panel under `firmware/lib/tft_ui.py`.
 - The TFT currently handles:
-  - enlarged splash / boot presentation
-  - large SD / IMU / GPS health cards
-  - decision window `SYNC` / `SET` / `LOG` touch routing
-  - settings screen with `WIFI`, `CALIB`, and `BACK`
+  - clean RaceSense boot logo from a raw RGB565 asset
+  - simplified SD / IMU / GPS status icons
+  - active track display, or `No track`
+  - decision window `SYNC` / gear / `LOG` touch routing
+  - settings screen with `WIFI`, `CALIB`, `BACK`, and Auto Log ON/OFF
   - first-time setup and pairing screens showing saved WiFi or the actual setup AP name
   - one-time and on-demand 5-point touch calibration stored at `/data/metadata/touch.json`
   - sync queue / upload / heartbeat / result / idle states
-  - single-screen sync upload progress with overall percentage, ETA, current file, file index, and chunk count
-  - logging summary with satellite count and current session filename
-- The display currently shows battery percentage and SD usage percentage in the header.
+  - animated WiFi search with SSID at the bottom
+  - single-screen sync upload progress with large overall percentage, ETA, current file, file index, and chunk count
+  - logging status without exposing session filenames as rider-facing log output
+- The TFT uses generated MicroPython font assets under `firmware/lib/tft_fonts/` to avoid scaled 8x8 bitmap text.
+- The boot logo is generated from `RS logo full.png` into `firmware/lib/tft_boot_logo.raw` and streamed directly to the TFT.
 - The heartbeat screen is rider-facing: a red heart while contacting cloud, green after ACK. Technical cloud/auth details stay in serial logs.
 - Per-file archive messages are not shown to the rider during sync. Archive happens in the background while the TFT remains on the sync progress screen.
-- Typography caveat: MicroPython `framebuf.text()` is an 8x8 bitmap font. Avoid scaled bitmap text for polish; future TFT typography should use a pluggable custom font renderer.
+- Firmware sync tooling must copy nested `lib` packages and `.raw` assets; this is handled in the current `flashtool.sh` and `push_to_device.sh`.
 
 ---
 

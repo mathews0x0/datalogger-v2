@@ -32,7 +32,7 @@ try:
 except:
     pass"
 
-for dir in /lib /drivers /data /data/metadata /sd; do
+for dir in /lib /drivers /data /data/metadata /sd /lib/tft_fonts; do
     "$MPREMOTE_CMD" connect "$PORT" mkdir "$dir" 2>/dev/null || true
 done
 
@@ -45,6 +45,17 @@ done
 for f in lib/*.py; do
     [[ -e "$f" ]] || continue
     "$MPREMOTE_CMD" connect "$PORT" cp "$f" :lib/
+done
+
+for f in lib/*.raw; do
+    [[ -e "$f" ]] || continue
+    "$MPREMOTE_CMD" connect "$PORT" cp "$f" :lib/
+done
+
+for f in lib/*/*.py; do
+    [[ -e "$f" ]] || continue
+    [[ "$f" == *"__pycache__"* ]] && continue
+    "$MPREMOTE_CMD" connect "$PORT" cp "$f" ":$f"
 done
 
 for f in drivers/*.py; do

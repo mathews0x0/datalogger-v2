@@ -3546,3 +3546,128 @@ A key visual limitation was identified:
 - future polish should use a pluggable custom font renderer rather than tying typography directly into `tft_ui.py`
 
 This keeps the door open for generated MicroPython font assets, LVGL, or a later native display renderer without rewriting the screen state model.
+
+## 2026-04-22: TFT Font Renderer, Clean Boot/Decision UX, and Fast Logo Asset
+
+### Objective
+
+Move the TFT from a functional debug/status surface into a cleaner rider-facing RaceSense UI:
+
+- remove pixelated scaled `framebuf.text()` from important TFT screens
+- simplify boot and decision screens
+- improve touch ergonomics
+- keep the RaceSense logo visual quality without making boot painfully slow
+- make firmware sync tooling copy the new nested font/logo assets reliably
+
+### Typography
+
+The firmware now uses a custom MicroPython TFT font path instead of relying on `framebuf.text()` for important TFT text.
+
+Added:
+
+- `firmware/lib/tft_fonts/renderer.py`
+- generated `ui` font asset for labels/buttons/status
+- generated `data` font asset for numeric values, ETA, percentages, chunks
+- `firmware/tools/generate_tft_fonts.py`
+
+The UI intentionally keeps only two font roles:
+
+- `ui`: general interface text
+- `data`: telemetry/numeric text
+
+This solved the visibly pixelated scaled 8x8 text problem while keeping the firmware typography model simple.
+
+### Boot Logo Pipeline
+
+The TFT boot screen was simplified to show only the RaceSense logo.
+
+Iteration history:
+
+1. 4-bit alpha Python asset:
+   - looked close to the source logo
+   - too slow because MicroPython had to import a large Python module and blend pixels in Python
+2. 1-bit threshold mask:
+   - much faster
+   - unacceptable visually because the detailed glowing logo collapsed into an orange blob
+3. Raw RGB565 asset:
+   - preserves the provided `RS logo full.png` artwork
+   - avoids Python pixel blending
+   - streams bytes directly to the TFT window
+
+Final files:
+
+- `firmware/lib/tft_boot_logo.py`: tiny metadata module
+- `firmware/lib/tft_boot_logo.raw`: pre-rendered RGB565 image
+- `firmware/tools/generate_tft_boot_logo.py`: converts the source PNG into the raw TFT asset
+
+### Boot and Decision UX
+
+The TFT boot screen no longer shows device diagnostics, progress copy, or verbose status text. It shows only the RaceSense logo and stays there until the decision window.
+
+The decision window was reduced to only the useful rider-facing facts:
+
+- GPS status icon
+- IMU status icon
+- SD status icon
+- active track name, or `No track`
+- interactive controls: `SYNC`, gear/settings, `LOG`
+
+Technical logs remain on serial output, not on the rider screen.
+
+### Settings and Touch UX
+
+Touch targets were enlarged to use nearly all available non-conflicting screen space.
+
+Settings changes:
+
+- decision screen `SET` text became a gear icon
+- settings `BACK` hitbox was enlarged and the cached render is invalidated on return
+- added persistent `auto_log_enabled` in `/data/metadata/device.json`
+- added Auto Log ON/OFF toggle in Settings
+- when Auto Log is OFF, the device no longer falls through to logging after the 10-second decision timeout; rider must tap `LOG`
+
+### Sync UX
+
+Sync screen polish:
+
+- WiFi search changed to an animated WiFi strength-bar screen with SSID at the bottom
+- WiFi connect loop refreshes the animation while connecting
+- sync ETA now uses rider-readable units such as `1h 05m`, `4m 12s`, or `42s`
+- progress percentage uses the larger numeric font
+- sync retry/pair/reboot buttons and hit areas were enlarged
+
+### OLED Behavior
+
+OLED initialization is now gated by an I2C presence check for `0x3c`.
+
+If the OLED is absent and only the IMU at `0x69` is visible, firmware skips OLED revive and stops printing repeated `ENODEV` stack traces during the decision window.
+
+### Deployment Tooling Fix
+
+The new UI assets exposed a firmware sync gap:
+
+- `flashtool.sh` and `push_to_device.sh` only copied `lib/*.py`
+- nested packages like `lib/tft_fonts/` were not copied
+- raw assets like `lib/tft_boot_logo.raw` were also not copied
+
+Both sync paths now copy:
+
+- `lib/*.py`
+- `lib/*.raw`
+- `lib/*/*.py`
+
+This is required for the TFT font package and raw boot logo to work on-device.
+
+### Current State
+
+The TFT path is now the primary rider-facing display direction:
+
+- clean RaceSense boot logo
+- simplified decision screen
+- generated custom fonts
+- larger touch targets
+- persistent auto-log setting
+- animated WiFi search
+- raw RGB565 boot asset streaming
+
+The OLED path remains as a fallback/hybrid path, but the product UX direction is now clearly centered on the TFT.

@@ -29,6 +29,7 @@ RAM_SAMPLE_INTERVAL_MS = 1000
 _ram_sample_ms = 0
 _ram_used_mb = 0.0
 _ram_total_mb = 0.0
+OLED_ADDR = 0x3C
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_LED_FEEDBACK = 4    # Feedback NeoPixel (16-LED matrix)
@@ -130,7 +131,7 @@ def prepare_shared_spi_bus():
 
 def raw_oled_wake(i2c, label="wake"):
     for cls, name in ((SSD1306_I2C, "ssd1306"), (SH1106_I2C, "sh1106")):
-        probe = cls(128, 64, i2c, addr=0x3C)
+        probe = cls(128, 64, i2c, addr=OLED_ADDR)
         probe.fill(1)
         probe.show()
         time.sleep_ms(120)
@@ -138,18 +139,28 @@ def raw_oled_wake(i2c, label="wake"):
         probe.show()
         time.sleep_ms(80)
         print("[OLED] Raw wake via", name)
-    probe = SH1106_I2C(128, 64, i2c, addr=0x3C)
+    probe = SH1106_I2C(128, 64, i2c, addr=OLED_ADDR)
     probe.fill(0)
     probe.show()
 
 
-def revive_oled(i2c, sd_mounted, sm, battery_pct=None, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, label="wake"):
+def oled_present(i2c, label="probe", log=True):
     try:
-        print("[OLED] I2C scan before revive (%s): %s" % (label, [hex(x) for x in i2c.scan()]))
+        addrs = i2c.scan()
+        if log:
+            print("[OLED] I2C scan (%s): %s" % (label, [hex(x) for x in addrs]))
+        return OLED_ADDR in addrs
     except Exception as e:
-        print("[OLED] I2C scan failed before revive (%s): %s" % (label, e))
+        print("[OLED] I2C scan failed (%s): %s" % (label, e))
+        return False
+
+
+def revive_oled(i2c, sd_mounted, sm, battery_pct=None, imu_ok=None, gps_ok=None, gps_baud=None, gps_rate_hz=None, label="wake"):
+    if not oled_present(i2c, label):
+        print("[OLED] Display not detected at 0x%02x; skipping revive (%s)" % (OLED_ADDR, label))
+        return None
     raw_oled_wake(i2c, label=label)
-    oled = OLEDStatus(i2c, addr=0x3C, controller="sh1106")
+    oled = OLEDStatus(i2c, addr=OLED_ADDR, controller="sh1106")
     ram_used_mb, ram_total_mb = get_ram_usage_mb(force=True)
     oled.set_context(
         battery_pct=battery_pct,
@@ -173,6 +184,33 @@ def revive_oled(i2c, sd_mounted, sm, battery_pct=None, imu_ok=None, gps_ok=None,
     time.sleep_ms(2000)
     print("[OLED] Wake complete:", label)
     return oled
+
+
+def save_device_config(data):
+    try:
+        try:
+            os.mkdir("/data")
+        except OSError:
+            pass
+        try:
+            os.mkdir("/data/metadata")
+        except OSError:
+            pass
+        with open("/data/metadata/device.json", "w") as f:
+            ujson.dump(data, f)
+        return True
+    except Exception as e:
+        print("[Config] Save failed:", e)
+        return False
+
+
+def get_active_track_name():
+    try:
+        with open("/data/metadata/track.json", "r") as f:
+            data = ujson.load(f)
+        return data.get("track_name") or data.get("name") or ""
+    except Exception:
+        return ""
 
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
@@ -378,23 +416,23 @@ def setup():
 
     # 9. OLED late init. The panel reliably wakes only after the rest of boot has settled.
     try:
-        try:
-            print("[OLED] Late-init I2C scan:", [hex(x) for x in i2c.scan()])
-        except Exception as scan_e:
-            print("[OLED] Late-init I2C scan failed:", scan_e)
         time.sleep_ms(600)
-        oled = revive_oled(
-            i2c,
-            sd_mounted,
-            sm,
-            battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
-            imu_ok=imu is not None,
-            gps_ok=sentences_received >= 5,
-            gps_baud=115200,
-            gps_rate_hz=10,
-            label="boot1",
-        )
-        print("[OLED] Initialized during late boot")
+        if oled_present(i2c, "late-init"):
+            oled = revive_oled(
+                i2c,
+                sd_mounted,
+                sm,
+                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                imu_ok=imu is not None,
+                gps_ok=sentences_received >= 5,
+                gps_baud=115200,
+                gps_rate_hz=10,
+                label="boot1",
+            )
+            if oled:
+                print("[OLED] Initialized during late boot")
+        else:
+            print("[OLED] Late init skipped; display not detected")
     except Exception as e:
         print(f"OLED: Failed to initialize ({e})")
         try:
@@ -431,6 +469,8 @@ def main():
     # If no WiFi credentials exist, skip button check and go straight to pairing
     from lib.wifi_manager import load_device_config
     config = load_device_config()
+    auto_log_enabled = bool(config.get("auto_log_enabled", True))
+    decision_track_name = get_active_track_name()
     if not config.get('ssid'):
         print("\n[System] No WiFi configured — First-time setup! Entering Pairing Mode.")
         diag.record_phase("SYNC_SETUP_NEEDED")
@@ -465,7 +505,7 @@ def main():
         wdt.feed()
 
         if settings_open and tft:
-            tft.show_settings(config.get('ssid', ''))
+            tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
             settings_action = tft.settings_touch()
             if settings_action == "wifi":
                 if paused:
@@ -478,12 +518,20 @@ def main():
             if settings_action == "calibrate":
                 print("[System] Touch calibration requested from settings.")
                 tft.calibrate_touch()
-                tft.show_settings(config.get('ssid', ''))
+                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+            if settings_action == "toggle_auto_log":
+                auto_log_enabled = not auto_log_enabled
+                config["auto_log_enabled"] = auto_log_enabled
+                save_device_config(config)
+                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                print("[System] Auto log %s from settings." % ("enabled" if auto_log_enabled else "disabled"))
             if settings_action == "back":
                 if paused:
                     paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
                     paused = False
                 settings_open = False
+                if tft:
+                    tft.invalidate()
             time.sleep_ms(50)
             continue
         
@@ -503,20 +551,20 @@ def main():
                 oled_retry_count += 1
                 label = "retry%d" % oled_retry_count
                 print("[OLED] Decision-window wake attempt:", label)
-                try:
-                    print("[OLED] Decision-window I2C scan:", [hex(x) for x in i2c.scan()])
-                except Exception as scan_e:
-                    print("[OLED] Decision-window scan failed:", scan_e)
-                oled = revive_oled(
-                    i2c,
-                    sd_mounted,
-                    sm,
-                    imu_ok=imu_ok,
-                    gps_ok=gps_ok,
-                    gps_baud=115200,
-                    gps_rate_hz=10,
-                    label=label,
-                )
+                if oled_present(i2c, "decision-" + label):
+                    oled = revive_oled(
+                        i2c,
+                        sd_mounted,
+                        sm,
+                        imu_ok=imu_ok,
+                        gps_ok=gps_ok,
+                        gps_baud=115200,
+                        gps_rate_hz=10,
+                        label=label,
+                    )
+                else:
+                    print("[OLED] Decision-window retries disabled; display not detected")
+                    oled_retry_count = 4
             except Exception as e:
                 print("[OLED] Decision-window wake failed:", e)
                 try:
@@ -592,11 +640,13 @@ def main():
                 gps_sentences=sentences_received,
                 countdown_ms=remaining_ms,
                 paused=paused,
+                auto_log_enabled=auto_log_enabled,
+                track_name=decision_track_name,
             )
         
         # Exit condition: 10s passed AND GPS is okay
         # If GPS is NOT okay, we stay here forever (or until SYNC is pressed)
-        if gps_ok and elapsed > 10000:
+        if gps_ok and auto_log_enabled and elapsed > 10000:
             break
             
         # Optional: Re-check GPS if it was previously failed? 
@@ -763,7 +813,7 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
             oled.show_sync_searching(ssid)
             oled.tick(force=True)
         if tft:
-            tft.show_sync_searching(ssid)
+            tft.show_sync_searching(ssid, frame=0)
 
         gc.collect()
         sta = network.WLAN(network.STA_IF)
@@ -800,8 +850,10 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
         sta.connect(ssid, config.get('password', ''))
 
         wifi_connected = False
-        for _ in range(300):
+        for attempt in range(300):
             wdt.feed()
+            if tft and attempt % 3 == 0:
+                tft.show_sync_searching(ssid, frame=(attempt // 3))
             if sta.isconnected():
                 wifi_connected = True
                 ip = sta.ifconfig()[0]
