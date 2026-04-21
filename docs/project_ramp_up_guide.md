@@ -180,6 +180,7 @@ Track-resolution layering as of the canonical package rollout:
   - settings screen with `WIFI`, `CALIB`, `BACK`, and Auto Log ON/OFF
   - first-time setup and pairing screens showing saved WiFi or the actual setup AP name
   - one-time and on-demand 5-point touch calibration stored at `/data/metadata/touch.json`
+  - no-IRQ touch responsiveness tuning: 110 ms debounce, touch-before-redraw ordering, and state-based redraw skipping
   - sync queue / upload / heartbeat / result / idle states
   - animated WiFi search with SSID at the bottom
   - single-screen sync upload progress with large overall percentage, ETA, current file, file index, and chunk count
@@ -188,7 +189,8 @@ Track-resolution layering as of the canonical package rollout:
 - The boot logo is generated from `RS logo full.png` into `firmware/lib/tft_boot_logo.raw` and streamed directly to the TFT.
 - The heartbeat screen is rider-facing: a red heart while contacting cloud, green after ACK. Technical cloud/auth details stay in serial logs.
 - Per-file archive messages are not shown to the rider during sync. Archive happens in the background while the TFT remains on the sync progress screen.
-- Firmware sync tooling must copy nested `lib` packages and `.raw` assets; this is handled in the current `flashtool.sh` and `push_to_device.sh`.
+- Firmware sync tooling must copy nested `lib` packages, `.raw` assets, and all `drivers/*.py`; this is handled in the current `flashtool.sh` and `push_to_device.sh`.
+- If a partial sync omits `drivers/xpt2046.py`, the TFT display should still boot, but touch remains disabled until the driver is restored.
 
 ---
 

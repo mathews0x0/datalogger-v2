@@ -88,6 +88,20 @@ Touch calibration is device-specific and persists with metadata.
 - Normal firmware sync should preserve `/data/metadata/touch.json`.
 - Delete only `/data/metadata/touch.json` if you want to force recalibration.
 
+## Touch Responsiveness
+
+The current production firmware still runs without `TOUCH_IRQ`; touch is polled in the decision/settings/sync loops.
+
+Software responsiveness improvements currently in firmware:
+
+- touch debounce is 110 ms
+- debounce is checked before performing the expensive XPT2046 SPI read
+- decision and settings screens do not redraw when visible state is unchanged
+- settings renders once, then polls touch before future redraw work
+- decision/settings loop delay is 30 ms
+
+`TOUCH_IRQ` is still optional and not connected in the validated wiring. Adding it later should improve first-touch detection latency, but calibration quality, pressure threshold, shared SPI redraw blocking, and debounce still matter.
+
 ## Current TFT UX Assets
 
 The rider-facing TFT path now uses generated assets instead of scaled `framebuf.text()` for polished screens.
@@ -100,7 +114,15 @@ The rider-facing TFT path now uses generated assets instead of scaled `framebuf.
 
 The boot logo is streamed directly to the ILI9341 window for speed. Do not convert it back to a thresholded 1-bit mask; that loses the logo glow/detail and turns the artwork into a blob.
 
-Firmware sync must copy nested font packages and `.raw` files. Use the current `firmware/flashtool.sh` or `firmware/push_to_device.sh`, which copy `lib/*.py`, `lib/*.raw`, and `lib/*/*.py`.
+Firmware sync must copy nested font packages, `.raw` files, and all drivers. Use the current `firmware/flashtool.sh` or `firmware/push_to_device.sh`, which copy `lib/*.py`, `lib/*.raw`, `lib/*/*.py`, and `drivers/*.py`.
+
+If `drivers/xpt2046.py` is missing on-device, the TFT display should still initialize, but touch and calibration will be disabled until a complete firmware sync restores the driver.
+
+## Touch Zone Mockups
+
+The current decision and settings touch areas are documented in:
+
+![TFT touch zones for decision and settings screens](assets/tft-touch-zones-decision-settings.png)
 
 ## Test Script
 

@@ -5,7 +5,10 @@ import ujson
 import os
 
 from drivers.ili9341 import ILI9341
-from drivers.xpt2046 import XPT2046
+try:
+    from drivers.xpt2046 import XPT2046
+except ImportError:
+    XPT2046 = None
 
 
 TOUCH_CAL_PATH = "/data/metadata/touch.json"
@@ -52,13 +55,17 @@ class TFTBootUI:
             rotation=1,
             baudrate=40_000_000,
         )
-        self._touch = XPT2046(
-            spi=self._spi,
-            cs=machine.Pin(pin_touch_cs, machine.Pin.OUT),
-            irq=None,
-            baudrate=1_000_000,
-            calibration=self._load_touch_calibration(),
-        )
+        if XPT2046 is not None:
+            self._touch = XPT2046(
+                spi=self._spi,
+                cs=machine.Pin(pin_touch_cs, machine.Pin.OUT),
+                irq=None,
+                baudrate=1_000_000,
+                calibration=self._load_touch_calibration(),
+            )
+        else:
+            print("[TFT] Touch disabled: drivers.xpt2046 missing")
+            self._touch = None
         self._buf = bytearray(self.width * self.height * 2)
         self._fb = framebuf.FrameBuffer(self._buf, self.width, self.height, framebuf.RGB565)
         self._mono_buf = bytearray(self.width)
@@ -78,7 +85,7 @@ class TFTBootUI:
         self._sync_eta_s = None
         self._last_render_key = None
         self._last_render_ms = 0
-        self._touch_debounce_ms = 180
+        self._touch_debounce_ms = 110
         self._sync_upload_screen_key = None
         self._sync_upload_values = None
         self._boot_logo_visible = False
@@ -135,7 +142,8 @@ class TFTBootUI:
                 pass
             with open(TOUCH_CAL_PATH, "w") as f:
                 ujson.dump(cal, f)
-            self._touch.calibration = cal
+            if self._touch is not None:
+                self._touch.calibration = cal
             return True
         except Exception as e:
             print("[TFT] Touch calibration save failed:", e)
@@ -179,8 +187,23 @@ class TFTBootUI:
         self._last_render_ms = now
         return False
 
+    def _skip_same_render(self, key):
+        if key == self._last_render_key:
+            return True
+        self._last_render_key = key
+        self._last_render_ms = time.ticks_ms()
+        return False
+
     def invalidate(self):
         self._last_render_key = None
+
+    def _touch_point(self):
+        if self._touch is None:
+            return None, time.ticks_ms()
+        now = time.ticks_ms()
+        if time.ticks_diff(now, self._last_touch_ms) < self._touch_debounce_ms:
+            return None, now
+        return self._touch.read(), now
 
     def show(self):
         self._display.set_window(0, 0, self.width - 1, self.height - 1)
@@ -591,6 +614,8 @@ class TFTBootUI:
         self.show()
 
     def _wait_touch_release(self, timeout_ms=1800):
+        if self._touch is None:
+            return
         start = time.ticks_ms()
         while time.ticks_diff(time.ticks_ms(), start) < timeout_ms:
             if not self._touch.touched():
@@ -598,6 +623,8 @@ class TFTBootUI:
             time.sleep_ms(25)
 
     def _collect_calibration_sample(self, timeout_ms=12000):
+        if self._touch is None:
+            return None
         start = time.ticks_ms()
         values_x = []
         values_y = []
@@ -678,6 +705,10 @@ class TFTBootUI:
         return best[1] if best else None
 
     def calibrate_touch(self):
+        if self._touch is None:
+            self.show_message("CALIBRATE", "Touch driver missing", "Sync drivers/xpt2046.py")
+            time.sleep_ms(900)
+            return False
         self._touch_mode = None
         points = (
             ("top left", 24, 24),
@@ -768,11 +799,8 @@ class TFTBootUI:
 
     def show_decision(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False, auto_log_enabled=True, track_name=""):
         self._touch_mode = "decision"
-        countdown_s = -1
-        if countdown_ms is not None:
-            countdown_s = max(0, int(countdown_ms) // 1000)
-        key = ("decision", bool(sd_ok), bool(imu_ok), bool(gps_ok), int(gps_sentences or 0), countdown_s, bool(paused), bool(auto_log_enabled), str(track_name))
-        if self._skip_render(key, 250):
+        key = ("decision", bool(sd_ok), bool(imu_ok), bool(gps_ok), str(track_name))
+        if self._skip_same_render(key):
             return True
         self._fb.fill(self._c_bg)
         self._centered_scaled(22, "RaceSense", scale=2, color=self._c_accent_soft)
@@ -792,7 +820,7 @@ class TFTBootUI:
     def show_settings(self, ssid="", auto_log_enabled=True):
         self._touch_mode = "settings"
         key = ("settings", str(ssid), bool(auto_log_enabled))
-        if self._skip_render(key, 250):
+        if self._skip_same_render(key):
             return True
         self._fb.fill(self._c_bg)
         self._header("SETTINGS")
@@ -1069,11 +1097,8 @@ class TFTBootUI:
         return self.show_message("STORAGE", "%s\n%d%% full" % (reason, pct), "%d/%d KB" % (used_kb, total_kb))
 
     def sync_touch(self):
-        point = self._touch.read()
+        point, now = self._touch_point()
         if not point:
-            return None
-        now = time.ticks_ms()
-        if time.ticks_diff(now, self._last_touch_ms) < self._touch_debounce_ms:
             return None
         x = point["sx"]
         y = point["sy"]
@@ -1095,11 +1120,8 @@ class TFTBootUI:
         return None
 
     def decision_touch(self):
-        point = self._touch.read()
+        point, now = self._touch_point()
         if not point:
-            return None
-        now = time.ticks_ms()
-        if time.ticks_diff(now, self._last_touch_ms) < self._touch_debounce_ms:
             return None
         x = point["sx"]
         y = point["sy"]
@@ -1120,11 +1142,8 @@ class TFTBootUI:
         return None
 
     def settings_touch(self):
-        point = self._touch.read()
+        point, now = self._touch_point()
         if not point:
-            return None
-        now = time.ticks_ms()
-        if time.ticks_diff(now, self._last_touch_ms) < self._touch_debounce_ms:
             return None
         x = point["sx"]
         y = point["sy"]

@@ -3671,3 +3671,53 @@ The TFT path is now the primary rider-facing display direction:
 - raw RGB565 boot asset streaming
 
 The OLED path remains as a fallback/hybrid path, but the product UX direction is now clearly centered on the TFT.
+
+## 2026-04-22: TFT Touch Responsiveness Pass
+
+### Objective
+
+Make the touchscreen feel more immediate without adding `TOUCH_IRQ` wiring yet.
+
+The previous UI was usable, but taps could feel sticky because several small delays stacked together:
+
+- the main decision/settings loops polled touch roughly every 50 ms
+- accepted taps were debounced for 180 ms
+- every touch poll could perform several XPT2046 SPI reads
+- unchanged decision/settings screens could still redraw periodically
+- settings rendered before polling touch
+
+### Firmware Changes
+
+The software-only responsiveness pass changed the TFT interaction path:
+
+- touch debounce reduced from 180 ms to 110 ms
+- debounce is now checked before doing the expensive XPT2046 read
+- decision and settings screens skip redraws completely when visible state is unchanged
+- invisible decision-window data, such as countdown and GPS sentence count, was removed from the TFT render key
+- settings now renders once, then polls touch before future redraw work
+- decision/settings loop delay was reduced from 50 ms to 30 ms
+
+This keeps the current no-IRQ wiring while reducing perceived tap latency and avoiding unnecessary full-screen SPI transfers.
+
+### Partial Sync Guard
+
+A partial device sync exposed another failure mode: the device was missing `drivers/xpt2046.py`, which previously caused `lib.tft_ui` import to fail and made the whole TFT appear dead.
+
+The TFT UI now handles this safely:
+
+- if `drivers.xpt2046` is missing, the display still initializes
+- touch is disabled with a clear serial log
+- calibration exits cleanly with a message instead of crashing
+
+This is a guardrail, not the desired deployed state. Full firmware sync must still copy `drivers/xpt2046.py` for touch to work.
+
+### Decision
+
+IRQ remains a later hardware/firmware improvement. The current priority is to exhaust low-risk software improvements first:
+
+- lower debounce
+- touch-before-render ordering
+- fewer redraws
+- complete source sync checks
+
+Expected rider impact: noticeably faster tap recognition on decision/settings/sync screens without changing wiring.

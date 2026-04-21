@@ -494,6 +494,7 @@ def main():
     paused = False
     paused_started_ms = 0
     paused_accum_ms = 0
+    settings_rendered = False
     oled_retry_count = 0
     next_oled_retry_ms = time.ticks_add(start, 2000)
     
@@ -505,7 +506,11 @@ def main():
         wdt.feed()
 
         if settings_open and tft:
-            tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+            if not settings_rendered:
+                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                settings_rendered = True
+                time.sleep_ms(30)
+                continue
             settings_action = tft.settings_touch()
             if settings_action == "wifi":
                 if paused:
@@ -518,21 +523,29 @@ def main():
             if settings_action == "calibrate":
                 print("[System] Touch calibration requested from settings.")
                 tft.calibrate_touch()
+                tft.invalidate()
                 tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                settings_rendered = True
             if settings_action == "toggle_auto_log":
                 auto_log_enabled = not auto_log_enabled
                 config["auto_log_enabled"] = auto_log_enabled
                 save_device_config(config)
+                tft.invalidate()
                 tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                settings_rendered = True
                 print("[System] Auto log %s from settings." % ("enabled" if auto_log_enabled else "disabled"))
             if settings_action == "back":
                 if paused:
                     paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
                     paused = False
                 settings_open = False
+                settings_rendered = False
                 if tft:
                     tft.invalidate()
-            time.sleep_ms(50)
+            if settings_open:
+                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                settings_rendered = True
+            time.sleep_ms(30)
             continue
         
         # Dynamic GPS check if not already OK
@@ -597,6 +610,8 @@ def main():
                     paused = True
                     paused_started_ms = now_ms
                 settings_open = True
+                settings_rendered = False
+                tft.invalidate()
                 print("[System] Settings opened from touchscreen.")
             if touch_action == "no" and gps_ok:
                 if paused:
@@ -652,7 +667,7 @@ def main():
         # Optional: Re-check GPS if it was previously failed? 
         # For now, we stick to the initial check as per requirement ("stays in decision window if problem with gps")
         
-        time.sleep_ms(50)
+        time.sleep_ms(30)
 
     wdt.feed()
     

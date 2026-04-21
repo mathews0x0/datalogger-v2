@@ -112,11 +112,13 @@ Operationally, that means:
     *   per-file archive messages are suppressed on TFT; archive remains background behavior
     *   logging screens avoid showing session filenames; technical logs stay on serial output
     *   boot and decision screens deliberately avoid battery/RAM/log noise
+    *   decision/settings touch paths are optimized for no-IRQ wiring with 110 ms debounce, touch-before-redraw ordering, and state-based redraw skipping
 *   **Touch calibration**:
     *   Runs once if `/data/metadata/touch.json` is missing.
     *   Can be rerun from Settings -> `CALIB`.
     *   Uses five points: top-left, top-right, bottom-right, bottom-left, center.
     *   Calibration is per-device and should be preserved with other metadata.
+    *   If `drivers/xpt2046.py` is missing after a partial sync, TFT display initialization continues but touch/calibration are disabled until the driver is restored.
 
 ---
 

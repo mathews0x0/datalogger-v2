@@ -51,7 +51,9 @@ Your ESP32-S3 should have the following structure:
 ├── drivers/
 │   ├── gps.py          # Neo-M8N driver
 │   ├── bmi323.py       # IMU driver
-│   └── sdcard.py       # SPI SD Card driver
+│   ├── sdcard.py       # SPI SD Card driver
+│   ├── ili9341.py      # TFT display driver
+│   └── xpt2046.py      # TFT resistive touch driver
 └── lib/
     ├── wifi_manager.py # Multi-network WiFi management (Stealth)
     ├── led_manager.py  # Neopixel & Blue LED status patterns
@@ -75,8 +77,9 @@ Clean sync must copy nested `lib` packages and raw assets. The current `flashtoo
 - `lib/*.py`
 - `lib/*.raw`
 - `lib/*/*.py`
+- `drivers/*.py`
 
-This is required for the TFT custom fonts and `tft_boot_logo.raw`.
+This is required for the TFT custom fonts, `tft_boot_logo.raw`, display driver, touch driver, and SD driver. If `drivers/xpt2046.py` is missing, the TFT display now still initializes, but touch is disabled until a complete firmware sync restores the file.
 
 ---
 
