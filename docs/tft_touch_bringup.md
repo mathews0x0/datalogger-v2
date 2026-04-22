@@ -90,15 +90,16 @@ Touch calibration is device-specific and persists with metadata.
 
 ## Touch Responsiveness
 
-The current production firmware still runs without `TOUCH_IRQ`; touch is polled in the decision/settings/sync loops.
+The current production firmware still runs without `TOUCH_IRQ`; touch is polled in the Home/settings/sync loops.
 
 Software responsiveness improvements currently in firmware:
 
 - touch debounce is 110 ms
 - debounce is checked before performing the expensive XPT2046 SPI read
-- decision and settings screens do not redraw when visible state is unchanged
+- Home and settings screens do not redraw when visible state is unchanged
 - settings renders once, then polls touch before future redraw work
-- decision/settings loop delay is 30 ms
+- Home/settings loop delay is 30 ms
+- Sync entry and WiFi search invalidate stale render caches before drawing animation frames
 
 `TOUCH_IRQ` is still optional and not connected in the validated wiring. Adding it later should improve first-touch detection latency, but calibration quality, pressure threshold, shared SPI redraw blocking, and debounce still matter.
 
@@ -109,20 +110,27 @@ The rider-facing TFT path now uses generated assets instead of scaled `framebuf.
 - `firmware/lib/tft_fonts/renderer.py` renders generated MicroPython font assets.
 - `firmware/lib/tft_fonts/ui.py` is the general UI font.
 - `firmware/lib/tft_fonts/data.py` is the numeric/telemetry font.
-- `firmware/lib/tft_boot_logo.raw` is the RaceSense boot logo as pre-rendered RGB565 data.
-- `firmware/lib/tft_boot_logo.py` stores width/height/path metadata for the raw logo.
+- `firmware/lib/tft_wordmark.raw` is the RaceSense boot wordmark as full-screen RGB565 data.
+- `firmware/tools/generate_tft_wordmark.swift` regenerates the wordmark raw asset and preview PNG.
 
-The boot logo is streamed directly to the ILI9341 window for speed. Do not convert it back to a thresholded 1-bit mask; that loses the logo glow/detail and turns the artwork into a blob.
+The boot wordmark is streamed directly to the ILI9341 window for speed. `main.py` does not redraw it after TFT UI construction; the main UI transitions from the early wordmark to Home. Do not convert it back to a thresholded 1-bit mask; that loses the edge quality and turns the artwork into a blob.
 
 Firmware sync must copy nested font packages, `.raw` files, and all drivers. Use the current `firmware/flashtool.sh` or `firmware/push_to_device.sh`, which copy `lib/*.py`, `lib/*.raw`, `lib/*/*.py`, and `drivers/*.py`.
 
 If `drivers/xpt2046.py` is missing on-device, the TFT display should still initialize, but touch and calibration will be disabled until a complete firmware sync restores the driver.
 
-## Touch Zone Mockups
+## Home and Touch Zones
 
-The current decision and settings touch areas are documented in:
+The old decision window is now Home. Home is the rider-facing landing page after the boot wordmark and the return target for Sync exits.
 
-![TFT touch zones for decision and settings screens](assets/tft-touch-zones-decision-settings.png)
+Current primary touch regions:
+
+- Home bottom-left: `SYNC`
+- Home bottom-center: gear/settings
+- Home bottom-right: `LOG`
+- Settings: `BACK`, Auto Log toggle, `WIFI`, `CALIB`
+- Settings -> WiFi: `CHANGE` starts re-pairing, `EXIT` returns to Home
+- Sync WiFi/search/idle/result: `EXIT` returns to Home where shown
 
 ## Test Script
 

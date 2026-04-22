@@ -36,9 +36,9 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
     *   **Required panel ties**:
         *   `LED/BL` -> `3V3`
         *   `RST` -> `3V3` or `EN`
-    *   This display path is currently used for boot / decision / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
+    *   This display path is currently used for boot / Home / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
     *   TFT typography uses generated MicroPython font assets under `firmware/lib/tft_fonts/` instead of scaled `framebuf.text()`.
-    *   The boot logo is stored as a raw RGB565 asset at `/lib/tft_boot_logo.raw` and streamed directly to the ILI9341 window for faster startup.
+    *   The boot wordmark is stored as a raw RGB565 asset at `/lib/tft_wordmark.raw` and streamed directly to the ILI9341 window for faster startup.
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
     *   2.4GHz WiFi with **Stealth Provisioning** (OS probe suppression for Success/204). Only active in Sync Mode.
@@ -65,14 +65,14 @@ Operationally, that means:
     *   **White Flashing** LEDs.
     *   Files are moved to `/sd/sessions/` (with collision protection: `_1.csv`).
     *   Device reboots automatically after completion.
-5.  **10-Second Decision Window**: Granular hardware status feedback:
+5.  **Home / 10-Second Auto Log Window**: Granular hardware status feedback:
     *   **Fast Green Blink**: (DECISION_ALL_OK) SD, IMU, and GPS are all OK.
     *   **Fast Red Blink**: (DECISION_IMU_SD_FAILED) IMU or SD (or both) have failed.
     *   **Solid Red**: (DECISION_GPS_FAIL) No NMEA detected. Device **holds** here indefinitely until GPS is recovered or SYNC button pressed.
-    *   **Button pressed** during window → **SYNC MODE**.
-    *   **TFT touch `SYNC`** during window → **SYNC MODE**.
-    *   **TFT gear button** during window → Settings (`WIFI`, `CALIB`, `BACK`, Auto Log toggle).
-    *   **TFT touch `LOG`** during window and GPS OK → **LOGGING MODE**.
+    *   **Button pressed** during Home → **SYNC MODE**.
+    *   **TFT touch `SYNC`** during Home → **SYNC MODE**.
+    *   **TFT gear button** during Home → Settings (`WIFI`, `CALIB`, `BACK`, Auto Log toggle).
+    *   **TFT touch `LOG`** during Home and GPS OK → **LOGGING MODE**.
     *   **Exit condition**: 10s passed AND GPS OK AND Auto Log enabled → **LOGGING MODE**.
     *   If Auto Log is disabled in `/data/metadata/device.json`, the rider must tap `LOG`.
 
@@ -100,19 +100,20 @@ Operationally, that means:
 *   **Deferred Pairing Transition**: Long press (>3s) requests Pairing Mode, but the firmware now waits for active network work to quiesce before switching into AP + Captive Portal.
 *   Device stays in Sync Mode indefinitely (no automatic reboot).
 *   **Temporary TFT UX path**:
-    *   clean RaceSense boot logo, with no diagnostic copy on the TFT boot screen
-    *   simplified decision screen showing GPS / IMU / SD status icons plus active track name
-    *   sync decision `SYNC` / gear / `LOG` touch targets
+    *   clean RaceSense boot wordmark, with no diagnostic copy on the TFT boot screen
+    *   Home landing page showing GPS / IMU / SD status icons plus active track name
+    *   Home `SYNC` / gear / `LOG` touch targets
     *   settings screen with `WIFI`, `CALIB`, `BACK`, and Auto Log ON/OFF
     *   pairing and WiFi screens showing saved SSID or setup AP name where applicable
-    *   WiFi search animation with SSID at the bottom
+    *   WiFi search animation with SSID at the bottom and `EXIT` back to Home
     *   heartbeat screen shown as rider-facing red/green heart status
     *   queue, single-screen upload, result, idle, and logging summary screens
     *   upload screen shows one overall progress bar, large percentage, ETA with h/m/s units, current file, file index, and chunk count
     *   per-file archive messages are suppressed on TFT; archive remains background behavior
     *   logging screens avoid showing session filenames; technical logs stay on serial output
-    *   boot and decision screens deliberately avoid battery/RAM/log noise
-    *   decision/settings touch paths are optimized for no-IRQ wiring with 110 ms debounce, touch-before-redraw ordering, and state-based redraw skipping
+    *   boot and Home screens deliberately avoid verbose diagnostic/log noise
+    *   Home/settings touch paths are optimized for no-IRQ wiring with 110 ms debounce, touch-before-redraw ordering, and state-based redraw skipping
+    *   cached top bar and partial content redraws are used to reduce visible screen-turn latency
 *   **Touch calibration**:
     *   Runs once if `/data/metadata/touch.json` is missing.
     *   Can be rerun from Settings -> `CALIB`.

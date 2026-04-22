@@ -12,6 +12,9 @@ class ILI9341:
         height=320,
         rotation=0,
         baudrate=40_000_000,
+        clear_on_init=True,
+        reset_on_init=True,
+        init_on_init=True,
     ):
         self.spi = spi
         self.cs = cs
@@ -21,6 +24,9 @@ class ILI9341:
         self.height = height
         self.rotation = rotation % 4
         self.baudrate = baudrate
+        self.clear_on_init = clear_on_init
+        self.reset_on_init = reset_on_init
+        self.init_on_init = init_on_init
         self._xbuf = bytearray(4)
         self._ybuf = bytearray(4)
         self._color_chunk = bytearray(4096)
@@ -30,10 +36,13 @@ class ILI9341:
         if self.rst is not None:
             self.rst.init(self.rst.OUT, value=1)
 
-        self._hardware_reset()
-        self._init_display()
+        if self.reset_on_init:
+            self._hardware_reset()
+        if self.init_on_init:
+            self._init_display()
         self.set_rotation(self.rotation)
-        self.fill(0x0000)
+        if self.clear_on_init:
+            self.fill(0x0000)
 
     def _activate_spi(self):
         self.spi.init(baudrate=self.baudrate, polarity=0, phase=0)

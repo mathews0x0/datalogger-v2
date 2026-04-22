@@ -61,8 +61,7 @@ Your ESP32-S3 should have the following structure:
     ├── track_engine.py # Lap/Sector logic
     ├── uploader.py      # background IoT Heartbeat & Upload thread
     ├── tft_ui.py        # ILI9341/XPT2046 rider-facing TFT UI
-    ├── tft_boot_logo.py # TFT boot logo metadata
-    ├── tft_boot_logo.raw # raw RGB565 RaceSense boot logo asset
+    ├── tft_wordmark.raw # raw RGB565 RaceSense boot wordmark asset
     ├── tft_fonts/       # generated TFT font package
     │   ├── renderer.py
     │   ├── ui.py
@@ -79,7 +78,9 @@ Clean sync must copy nested `lib` packages and raw assets. The current `flashtoo
 - `lib/*/*.py`
 - `drivers/*.py`
 
-This is required for the TFT custom fonts, `tft_boot_logo.raw`, display driver, touch driver, and SD driver. If `drivers/xpt2046.py` is missing, the TFT display now still initializes, but touch is disabled until a complete firmware sync restores the file.
+This is required for the TFT custom fonts, `tft_wordmark.raw`, display driver, touch driver, and SD driver. If `drivers/xpt2046.py` is missing, the TFT display now still initializes, but touch is disabled until a complete firmware sync restores the file.
+
+The TFT boot path depends on `/lib/tft_wordmark.raw`: `boot.py` streams this full-screen RGB565 asset before `main.py` starts. `main.py` then transitions to Home without redrawing the logo, so partial deploys that omit this raw asset will lose the intended fast boot wordmark.
 
 ---
 

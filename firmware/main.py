@@ -225,7 +225,6 @@ def setup():
         idf_free_kb=mem_info.get("idf_free", 0) // 1024,
         idf_largest_kb=mem_info.get("idf_largest", 0) // 1024,
     )
-    
     # 1. LED Manager (Dual NeoPixel: IO4 feedback + IO6 onboard)
     diag.record_phase("BOOT_LED_INIT")
     led = LEDManager(pin=PIN_LED_FEEDBACK, count=16, onboard_neo_pin=PIN_LED_ONBOARD, onboard_led_pin=PIN_DEBUG_LED)
@@ -366,7 +365,7 @@ def setup():
     track_eng = TrackEngine()
     track_eng.load_track()
 
-    # 8.5 TFT boot UI init. This board shares SPI with SD and only handles boot/decision UX for now.
+    # 8.5 TFT boot UI init. This board shares SPI with SD and handles boot/home/sync UX.
     try:
         print("[TFT] Init start")
         try:
@@ -390,20 +389,10 @@ def setup():
             pin_touch_cs=PIN_TOUCH_CS,
         )
         print("[TFT] TFTBootUI instance created")
-        tft.show_startup_logo()
-        print("[TFT] Startup logo shown")
-        time.sleep_ms(600)
+        tft._boot_logo_visible = True
         if not tft.has_touch_calibration():
             print("[TFT] No touch calibration found. Starting one-time calibration.")
             tft.calibrate_touch()
-        tft.show_boot(
-            "Device status",
-            sd_ok=sd_mounted,
-            imu_ok=imu is not None,
-            gps_ok=sentences_received >= 5,
-            gps_baud=115200,
-            gps_rate_hz=10,
-        )
         print("[TFT] Boot UI initialized")
     except Exception as e:
         tft = None
@@ -450,53 +439,30 @@ def setup():
 
     return led, gps, imu, sm, track_eng, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
 
-def main():
-    prev_state, current_state = diag.boot_start()
-    print("[Diag] Reset cause:", current_state.get("reset_cause"))
-    if prev_state:
-        print("[Diag] Previous phase:", prev_state.get("last_phase", "n/a"))
-        if prev_state.get("exception"):
-            print("[Diag] Previous exception:", prev_state.get("exception"))
-
-    led, gps, imu, sm, track_eng, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received = setup()
-    
-    # --- Sync Button (IO5) ---
-    sync_btn = None
-    if PIN_BUTTON_SYNC is not None:
-        sync_btn = machine.Pin(PIN_BUTTON_SYNC, machine.Pin.IN, machine.Pin.PULL_UP)
-    
-    # --- FIRST-TIME SETUP CHECK ---
-    # If no WiFi credentials exist, skip button check and go straight to pairing
+def run_home_window(led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn):
     from lib.wifi_manager import load_device_config
     config = load_device_config()
     auto_log_enabled = bool(config.get("auto_log_enabled", True))
-    decision_track_name = get_active_track_name()
+    home_track_name = get_active_track_name()
     if not config.get('ssid'):
-        print("\n[System] No WiFi configured — First-time setup! Entering Pairing Mode.")
-        diag.record_phase("SYNC_SETUP_NEEDED")
-        if tft:
-            tft.show_message("SETUP", "No WiFi configured", "Entering sync")
-        if oled:
-            oled.show_first_time_setup()
-        run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc)
-        return  # Never reaches here (sync mode loops forever)
+        print("\n[System] No WiFi configured — staying on Home. Use SYNC or Settings > WIFI to configure.")
+        auto_log_enabled = False
     
-    # --- 10-SECOND DECISION WINDOW ---
-    print("\n[System] 10s Decision Window — Press SYNC button to enter Sync Mode")
-    diag.record_phase("BOOT_DECISION_WINDOW")
+    print("\n[System] Home — 10s Auto Log Window")
+    diag.record_phase("BOOT_HOME_WINDOW")
     if not gps_ok:
-        print("[System] GPS ERROR: No NMEA data detected. Holding in Decision Window.")
+        print("[System] GPS ERROR: No NMEA data detected. Holding on Home.")
     
     sync_requested = False
     force_pairing_requested = False
     settings_open = False
+    settings_page = "settings"
     start = time.ticks_ms()
     paused = False
     paused_started_ms = 0
     paused_accum_ms = 0
     settings_rendered = False
-    oled_retry_count = 0
-    next_oled_retry_ms = time.ticks_add(start, 2000)
+    home_rendered_once = False
     
     while True:
         now_ms = time.ticks_ms()
@@ -505,21 +471,61 @@ def main():
             elapsed = time.ticks_diff(paused_started_ms, start) - paused_accum_ms
         wdt.feed()
 
+        if tft and not home_rendered_once:
+            ram_used_mb, ram_total_mb = get_ram_usage_mb()
+            tft.set_context(
+                battery_pct=calculate_battery_percentage(read_vbatt(vbat_adc)),
+                sd_ok=sd_mounted,
+                sd_pct=get_storage_used_percent(sm),
+                ram_used_mb=ram_used_mb,
+                ram_total_mb=ram_total_mb,
+            )
+            tft.invalidate()
+            tft.show_home(
+                sd_mounted,
+                imu_ok,
+                gps_ok,
+                gps_sentences=sentences_received,
+                countdown_ms=10000,
+                paused=paused,
+                auto_log_enabled=auto_log_enabled,
+                track_name=home_track_name,
+            )
+            home_rendered_once = True
+            print("[TFT] Home shown")
+
         if settings_open and tft:
             if not settings_rendered:
-                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                if settings_page == "wifi_options":
+                    tft.show_wifi_options(config.get('ssid', ''))
+                else:
+                    tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
                 settings_rendered = True
                 time.sleep_ms(30)
                 continue
             settings_action = tft.settings_touch()
             if settings_action == "wifi":
+                settings_page = "wifi_options"
+                settings_rendered = False
+                tft.invalidate()
+                continue
+            if settings_action == "wifi_change":
                 if paused:
                     paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
                     paused = False
                 sync_requested = True
                 force_pairing_requested = True
-                print("[System] WiFi configuration requested from settings.")
+                print("[System] WiFi change requested from settings.")
                 break
+            if settings_action == "wifi_exit":
+                settings_page = "settings"
+                settings_open = False
+                settings_rendered = False
+                if paused:
+                    paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
+                    paused = False
+                tft.invalidate()
+                continue
             if settings_action == "calibrate":
                 print("[System] Touch calibration requested from settings.")
                 tft.calibrate_touch()
@@ -530,8 +536,7 @@ def main():
                 auto_log_enabled = not auto_log_enabled
                 config["auto_log_enabled"] = auto_log_enabled
                 save_device_config(config)
-                tft.invalidate()
-                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                tft.update_settings_auto_log(auto_log_enabled=auto_log_enabled)
                 settings_rendered = True
                 print("[System] Auto log %s from settings." % ("enabled" if auto_log_enabled else "disabled"))
             if settings_action == "back":
@@ -539,11 +544,15 @@ def main():
                     paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
                     paused = False
                 settings_open = False
+                settings_page = "settings"
                 settings_rendered = False
                 if tft:
                     tft.invalidate()
             if settings_open:
-                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                if settings_page == "wifi_options":
+                    tft.show_wifi_options(config.get('ssid', ''))
+                else:
+                    tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
                 settings_rendered = True
             time.sleep_ms(30)
             continue
@@ -559,34 +568,6 @@ def main():
                         print("[System] GPS RECOVERED: NMEA detected. Window will now proceed.")
                         break
         
-        if oled is None and i2c and oled_retry_count < 4 and time.ticks_diff(time.ticks_ms(), next_oled_retry_ms) >= 0:
-            try:
-                oled_retry_count += 1
-                label = "retry%d" % oled_retry_count
-                print("[OLED] Decision-window wake attempt:", label)
-                if oled_present(i2c, "decision-" + label):
-                    oled = revive_oled(
-                        i2c,
-                        sd_mounted,
-                        sm,
-                        imu_ok=imu_ok,
-                        gps_ok=gps_ok,
-                        gps_baud=115200,
-                        gps_rate_hz=10,
-                        label=label,
-                    )
-                else:
-                    print("[OLED] Decision-window retries disabled; display not detected")
-                    oled_retry_count = 4
-            except Exception as e:
-                print("[OLED] Decision-window wake failed:", e)
-                try:
-                    import sys
-                    sys.print_exception(e)
-                except Exception:
-                    pass
-            next_oled_retry_ms = time.ticks_add(time.ticks_ms(), 2000)
-
         # Update LED with current health status
         led.play_decision(sd_mounted, imu_ok, gps_ok)
 
@@ -597,7 +578,7 @@ def main():
             print("[System] SYNC button pressed! Entering Sync Mode.")
             break
         if tft:
-            touch_action = tft.decision_touch()
+            touch_action = tft.home_touch()
             if touch_action == "yes":
                 if paused:
                     paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
@@ -610,6 +591,7 @@ def main():
                     paused = True
                     paused_started_ms = now_ms
                 settings_open = True
+                settings_page = "settings"
                 settings_rendered = False
                 tft.invalidate()
                 print("[System] Settings opened from touchscreen.")
@@ -649,7 +631,7 @@ def main():
                 ram_total_mb=ram_total_mb,
             )
             remaining_ms = 10000 - elapsed
-            tft.show_decision(
+            tft.show_home(
                 sd_mounted,
                 imu_ok,
                 gps_ok,
@@ -657,7 +639,7 @@ def main():
                 countdown_ms=remaining_ms,
                 paused=paused,
                 auto_log_enabled=auto_log_enabled,
-                track_name=decision_track_name,
+                track_name=home_track_name,
             )
         
         # Exit condition: 10s passed AND GPS is okay
@@ -666,26 +648,54 @@ def main():
             break
             
         # Optional: Re-check GPS if it was previously failed? 
-        # For now, we stick to the initial check as per requirement ("stays in decision window if problem with gps")
+        # For now, we stick to the initial check as per requirement ("stays on Home if problem with GPS")
         
         time.sleep_ms(30)
 
     wdt.feed()
     
-    # --- MODE SELECTION ---
     if sync_requested:
-        print("\n[System] ==> SYNC MODE")
-        diag.record_phase("MODE_SYNC")
-        prepare_shared_spi_bus()
-        run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=force_pairing_requested)
-    else:
+        return "sync", force_pairing_requested
+    return "log", False
+
+
+def main():
+    prev_state, current_state = diag.boot_start()
+    print("[Diag] Reset cause:", current_state.get("reset_cause"))
+    if prev_state:
+        print("[Diag] Previous phase:", prev_state.get("last_phase", "n/a"))
+        if prev_state.get("exception"):
+            print("[Diag] Previous exception:", prev_state.get("exception"))
+
+    led, gps, imu, sm, track_eng, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received = setup()
+    
+    sync_btn = None
+    if PIN_BUTTON_SYNC is not None:
+        sync_btn = machine.Pin(PIN_BUTTON_SYNC, machine.Pin.IN, machine.Pin.PULL_UP)
+
+    while True:
+        action, force_pairing_requested = run_home_window(
+            led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn
+        )
+        if action == "sync":
+            print("\n[System] ==> SYNC MODE")
+            diag.record_phase("MODE_SYNC")
+            prepare_shared_spi_bus()
+            result = run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=force_pairing_requested)
+            if result == "home":
+                print("[System] Returning to Home.")
+                if tft:
+                    tft.invalidate()
+                continue
+            continue
+
         print("\n[System] ==> LOGGING MODE")
         diag.record_phase("MODE_LOGGING")
-        # Kill all radios immediately
         from lib.wifi_manager import stop_wifi
         stop_wifi()
         prepare_shared_spi_bus()
         logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt)
+        return
 
 
 # ==================================================================
@@ -707,6 +717,8 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
     config = load_device_config()
     wifi_connected = False
     needs_setup = force_pairing or not config.get('ssid')
+    if tft:
+        tft.invalidate()
 
     def load_saved_track_name():
         try:
@@ -829,6 +841,8 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
             oled.show_sync_searching(ssid)
             oled.tick(force=True)
         if tft:
+            update_oled_context()
+            tft.invalidate()
             tft.show_sync_searching(ssid, frame=0)
 
         gc.collect()
@@ -870,6 +884,15 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
             wdt.feed()
             if tft and attempt % 3 == 0:
                 tft.show_sync_searching(ssid, frame=(attempt // 3))
+            if tft:
+                touch_action = tft.sync_touch()
+                if touch_action == "exit":
+                    print("[Sync] Exit requested during WiFi search.")
+                    try:
+                        sta.active(False)
+                    except:
+                        pass
+                    return "exit"
             if sta.isconnected():
                 wifi_connected = True
                 ip = sta.ifconfig()[0]
@@ -1281,7 +1304,9 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
     hb_ok = False
 
     if not needs_setup and config.get('ssid') and not wifi_connected:
-        attempt_wifi_connect()
+        connect_result = attempt_wifi_connect()
+        if connect_result == "exit":
+            return "home"
     
     if wifi_connected:
         print("[Sync] Performing initial handshake...")
@@ -1343,7 +1368,9 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
 
         if get_state("wifi_retry_requested") and not get_state("uploader_busy"):
             set_state(wifi_retry_requested=False)
-            attempt_wifi_connect()
+            connect_result = attempt_wifi_connect()
+            if connect_result == "exit":
+                return "home"
             if wifi_connected:
                 print("[Sync] WiFi retry succeeded.")
                 print("[Sync] Performing initial handshake...")
@@ -1409,6 +1436,13 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
             if touch_action == "retry_wifi":
                 print("[Sync] WiFi rescan requested from touchscreen.")
                 set_state(wifi_retry_requested=True)
+            elif touch_action == "exit":
+                print("[Sync] Exit requested from touchscreen.")
+                try:
+                    stop_wifi()
+                except Exception:
+                    pass
+                return "home"
             elif touch_action == "repair":
                 print("[Sync] Pairing requested from touchscreen.")
                 set_state(portal_requested=True)

@@ -3594,11 +3594,7 @@ Iteration history:
    - avoids Python pixel blending
    - streams bytes directly to the TFT window
 
-Final files:
-
-- `firmware/lib/tft_boot_logo.py`: tiny metadata module
-- `firmware/lib/tft_boot_logo.raw`: pre-rendered RGB565 image
-- `firmware/tools/generate_tft_boot_logo.py`: converts the source PNG into the raw TFT asset
+The metadata module, raw image, and generator from this iteration were later removed and replaced by the generated single-line RaceSense wordmark in `firmware/lib/tft_wordmark.raw`.
 
 ### Boot and Decision UX
 
@@ -3648,7 +3644,7 @@ The new UI assets exposed a firmware sync gap:
 
 - `flashtool.sh` and `push_to_device.sh` only copied `lib/*.py`
 - nested packages like `lib/tft_fonts/` were not copied
-- raw assets like `lib/tft_boot_logo.raw` were also not copied
+- raw assets like `lib/tft_wordmark.raw` were also not copied
 
 Both sync paths now copy:
 
@@ -3656,14 +3652,14 @@ Both sync paths now copy:
 - `lib/*.raw`
 - `lib/*/*.py`
 
-This is required for the TFT font package and raw boot logo to work on-device.
+This is required for the TFT font package and raw boot wordmark to work on-device.
 
 ### Current State
 
 The TFT path is now the primary rider-facing display direction:
 
-- clean RaceSense boot logo
-- simplified decision screen
+- clean RaceSense boot wordmark
+- simplified Home screen
 - generated custom fonts
 - larger touch targets
 - persistent auto-log setting
@@ -3721,3 +3717,83 @@ IRQ remains a later hardware/firmware improvement. The current priority is to ex
 - complete source sync checks
 
 Expected rider impact: noticeably faster tap recognition on decision/settings/sync screens without changing wiring.
+
+## 2026-04-23: Home Screen Definition, Fast Boot Wordmark, and TFT Transition Cleanup
+
+### Objective
+
+Lock the TFT UX model now that it has moved from a debug/status surface into the primary rider-facing device interface.
+
+The key product decision from this pass is that the old "decision window" is now **Home**:
+
+- Home is the landing page after boot.
+- Home is where the rider chooses `SYNC`, Settings, or `LOG`.
+- Home is the return target when exiting Sync.
+- Compatibility wrappers may still use the old `show_decision()` name, but the UX model and main flow should refer to Home.
+
+### Home Behavior
+
+Home now shows only rider-useful information:
+
+- GPS / IMU / SD status
+- active track name, or `No track`
+- top status bar with battery / SD / RAM
+- three large touch areas: `SYNC`, gear/settings, and `LOG`
+
+It deliberately does not show boot logs, file paths, verbose diagnostics, or session filenames. Technical detail stays on serial output.
+
+The current high-level flow is:
+
+```text
+Power on -> RaceSense wordmark -> Home -> Sync / Settings / Log
+                                      ^      |
+                                      |------|
+```
+
+### Boot Speed and Visual Cleanup
+
+The verbose boot screen and original image-logo pipeline were replaced with a direct RaceSense wordmark path:
+
+- `boot.py` initializes the TFT early.
+- `/lib/tft_wordmark.raw` is streamed directly as full-screen RGB565.
+- `main.py` no longer redraws the startup logo after creating `TFTBootUI`.
+- `ILI9341` supports skipping reset, clear, and re-init when boot already drew the screen.
+- the old `tft_boot_logo.py`, `tft_boot_logo.raw`, and PNG conversion generator were removed.
+
+This avoids Python image decoding, avoids per-pixel blending, reduces white-screen flashes, and gets brand presence onto the display earlier.
+
+### Transition and Redraw Work
+
+The UI now treats the top bar and content area separately:
+
+- the top bar is cached
+- full top-bar refresh is throttled to roughly 30 seconds
+- RAM segment refresh is throttled to roughly 2 seconds
+- Home/settings/sync transitions redraw only the content region where possible
+- Sync upload and Auto Log toggle use targeted redraws
+- WiFi search does one full content paint, then only animates the WiFi bars
+
+A stale render-cache bug was fixed where WiFi search could draw only the animation region over Home. Sync entry and WiFi search now invalidate TFT render state before the first search frame.
+
+### Touch and Navigation
+
+The no-IRQ touch path remains active for now:
+
+- 110 ms debounce
+- debounce checked before expensive XPT2046 reads
+- touch is polled before redraw work in Home/settings paths
+- larger touch areas are used where possible
+- Sync WiFi search, Sync idle/result, and WiFi settings flows now have explicit `EXIT` paths back to Home
+
+IRQ remains a later improvement, but the current software changes should make the device feel materially more responsive without changing wiring.
+
+### Documentation / Cleanup
+
+The docs and deployment notes now refer to:
+
+- `firmware/lib/tft_wordmark.raw`
+- `firmware/tools/generate_tft_wordmark.swift`
+- Home as the rider-facing landing page
+- raw asset and nested font package sync requirements
+
+Obsolete mockups, Python bytecode caches, and the old boot-logo asset pipeline were removed.

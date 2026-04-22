@@ -62,6 +62,9 @@ class TFTBootUI:
             rst=None,
             rotation=1,
             baudrate=40_000_000,
+            clear_on_init=False,
+            reset_on_init=False,
+            init_on_init=False,
         )
         if XPT2046 is not None:
             self._touch = XPT2046(
@@ -96,6 +99,7 @@ class TFTBootUI:
         self._touch_debounce_ms = 110
         self._sync_upload_screen_key = None
         self._sync_upload_values = None
+        self._sync_search_screen_key = None
         self._boot_logo_visible = False
         self._c_bg = 0x0000
         self._c_panel = 0x18C3
@@ -108,6 +112,12 @@ class TFTBootUI:
         self._c_good = 0x068D
         self._c_warn = 0xFD00
         self._c_bad = 0xF9CC
+        self._topbar_title = "RaceSense"
+        self._topbar_color = self._c_accent
+        self._topbar_key = None
+        self._topbar_ram_key = None
+        self._topbar_last_full_ms = 0
+        self._topbar_last_ram_ms = 0
         self._fb.fill(self._c_bg)
 
     def _font(self):
@@ -204,6 +214,11 @@ class TFTBootUI:
 
     def invalidate(self):
         self._last_render_key = None
+        self._topbar_key = None
+        self._topbar_ram_key = None
+        self._sync_search_screen_key = None
+        self._sync_upload_screen_key = None
+        self._sync_upload_values = None
 
     def _touch_point(self):
         if self._touch is None:
@@ -276,6 +291,100 @@ class TFTBootUI:
     def _start_region_screen(self):
         self._fb.fill(self._c_bg)
         self._display.fill(self._c_bg)
+
+    def _start_content_screen(self):
+        self._fb.fill_rect(0, 40, self.width, self.height - 40, self._c_bg)
+        self._display.fill_rect(0, 40, self.width, self.height - 40, self._c_bg)
+
+    def _topbar_values(self):
+        ram_used_key = int(self._ram_used_mb or 0) if self._ram_used_mb is not None else None
+        ram_total_key = int(self._ram_total_mb or 0) if self._ram_total_mb is not None else None
+        return (self._battery_pct, self._sd_ok, self._sd_pct, ram_used_key, ram_total_key)
+
+    def _draw_topbar_to_fb(self, title=None, color=None, ram_only=False):
+        title = self._topbar_title if title is None else str(title)
+        color = self._topbar_color if color is None else color
+        if not ram_only:
+            self._topbar_title = title
+            self._topbar_color = color
+            self._fb.fill_rect(0, 0, self.width, 40, color)
+            title_x = max(0, (self.width - self._text_width(title, "ui")) // 2)
+            self._text(title_x, 5, title, self._c_bg, bg=color)
+            if self._battery_pct is not None:
+                self._text(8, 24, "BAT %d%%" % self._battery_pct, self._c_bg, bg=color)
+            if self._sd_ok is not None:
+                sd_label = "SD --"
+                if self._sd_ok:
+                    sd_label = "SD %d%%" % (self._sd_pct if self._sd_pct is not None else 0)
+                sd_x = self.width - self._text_width(sd_label, "ui") - 8
+                self._text(sd_x, 24, sd_label, self._c_bg, bg=color)
+        self._fb.fill_rect(88, 24, 144, 14, color)
+        if self._ram_used_mb is not None and self._ram_total_mb is not None:
+            ram = "RAM %.1f/%.1f" % (self._ram_used_mb, self._ram_total_mb)
+            x = max(88, (self.width - self._text_width(ram, "ui")) // 2)
+            self._text(x, 24, ram, self._c_bg, bg=color)
+
+    def refresh_topbar(self, title=None, color=None, force=False):
+        now = time.ticks_ms()
+        title = self._topbar_title if title is None else str(title)
+        color = self._topbar_color if color is None else color
+        full_key = (title, color, self._battery_pct, self._sd_ok, self._sd_pct)
+        ram_key = (self._ram_used_mb, self._ram_total_mb)
+        if force or full_key != self._topbar_key or time.ticks_diff(now, self._topbar_last_full_ms) >= 30000:
+            self._draw_topbar_to_fb(title, color, ram_only=False)
+            self._show_region(0, 0, self.width, 40)
+            self._topbar_key = full_key
+            self._topbar_ram_key = ram_key
+            self._topbar_last_full_ms = now
+            self._topbar_last_ram_ms = now
+            return True
+        if ram_key != self._topbar_ram_key and time.ticks_diff(now, self._topbar_last_ram_ms) >= 2000:
+            self._draw_topbar_to_fb(title, color, ram_only=True)
+            self._show_region(88, 24, 144, 14)
+            self._topbar_ram_key = ram_key
+            self._topbar_last_ram_ms = now
+            return True
+        return False
+
+    def _block_text_width(self, text, scale):
+        narrow = (".", "i", "l")
+        total = 0
+        for ch in str(text):
+            total += (3 if ch in narrow else 6) * scale
+        return total
+
+    def _block_glyphs(self):
+        return {
+            "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+            "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+            "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
+            "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+            "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+            "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
+            "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+            "i": ("00100", "00000", "01100", "00100", "00100", "00100", "01110"),
+        }
+
+    def _draw_block_glyph(self, rows, x, y, scale, color):
+        for yy, row in enumerate(rows):
+            for xx, bit in enumerate(row):
+                if bit == "1":
+                    self._fb.fill_rect(x + xx * scale, y + yy * scale, scale - 1, scale - 1, color)
+
+    def _draw_block_text(self, text, x, y, scale, color, accent=None):
+        glyphs = self._block_glyphs()
+        cursor = int(x)
+        scale = int(scale)
+        accent = color if accent is None else accent
+        for ch in str(text):
+            if ch == ".":
+                self._fb.fill_rect(cursor + scale, y + 6 * scale, scale - 1, scale - 1, accent)
+                cursor += 3 * scale
+                continue
+            rows = glyphs.get(ch)
+            if rows:
+                self._draw_block_glyph(rows, cursor, y, scale, color)
+            cursor += (3 if ch in ("i", "l") else 6) * scale
 
     def _text(self, x, y, text, color=0xFFFF, bg=None):
         return self._font().draw_text(self._fb, int(x), int(y), str(text), style="ui", color=color, bg=bg)
@@ -473,6 +582,9 @@ class TFTBootUI:
     def _reset_sync_upload_screen(self):
         self._sync_upload_screen_key = None
         self._sync_upload_values = None
+
+    def _reset_sync_search_screen(self):
+        self._sync_search_screen_key = None
 
     def _sync_stats(self, global_current, global_total):
         try:
@@ -749,21 +861,7 @@ class TFTBootUI:
 
     def _header(self, title, color=None):
         color = self._c_accent if color is None else color
-        self._fb.fill_rect(0, 0, self.width, 40, color)
-        title_x = max(0, (self.width - self._text_width(title, "ui")) // 2)
-        self._text(title_x, 5, title, self._c_bg, bg=color)
-        if self._battery_pct is not None:
-            self._text(8, 24, "BAT %d%%" % self._battery_pct, self._c_bg, bg=color)
-        if self._ram_used_mb is not None and self._ram_total_mb is not None:
-            ram = "RAM %.1f/%.1f" % (self._ram_used_mb, self._ram_total_mb)
-            x = max(88, (self.width - self._text_width(ram, "ui")) // 2)
-            self._text(x, 24, ram, self._c_bg, bg=color)
-        if self._sd_ok is not None:
-            sd_label = "SD --"
-            if self._sd_ok:
-                sd_label = "SD %d%%" % (self._sd_pct if self._sd_pct is not None else 0)
-            sd_x = self.width - self._text_width(sd_label, "ui") - 8
-            self._text(sd_x, 24, sd_label, self._c_bg, bg=color)
+        self._draw_topbar_to_fb(title, color, ram_only=False)
 
     def _status_card(self, x, y, label, ok):
         color = 0x07E0 if ok else 0xF800
@@ -772,13 +870,13 @@ class TFTBootUI:
         self._text_scaled(x + 20, y + 38, "OK" if ok else "ERR", scale=2, color=color)
 
     def show_startup_logo(self):
-        from lib.tft_boot_logo import BOOT_LOGO_H, BOOT_LOGO_PATH, BOOT_LOGO_W
-        self._fb.fill(self._c_bg)
-        x = (self.width - BOOT_LOGO_W) // 2
-        y = (self.height - BOOT_LOGO_H) // 2
-        if self._draw_raw_rgb565(x, y, BOOT_LOGO_W, BOOT_LOGO_H, BOOT_LOGO_PATH):
+        if self._draw_raw_rgb565(0, 0, self.width, self.height, "/lib/tft_wordmark.raw"):
             self._boot_logo_visible = True
             return True
+        self._fb.fill(self._c_bg)
+        self._fb.fill_rect(0, 0, self.width, 3, self._c_accent)
+        self._fb.fill_rect(0, self.height - 3, self.width, 3, self._c_accent)
+        self._fb.fill_rect(68, 83, 184, 4, self._c_accent)
         self._boot_logo_visible = True
         self.show()
         return True
@@ -805,13 +903,14 @@ class TFTBootUI:
             self.show_startup_logo()
         return True
 
-    def show_decision(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False, auto_log_enabled=True, track_name=""):
-        self._touch_mode = "decision"
-        key = ("decision", bool(sd_ok), bool(imu_ok), bool(gps_ok), str(track_name))
+    def show_home(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False, auto_log_enabled=True, track_name=""):
+        self._touch_mode = "home"
+        key = ("home", bool(sd_ok), bool(imu_ok), bool(gps_ok), str(track_name))
         if self._skip_same_render(key):
+            self.refresh_topbar("RaceSense")
             return True
-        self._start_region_screen()
-        self._centered_scaled(22, "RaceSense", scale=2, color=self._c_accent_soft)
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense", force=True)
         self._status_line(18, 64, "GPS", gps_ok)
         self._status_line(117, 64, "IMU", imu_ok)
         self._status_line(216, 64, "SD", sd_ok)
@@ -823,22 +922,24 @@ class TFTBootUI:
         self._icon_button(112, 176, 96, 50, "gear", self._c_panel_alt, self._c_text)
         self._button(214, 176, 96, 50, "LOG", self._c_panel_alt, self._c_text)
         self._show_regions((
-            (0, 18, 320, 30),
             (0, 58, 320, 40),
             (18, 116, 284, 42),
             (10, 176, 300, 50),
         ))
         return True
 
+    def show_decision(self, *args, **kwargs):
+        return self.show_home(*args, **kwargs)
+
     def show_settings(self, ssid="", auto_log_enabled=True):
         self._touch_mode = "settings"
         key = ("settings", str(ssid), bool(auto_log_enabled))
         if self._skip_same_render(key):
+            self.refresh_topbar("RaceSense")
             return True
-        self._start_region_screen()
-        self._header("SETTINGS")
+        self._start_content_screen()
         self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
-        self._centered_scaled(58, "Device setup", scale=2, color=self._c_text)
+        self._text(128, 58, "SETTINGS", self._c_text)
         self._draw_panel(18, 92, 284, 94, border=self._c_panel_alt, fill=self._c_panel)
         self._text(30, 104, "SAVED WIFI", self._c_text_muted, bg=self._c_panel)
         wifi_label = self._truncate_text(ssid or "Not configured", 28)
@@ -849,10 +950,35 @@ class TFTBootUI:
         self._button(18, 194, 138, 38, "WIFI", self._c_accent, self._c_bg)
         self._button(164, 194, 138, 38, "CALIB", self._c_panel_alt, self._c_text)
         self._show_regions((
-            (0, 0, 320, 86),
+            (0, 40, 320, 46),
             (18, 92, 284, 94),
             (18, 194, 284, 38),
         ))
+        return True
+
+    def update_settings_auto_log(self, auto_log_enabled=True):
+        self._touch_mode = "settings"
+        self._fb.fill_rect(120, 136, 170, 34, self._c_panel)
+        self._text(124, 146, "ON" if auto_log_enabled else "OFF", self._c_text if auto_log_enabled else self._c_bad, bg=self._c_panel)
+        self._toggle(214, 136, 64, 32, auto_log_enabled)
+        self._show_region(120, 136, 170, 34)
+        return True
+
+    def show_wifi_options(self, ssid=""):
+        self._touch_mode = "wifi_options"
+        key = ("wifi_options", str(ssid))
+        if self._skip_same_render(key):
+            self.refresh_topbar("RaceSense")
+            return True
+        self._start_content_screen()
+        self._text(142, 48, "WIFI", self._c_text)
+        self._draw_panel(18, 72, 284, 78, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(30, 86, "SAVED WIFI", self._c_text_muted, bg=self._c_panel)
+        label = self._fit_text_px(ssid or "Not configured", 250, "ui")
+        self._text(30, 110, label, self._c_text if ssid else self._c_bad, bg=self._c_panel)
+        self._button(18, 184, 138, 44, "CHANGE", self._c_accent, self._c_bg)
+        self._button(164, 184, 138, 44, "EXIT", self._c_panel_alt, self._c_text)
+        self._show_regions(((0, 40, 320, 118), (18, 184, 284, 44)))
         return True
 
     def show_first_time_setup(self, ap_name="RS-Core AP"):
@@ -862,41 +988,55 @@ class TFTBootUI:
         return self.show_message("PAIRING", "Setup hotspot\n" + str(ssid_hint), "Open portal")
 
     def show_sync_searching(self, ssid, frame=0):
-        self._touch_mode = None
+        self._touch_mode = "sync_searching"
         self._reset_sync_upload_screen()
-        key = ("sync_searching", str(ssid), int(frame or 0) % 4)
+        screen_key = ("sync_searching", str(ssid))
+        frame = int(frame or 0) % 4
+        if self._sync_search_screen_key != screen_key:
+            self._sync_search_screen_key = screen_key
+            self._fb.fill_rect(0, 40, self.width, self.height - 40, self._c_bg)
+            self._display.fill_rect(0, 40, self.width, self.height - 40, self._c_bg)
+            self._text(142, 48, "WIFI", self._c_text)
+            self._draw_panel(18, 70, 284, 128, border=self._c_panel_alt, fill=self._c_panel)
+            self._centered_scaled(170, "Searching", scale=2, color=self._c_text)
+            self._draw_panel(18, 206, 178, 26, border=self._c_panel_alt, fill=self._c_bg)
+            ssid_label = self._fit_text_px(str(ssid or "Saved WiFi"), 260, "ui")
+            self._text(28, 213, self._fit_text_px(ssid_label, 158, "ui"), self._c_text_muted, bg=self._c_bg)
+            self._button(206, 202, 96, 34, "EXIT", self._c_panel_alt, self._c_text)
+            self._wifi_bars(160, 86, frame, self._c_accent)
+            self._show_region(0, 40, 320, 200)
+            return True
+        self.refresh_topbar("RaceSense")
+        key = ("sync_searching_frame", screen_key, frame)
         if self._skip_render(key, 180):
             return True
-        self._fb.fill(self._c_bg)
-        self._header("WIFI")
-        self._draw_panel(18, 52, 284, 146, border=self._c_panel_alt, fill=self._c_panel)
-        self._wifi_bars(160, 72, frame, self._c_accent)
-        self._centered_scaled(170, "Searching", scale=2, color=self._c_text)
-        self._draw_panel(18, 206, 284, 26, border=self._c_panel_alt, fill=self._c_bg)
-        ssid_label = self._fit_text_px(str(ssid or "Saved WiFi"), 260, "ui")
-        self._text((self.width - self._text_width(ssid_label, "ui")) // 2, 213, ssid_label, self._c_text_muted, bg=self._c_bg)
-        self.show()
+        self._fb.fill_rect(86, 82, 148, 72, self._c_panel)
+        self._wifi_bars(160, 86, frame, self._c_accent)
+        self._show_region(86, 82, 148, 72)
         return True
 
     def show_sync_connected(self, ssid, ip):
         self._touch_mode = None
         self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
         key = ("sync_connected", str(ssid), str(ip))
         if self._skip_render(key, 700):
+            self.refresh_topbar("RaceSense")
             return True
-        self._fb.fill(self._c_bg)
-        self._header("WIFI READY")
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
         self._draw_panel(18, 54, 284, 132, border=self._c_accent, fill=self._c_panel)
         self._centered_scaled(74, "Connected", scale=3, color=self._c_text)
         self._centered_scaled(120, self._truncate_text(str(ssid or "WiFi"), 18), scale=2, color=self._c_accent_soft)
         self._centered_scaled(154, self._truncate_text(str(ip or ""), 20), scale=1, color=self._c_text_muted)
         self._centered_scaled(210, "Starting cloud sync", scale=1, color=self._c_text_muted)
-        self.show()
+        self._show_region(0, 40, 320, 200)
         return True
 
     def show_heartbeat(self, state, host="", detail=""):
         self._touch_mode = None
         self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
         ok = "ACK" in str(state).upper() or "OK" in str(state).upper()
         key = ("heartbeat", ok, str(state))
         if self._skip_render(key, 180):
@@ -920,11 +1060,14 @@ class TFTBootUI:
         self._touch_mode = "sync_done" if allow_reboot else "sync_repair"
         self._reset_sync_metrics()
         self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
         key = ("sync_queue", tuple([str(f) for f in files[:3]]), len(files), int(total_bytes or 0), bool(allow_reboot))
         if self._skip_render(key, 500):
+            self.refresh_topbar("RaceSense")
             return True
-        self._fb.fill(self._c_bg)
-        self._header("SYNC QUEUE")
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._text(120, 46, "SYNC QUEUE", self._c_text)
         self._status_pill(22, 58, 88, "FILES", str(len(files)))
         self._status_pill(118, 58, 88, "QUEUE", self._format_bytes_compact(total_bytes))
         self._status_pill(214, 58, 84, "STATE", "READY" if files else "IDLE")
@@ -937,12 +1080,13 @@ class TFTBootUI:
             for name in files[:3]:
                 self._text(34, y, self._truncate_text(str(name).split("/")[-1], 26), self._c_text)
                 y += 14
-        self._button(10, 190, 142, 40, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(10, 190, 92, 40, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(110, 190, 92, 40, "EXIT", self._c_panel_alt, self._c_text)
         if allow_reboot:
-            self._button(168, 190, 142, 40, "REBOOT", self._c_accent, self._c_bg)
+            self._button(210, 190, 100, 40, "REBOOT", self._c_accent, self._c_bg)
         else:
-            self._centered_scaled(204, "Awaiting upload", scale=1, color=self._c_text_muted)
-        self.show()
+            self._button(210, 190, 100, 40, "WAIT", self._c_panel, self._c_text_muted)
+        self._show_region(0, 40, 320, 200)
         return True
 
     def show_sync_upload(self, filename, file_index, total_files, sent_bytes, total_bytes, global_current=0, global_total=0, phase="UPLOADING", detail="", batch_count=0, total_batches=0):
@@ -957,16 +1101,18 @@ class TFTBootUI:
         values = (short_name, int(file_index or 0), int(total_files or 0), global_pct, eta_text, chunks)
         screen_key = ("sync_upload_screen",)
         if self._sync_upload_screen_key != screen_key:
+            self._reset_sync_search_screen()
             self._sync_upload_screen_key = screen_key
             self._sync_upload_values = None
-            self._fb.fill(self._c_bg)
-            self._header("SYNC")
+            self._start_content_screen()
+            self.refresh_topbar("RaceSense")
+            self._text(142, 48, "SYNC", self._c_text)
             self._draw_panel(12, 46, 296, 178, border=self._c_panel_alt, fill=self._c_panel)
             self._text(24, 62, "OVERALL PROGRESS", self._c_text_muted)
             self._text(24, 144, "CURRENT FILE", self._c_text_muted)
             self._text(24, 184, "ETA", self._c_text_muted)
             self._text(176, 184, "CHUNKS", self._c_text_muted)
-            self.show()
+            self._show_region(0, 40, 320, 200)
         if self._sync_upload_values == values and self._skip_render(("sync_upload_hold", values), 220):
             return True
         self._sync_upload_values = values
@@ -996,12 +1142,15 @@ class TFTBootUI:
         self._touch_mode = "sync_done" if allow_reboot else "sync_repair"
         self._reset_sync_metrics()
         self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
         key = ("sync_result", bool(ok), str(filename), str(detail), bool(allow_reboot))
         if self._skip_render(key, 700):
+            self.refresh_topbar("RaceSense")
             return True
         title = "SYNC OK" if ok else "SYNC FAIL"
-        self._fb.fill(self._c_bg)
-        self._header(title, color=self._c_accent if ok else self._c_bad)
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._text(124, 48, title, self._c_text)
         y = 54
         if filename:
             self._centered_scaled(y, self._truncate_text(str(filename).split("/")[-1], 20), scale=2, color=self._c_text)
@@ -1011,18 +1160,20 @@ class TFTBootUI:
                 if line:
                     self._centered_scaled(y, self._truncate_text(line, 22), scale=2, color=self._c_text_dim)
                     y += 22
-        self._button(10, 184, 142, 44, "RE-PAIR", self._c_panel, self._c_text)
+        self._button(10, 184, 92, 44, "REPAIR", self._c_panel, self._c_text)
+        self._button(110, 184, 92, 44, "EXIT", self._c_panel_alt, self._c_text)
         if allow_reboot:
-            self._button(168, 184, 142, 44, "REBOOT", self._c_accent, self._c_bg)
+            self._button(210, 184, 100, 44, "REBOOT", self._c_accent, self._c_bg)
         else:
-            self._centered_scaled(204, "Retry later", scale=1, color=self._c_text_muted)
-        self.show()
+            self._button(210, 184, 100, 44, "WAIT", self._c_panel, self._c_text_muted)
+        self._show_region(0, 40, 320, 200)
         return True
 
     def show_sync_idle(self, hb_ok, pending_count=0, pending_bytes=0, low_power=False, allow_reboot=False, phase_label="", last_result="", track_name=""):
         self._touch_mode = "sync_done" if allow_reboot else "sync_repair"
         self._reset_sync_metrics()
         self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
         key = (
             "sync_idle",
             bool(hb_ok),
@@ -1035,9 +1186,11 @@ class TFTBootUI:
             str(track_name),
         )
         if self._skip_render(key, 500):
+            self.refresh_topbar("RaceSense")
             return True
-        self._fb.fill(self._c_bg)
-        self._header("SYNC READY")
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._text(120, 46, "SYNC READY", self._c_text)
         self._draw_panel(12, 48, 296, 138, border=self._c_panel_alt, fill=self._c_panel)
         self._status_pill(22, 58, 86, "CLOUD", "OK" if hb_ok else "WAIT", self._c_accent if hb_ok else self._c_bad)
         self._status_pill(116, 58, 86, "PHASE", self._truncate_text(phase_label or "IDLE", 8))
@@ -1048,32 +1201,38 @@ class TFTBootUI:
         result_text = last_result or ("Ready to upload" if pending_count else "Nothing pending")
         self._text(24, 136, "LAST RESULT", self._c_text_muted)
         self._text(24, 150, self._truncate_text(result_text, 32), self._c_text)
-        self._button(10, 190, 142, 40, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(10, 190, 92, 40, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(110, 190, 92, 40, "EXIT", self._c_panel_alt, self._c_text)
         if allow_reboot:
-            self._button(168, 190, 142, 40, "REBOOT", self._c_accent, self._c_bg)
+            self._button(210, 190, 100, 40, "REBOOT", self._c_accent, self._c_bg)
         else:
-            self._centered_scaled(204, "Hold button or tap", scale=1, color=self._c_text_muted)
-        self.show()
+            self._button(210, 190, 100, 40, "WAIT", self._c_panel, self._c_text_muted)
+        self._show_region(0, 40, 320, 200)
         return True
 
     def show_sync_wifi_failed(self, ssid="", allow_retry=True):
         self._touch_mode = "sync_retry" if allow_retry else "sync_repair"
         self._reset_sync_metrics()
         self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
         key = ("sync_wifi_failed", str(ssid), bool(allow_retry))
         if self._skip_render(key, 700):
+            self.refresh_topbar("RaceSense")
             return True
-        self._fb.fill(self._c_bg)
-        self._header("SYNC FAIL", color=self._c_bad)
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._text(124, 48, "SYNC FAIL", self._c_text)
         self._centered_scaled(62, "WiFi failed", scale=3, color=self._c_text)
         if ssid:
             self._centered_scaled(106, self._truncate_text(str(ssid), 20), scale=2, color=self._c_text_dim)
         if allow_retry:
-            self._button(10, 184, 142, 44, "SCAN WIFI", self._c_accent, self._c_bg)
-            self._button(168, 184, 142, 44, "RE-PAIR", self._c_panel, self._c_text)
+            self._button(10, 184, 92, 44, "SCAN", self._c_accent, self._c_bg)
+            self._button(110, 184, 92, 44, "REPAIR", self._c_panel, self._c_text)
+            self._button(210, 184, 100, 44, "EXIT", self._c_panel_alt, self._c_text)
         else:
-            self._button(10, 184, 142, 44, "RE-PAIR", self._c_panel, self._c_text)
-        self.show()
+            self._button(10, 184, 142, 44, "REPAIR", self._c_panel, self._c_text)
+            self._button(168, 184, 142, 44, "EXIT", self._c_panel_alt, self._c_text)
+        self._show_region(0, 40, 320, 200)
         return True
 
     def show_logging_started(self, filename, track_name=None, elapsed_minutes=0, force=False):
@@ -1120,18 +1279,28 @@ class TFTBootUI:
         x = point["sx"]
         y = point["sy"]
         print("[TFT] touch:", x, y, self._touch_mode)
+        if self._touch_mode == "sync_searching":
+            if 206 <= x <= 319 and 190 <= y <= 239:
+                self._last_touch_ms = now
+                return "exit"
         if self._touch_mode in ("sync_repair", "sync_done"):
-            if 0 <= x <= 164 and 176 <= y <= 239:
+            if 110 <= x <= 209 and 176 <= y <= 239:
+                self._last_touch_ms = now
+                return "exit"
+            if 0 <= x <= 109 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "repair"
-            if self._touch_mode == "sync_done" and 156 <= x <= 319 and 176 <= y <= 239:
+            if self._touch_mode == "sync_done" and 210 <= x <= 319 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "reboot"
         if self._touch_mode == "sync_retry":
-            if 0 <= x <= 164 and 176 <= y <= 239:
+            if 210 <= x <= 319 and 176 <= y <= 239:
+                self._last_touch_ms = now
+                return "exit"
+            if 0 <= x <= 109 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "retry_wifi"
-            if 156 <= x <= 319 and 176 <= y <= 239:
+            if 110 <= x <= 209 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "repair"
         return None
@@ -1158,6 +1327,9 @@ class TFTBootUI:
             return "no"
         return None
 
+    def home_touch(self):
+        return self.decision_touch()
+
     def settings_touch(self):
         point, now = self._touch_point()
         if not point:
@@ -1165,6 +1337,13 @@ class TFTBootUI:
         x = point["sx"]
         y = point["sy"]
         print("[TFT] touch:", x, y, self._touch_mode)
+        if self._touch_mode == "wifi_options":
+            if 0 <= x <= 160 and 176 <= y <= 239:
+                self._last_touch_ms = now
+                return "wifi_change"
+            if 160 <= x <= 319 and 176 <= y <= 239:
+                self._last_touch_ms = now
+                return "wifi_exit"
         if 0 <= x <= 116 and 40 <= y <= 92:
             self._last_touch_ms = now
             return "back"
