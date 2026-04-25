@@ -3797,3 +3797,171 @@ The docs and deployment notes now refer to:
 - raw asset and nested font package sync requirements
 
 Obsolete mockups, Python bytecode caches, and the old boot-logo asset pipeline were removed.
+
+## 2026-04-25: RS-Core V4.2 Arrived, Soft-Power Latch Added, and Firmware Hold Wired In
+
+### Objective
+
+Record the hardware transition to the new board revision and lock the first firmware support needed for the revised power path.
+
+RS-Core **V4.2** arrived today. The main architectural change in this revision is the power system:
+
+- momentary soft-power button instead of a simple always-on rail assumption
+- switched battery path into the regulator enable logic
+- firmware-controlled latching power so the ESP32 can keep itself alive after the button is released
+
+### Hardware Change
+
+V4.2 introduces a major power-architecture shift:
+
+- the push button now momentarily enables power
+- the board includes a dedicated `PWR_HOLD` path so the MCU can sustain power after startup
+- this creates a proper foundation for future soft shutdown behavior instead of relying only on abrupt external power removal
+
+This is a meaningful reliability improvement because it moves the logger closer to deliberate power-state management rather than passive survival under ignition or battery interruptions.
+
+### Firmware Change
+
+The firmware was updated to support the new latch path immediately:
+
+- `boot.py` now asserts **IO41** as early as possible during boot
+- `main.py` documents `IO41` as `PIN_POWER_HOLD` and reasserts it during normal startup
+
+This means the ESP32 now claims the hold rail during boot on V4.2 and can sustain power after the momentary button is released.
+
+### Next Step
+
+Long-press soft shutdown is not fully implemented yet because the current latch path still needs a reliable sensed copy of the physical button on a spare input. The follow-up task is:
+
+- add button-sense wiring to a free GPIO / ADC-capable pin
+- distinguish human button press from firmware hold
+- on long press, flush storage safely and release `IO41`
+
+### Outcome
+
+- RS-Core V4.2 hardware received
+- major power architecture upgrade recorded
+- firmware-side power hold support implemented
+- long-press shutdown path identified as the next power-management milestone
+
+## 2026-04-25: TFT Variant Mismatch Confirmed, Per-Device Display Selection Adopted
+
+### Objective
+
+Investigate why a newly wired TFT on a new board revision showed a corrupted, portrait-oriented, only partially legible RaceSense logo instead of the expected clean landscape boot wordmark and Home UI.
+
+The core PM question was whether the issue was:
+
+- bad wiring
+- a defective display
+- excessive SPI speed
+- or a second TFT variant requiring different initialization behavior
+
+### Findings
+
+The investigation established that this was **not** primarily a simple wiring error.
+
+Key observations:
+
+- the module wiring matched the breakout silkscreen and firmware pin map
+- the touch controller (`XPT2046`) was valid and touch could still be brought up
+- the display was receiving commands and pixel data, but was interpreting them incorrectly
+- some diagnostic stages produced recognizable but rotated / corrupted output
+- one family of `MADCTL` settings worked materially better than the stock default
+
+The most important findings were:
+
+- the generic breakout contains an `XPT2046` touch IC, but that does **not** identify the TFT controller itself
+- the new panel behaves differently from the previously validated TFT even on the same firmware
+- `40 MHz` operation is not uniformly stable on this wiring/module combination, though it can sometimes run
+- the best diagnostic result on the new panel came from a `MADCTL` mode equivalent to the diagnostic stage family around **222**
+
+PM conclusion:
+
+> _The product now has at least two TFT behaviors in the field, so display behavior can no longer be treated as a single global firmware constant._
+
+### Product Decision
+
+PM rejected the idea of hardcoding the newly discovered TFT settings into the shared driver because that would risk breaking previously working devices.
+
+Instead, PM adopted a **per-device protected display configuration** model.
+
+This means:
+
+- shared firmware remains common
+- each physical device stores its own TFT parameters in protected metadata
+- first boot on an unknown panel becomes a selection flow rather than a custom firmware fork
+
+This is the correct product architecture now that hardware uniformity can no longer be assumed.
+
+### Implemented Plan
+
+The following flow was approved and implemented:
+
+1. If `/data/metadata/display.json` is missing:
+   - skip the branded boot splash
+   - enter a TFT preset-selection flow
+   - cycle through known display presets automatically
+   - keep touch active
+   - assume the current preset is correct when the user touches the screen
+   - save the chosen display config
+   - reboot
+
+2. On the next boot, if `/data/metadata/touch.json` is still missing:
+   - initialize TFT using the saved display config
+   - run touch calibration
+   - save calibration
+   - reboot
+
+3. On later boots:
+   - load saved display config
+   - load saved touch calibration
+   - boot normally
+
+### Configuration Scope
+
+The new protected display configuration is stored alongside other preserved metadata and currently covers:
+
+- display preset name
+- `rotation`
+- `madctl`
+- TFT SPI `baudrate`
+
+The first preset set includes:
+
+- legacy default panel behavior
+- the newly discovered variant matching the diagnostic result around **222**
+- an alternate close variant matching the diagnostic result around **225**
+
+### Why This Matters
+
+This change is strategically important because it prevents an operational split where:
+
+- old units require one firmware build
+- new units require another
+
+Instead, the same firmware can now support multiple panel variants safely.
+
+That keeps:
+
+- field deployment simpler
+- manufacturing variation manageable
+- support/debug workflows cleaner
+
+### Follow-Up Plan
+
+The next PM-guided steps are:
+
+- validate the new first-boot display-selection flow on a freshly erased device
+- confirm second-boot touch calibration and reboot behavior
+- verify that older known-good TFT units still boot normally under the default preset path
+- decide later whether production TFT SPI should be reduced from `40 MHz` globally or only for affected panel variants
+- expand the preset table only if more panel variants are actually observed in hardware
+
+### Outcome
+
+- TFT corruption was traced to panel-variant behavior rather than a simple binary “good panel / bad panel” failure
+- shared-driver hardcoding was rejected
+- per-device display configuration was adopted
+- first-boot panel selection and second-boot touch calibration flow were implemented
+- the product can now absorb mixed TFT panel behavior without forking firmware

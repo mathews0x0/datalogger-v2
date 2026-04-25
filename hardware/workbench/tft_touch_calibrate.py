@@ -11,7 +11,9 @@ PIN_SPI_MISO = 13
 
 PIN_TFT_CS = 36
 PIN_TFT_DC = 37
-PIN_TOUCH_CS = 38
+PIN_TFT_RST = 42
+PIN_TOUCH_CS = 7
+PIN_TOUCH_IRQ = 38
 
 
 POINTS = (
@@ -93,7 +95,7 @@ def main():
         spi=spi,
         cs=machine.Pin(PIN_TFT_CS, machine.Pin.OUT),
         dc=machine.Pin(PIN_TFT_DC, machine.Pin.OUT),
-        rst=None,
+        rst=machine.Pin(PIN_TFT_RST, machine.Pin.OUT, value=1),
         rotation=1,
         baudrate=40_000_000,
     )
@@ -101,12 +103,12 @@ def main():
     touch = XPT2046(
         spi=spi,
         cs=machine.Pin(PIN_TOUCH_CS, machine.Pin.OUT),
-        irq=None,
+        irq=machine.Pin(PIN_TOUCH_IRQ, machine.Pin.IN, machine.Pin.PULL_UP),
         baudrate=2_000_000,
     )
 
     print("Touch calibration start")
-    print("Pins: TFT_CS=36 TFT_DC=37 TOUCH_CS=38 SPI=11/12/13")
+    print("Pins: TFT_CS=36 TFT_DC=37 TFT_RST=42 TOUCH_CS=7 TOUCH_IRQ=38 SPI=11/12/13")
     print("Tap each target twice. The marker advances after 2 taps.")
 
     results = []

@@ -10,14 +10,14 @@ PIN_SPI_SCK = 12
 PIN_SPI_MOSI = 11
 PIN_SPI_MISO = 13
 
-# Temporary bench mapping: use free GPIOs 36/37/38.
+# Bench script: keep the bench display CS/DC mapping, but use the production
+# touch controller control pins where the new harness exposes them.
 PIN_TFT_CS = 36
 PIN_TFT_DC = 37
-PIN_TOUCH_CS = 38
+PIN_TOUCH_CS = 7
 
-# Keep reset and IRQ off-GPIO for the minimal wiring path.
-PIN_TFT_RST = None
-PIN_TOUCH_IRQ = None
+PIN_TFT_RST = 42
+PIN_TOUCH_IRQ = 38
 
 
 COLORS = (
@@ -39,8 +39,8 @@ def mark_touch(display, x, y):
 def main():
     print("ILI9341 + XPT2046 bring-up")
     print("SPI: SCK=12 MOSI=11 MISO=13")
-    print("TFT: CS=36 DC=37 RST=tied-high-or-EN")
-    print("TOUCH: CS=38 IRQ=unused")
+    print("TFT: CS=36 DC=37 RST=42")
+    print("TOUCH: CS=7 IRQ=38")
 
     spi = machine.SPI(
         1,
@@ -56,7 +56,7 @@ def main():
         spi=spi,
         cs=machine.Pin(PIN_TFT_CS, machine.Pin.OUT),
         dc=machine.Pin(PIN_TFT_DC, machine.Pin.OUT),
-        rst=None,
+        rst=machine.Pin(PIN_TFT_RST, machine.Pin.OUT, value=1),
         rotation=1,
         baudrate=40_000_000,
     )
@@ -64,7 +64,7 @@ def main():
     touch = XPT2046(
         spi=spi,
         cs=machine.Pin(PIN_TOUCH_CS, machine.Pin.OUT),
-        irq=None,
+        irq=machine.Pin(PIN_TOUCH_IRQ, machine.Pin.IN, machine.Pin.PULL_UP),
         baudrate=2_000_000,
         calibration={
             "xmin": 303,

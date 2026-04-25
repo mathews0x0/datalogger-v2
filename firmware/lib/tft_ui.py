@@ -13,6 +13,7 @@ except ImportError:
     micropython = _MicroPythonCompat()
 
 from drivers.ili9341 import ILI9341
+from lib.display_config import DEFAULT_DISPLAY_CONFIG, normalize_display_config
 try:
     from drivers.xpt2046 import XPT2046
 except ImportError:
@@ -42,35 +43,32 @@ class TFTBootUI:
         pin_miso=9,
         pin_tft_cs=5,
         pin_tft_dc=6,
+        pin_tft_rst=42,
         pin_touch_cs=7,
+        pin_touch_irq=38,
+        display_config=None,
     ):
         self.width = 320
         self.height = 240
+        self._display_config = normalize_display_config(display_config)
+        self._pin_tft_cs = pin_tft_cs
+        self._pin_tft_dc = pin_tft_dc
+        self._pin_tft_rst = pin_tft_rst
         self._spi = machine.SPI(
             spi_bus,
-            baudrate=40_000_000,
+            baudrate=self._display_config["baudrate"],
             polarity=0,
             phase=0,
             sck=machine.Pin(pin_sck),
             mosi=machine.Pin(pin_mosi),
             miso=machine.Pin(pin_miso),
         )
-        self._display = ILI9341(
-            spi=self._spi,
-            cs=machine.Pin(pin_tft_cs, machine.Pin.OUT),
-            dc=machine.Pin(pin_tft_dc, machine.Pin.OUT),
-            rst=None,
-            rotation=1,
-            baudrate=40_000_000,
-            clear_on_init=False,
-            reset_on_init=False,
-            init_on_init=False,
-        )
+        self._display = self._make_display(self._display_config)
         if XPT2046 is not None:
             self._touch = XPT2046(
                 spi=self._spi,
                 cs=machine.Pin(pin_touch_cs, machine.Pin.OUT),
-                irq=None,
+                irq=machine.Pin(pin_touch_irq, machine.Pin.IN, machine.Pin.PULL_UP) if pin_touch_irq is not None else None,
                 baudrate=1_000_000,
                 calibration=self._load_touch_calibration(),
             )
@@ -118,7 +116,41 @@ class TFTBootUI:
         self._topbar_ram_key = None
         self._topbar_last_full_ms = 0
         self._topbar_last_ram_ms = 0
+        self._logging_track_name = ""
+        self._logging_elapsed_minutes = 0
+        self._logging_gps_ok = False
+        self._logging_status_text = "READY"
+        self._logging_status_color = self._c_warn
+        self._logging_status_mode = "status"
+        self._logging_layout_cache = None
+        self._logging_layout_key = None
+        self._logging_screen_active = False
         self._fb.fill(self._c_bg)
+
+    def _make_display(self, display_config):
+        cfg = normalize_display_config(display_config)
+        return ILI9341(
+            spi=self._spi,
+            cs=machine.Pin(self._pin_tft_cs, machine.Pin.OUT),
+            dc=machine.Pin(self._pin_tft_dc, machine.Pin.OUT),
+            rst=machine.Pin(self._pin_tft_rst, machine.Pin.OUT, value=1) if self._pin_tft_rst is not None else None,
+            rotation=cfg["rotation"],
+            baudrate=cfg["baudrate"],
+            madctl=cfg["madctl"],
+            clear_on_init=False,
+            reset_on_init=True,
+            init_on_init=True,
+        )
+
+    def apply_display_config(self, display_config, clear=True):
+        cfg = normalize_display_config(display_config)
+        self._display_config = cfg
+        self._spi.init(baudrate=cfg["baudrate"], polarity=0, phase=0)
+        self._display = self._make_display(cfg)
+        if clear:
+            self._fb.fill(self._c_bg)
+            self.show()
+        return cfg
 
     def _font(self):
         if not hasattr(self, "_font_renderer"):
@@ -146,6 +178,14 @@ class TFTBootUI:
             os.stat(TOUCH_CAL_PATH)
             return True
         except OSError:
+            return False
+
+    def has_display_selection_touch(self):
+        if self._touch is None:
+            return False
+        try:
+            return bool(self._touch.touched())
+        except Exception:
             return False
 
     def _save_touch_calibration(self, cal):
@@ -288,6 +328,157 @@ class TFTBootUI:
         for region in regions:
             self._show_region(region[0], region[1], region[2], region[3])
 
+    def _logging_palette(self, bucket):
+        bucket = str(bucket or "").lower()
+        if bucket == "green":
+            return self._c_good
+        if bucket == "red":
+            return self._c_bad
+        return self._c_warn
+
+    def _logging_layout_cache_key(self, track_data):
+        if not isinstance(track_data, dict):
+            return None
+        layout = track_data.get("device_layout") or {}
+        polyline = layout.get("polyline") if isinstance(layout, dict) else None
+        sectors = track_data.get("sectors") or []
+        return (
+            track_data.get("track_id"),
+            track_data.get("track_name") or track_data.get("name"),
+            len(polyline) if isinstance(polyline, list) else 0,
+            len(sectors),
+        )
+
+    def _prepare_logging_layout(self, track_data):
+        key = self._logging_layout_cache_key(track_data)
+        if key == self._logging_layout_key:
+            return self._logging_layout_cache
+
+        self._logging_layout_key = key
+        self._logging_layout_cache = None
+        if not isinstance(track_data, dict):
+            return None
+        layout = track_data.get("device_layout")
+        if not isinstance(layout, dict):
+            return None
+
+        polyline = layout.get("polyline")
+        if not isinstance(polyline, list) or len(polyline) < 2:
+            return None
+
+        map_x = 18
+        map_y = 54
+        map_w = 284
+        map_h = 108
+        inner_x = map_x + 8
+        inner_y = map_y + 8
+        inner_w = map_w - 16
+        inner_h = map_h - 16
+
+        def scale_point(point):
+            try:
+                px = int(point.get("x", 0))
+                py = int(point.get("y", 0))
+            except Exception:
+                return None
+            sx = inner_x + ((max(0, min(1000, px)) * inner_w) // 1000)
+            sy = inner_y + ((max(0, min(1000, py)) * inner_h) // 1000)
+            return (sx, sy)
+
+        scaled_polyline = []
+        for point in polyline:
+            scaled = scale_point(point)
+            if scaled:
+                scaled_polyline.append(scaled)
+        if len(scaled_polyline) < 2:
+            return None
+
+        scaled_sectors = []
+        for point in layout.get("sector_markers") or []:
+            scaled = scale_point(point)
+            if scaled:
+                scaled_sectors.append(scaled)
+
+        start_marker = None
+        if isinstance(layout.get("start_marker"), dict):
+            start_marker = scale_point(layout.get("start_marker"))
+
+        self._logging_layout_cache = {
+            "panel": (map_x, map_y, map_w, map_h),
+            "polyline": scaled_polyline,
+            "sector_markers": scaled_sectors,
+            "start_marker": start_marker,
+        }
+        return self._logging_layout_cache
+
+    def _draw_logging_background(self, track_data):
+        self._fb.fill(self._c_bg)
+        self._header("LOGGING", color=self._c_good if self._logging_gps_ok else self._c_bad)
+        self._draw_panel(18, 54, 284, 108, border=self._c_panel_alt, fill=self._c_panel)
+
+        layout = self._prepare_logging_layout(track_data)
+        if layout:
+            points = layout["polyline"]
+            for idx in range(1, len(points)):
+                x0, y0 = points[idx - 1]
+                x1, y1 = points[idx]
+                self._fb.line(x0, y0, x1, y1, self._c_accent_soft)
+            for marker in layout["sector_markers"]:
+                self._fb.fill_rect(marker[0] - 2, marker[1] - 2, 5, 5, self._c_warn)
+            if layout["start_marker"]:
+                marker = layout["start_marker"]
+                self._fb.fill_rect(marker[0] - 3, marker[1] - 3, 7, 7, self._c_good)
+        else:
+            self._centered_scaled(92, "Recording", scale=2, color=self._c_text)
+
+        self._draw_panel(18, 166, 284, 22, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(28, 172, "TRACK", self._c_text_muted, bg=self._c_panel)
+        track_label = self._fit_text_px(self._logging_track_name or "No track", 160, "ui")
+        self._text(82, 172, track_label, self._c_text if self._logging_track_name else self._c_text_dim, bg=self._c_panel)
+        elapsed = "T+%dm" % max(0, int(self._logging_elapsed_minutes))
+        self._text(294 - self._text_width(elapsed, "ui"), 172, elapsed, self._c_text, bg=self._c_panel)
+        self._draw_logging_status_band()
+        self._logging_screen_active = True
+
+    def _draw_logging_status_band(self):
+        band_x = 10
+        band_y = 192
+        band_w = 300
+        band_h = 40
+        fill = self._logging_palette(self._logging_status_color)
+        self._fb.fill_rect(band_x, band_y, band_w, band_h, fill)
+        text = str(self._logging_status_text or "READY")
+        style = "data"
+        if self._text_width(text, style) > (band_w - 12):
+            style = "ui"
+        text_w = self._text_width(text, style)
+        text_h = self._font().height(style)
+        text_x = max(band_x + 4, band_x + ((band_w - text_w) // 2))
+        text_y = band_y + max(2, (band_h - text_h) // 2)
+        if style == "data":
+            self._text_data(text_x, text_y, text, self._c_text, bg=fill)
+        else:
+            self._text(text_x, text_y, text, self._c_text, bg=fill)
+
+    def _set_logging_context(self, track_name=None, elapsed_minutes=0, gps_ok=False, track_data=None):
+        self._logging_track_name = str(track_name or "")
+        self._logging_elapsed_minutes = int(elapsed_minutes or 0)
+        self._logging_gps_ok = bool(gps_ok)
+        self._prepare_logging_layout(track_data)
+
+    def _apply_logging_event(self, event):
+        if not isinstance(event, dict):
+            self._logging_status_mode = "status"
+            self._logging_status_text = str(event or "READY")
+            self._logging_status_color = "orange"
+            return
+        event_type = str(event.get("type") or "")
+        if event_type not in ("sector_complete", "lap_complete"):
+            return
+        self._logging_status_mode = event_type
+        self._logging_status_text = str(event.get("display_text") or "READY")
+        self._logging_status_color = event.get("display_color") or "orange"
+
     def _start_region_screen(self):
         self._fb.fill(self._c_bg)
         self._display.fill(self._c_bg)
@@ -359,6 +550,8 @@ class TFTBootUI:
             "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
             "C": ("01111", "10000", "10000", "10000", "10000", "10000", "01111"),
             "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+            "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+            "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
             "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
             "N": ("10001", "11001", "10101", "10011", "10001", "10001", "10001"),
             "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
@@ -733,6 +926,54 @@ class TFTBootUI:
         self._centered_scaled(206, label, scale=1, color=self._c_text_muted)
         self.show()
 
+    def _draw_display_selection_screen(self, preset, index, total):
+        self._fb.fill(self._c_bg)
+        self._header("DISPLAY", color=self._c_accent)
+        self._draw_panel(16, 52, 288, 176, border=self._c_panel_alt, fill=self._c_panel)
+        self._centered_scaled(66, "Preset %d/%d" % (index, total), scale=2, color=self._c_text)
+        self._centered_scaled(92, str(preset.get("name", "display")), scale=2, color=self._c_text_muted)
+        self._draw_block_text("HELLO", 60, 116, 6, self._c_text, accent=self._c_accent)
+        self._fb.fill_rect(24, 62, 30, 16, self._c_bad)
+        self._fb.fill_rect(272, 62, 16, 30, self._c_good)
+        self._fb.fill_rect(24, 196, 16, 24, 0x001F)
+        self._fb.fill_rect(248, 204, 40, 16, self._c_warn)
+        stripe_y = 168
+        stripe_h = 12
+        stripe_w = self.width // 6
+        colors = (0xF800, 0x07E0, 0x001F, 0xFFE0, 0xF81F, 0x07FF)
+        for idx, color in enumerate(colors):
+            self._fb.fill_rect(idx * stripe_w, stripe_y, stripe_w, stripe_h, color)
+        self._centered_scaled(212, "Touch to save", scale=1, color=self._c_text)
+        self.show()
+
+    def select_display_preset(self, presets, cycle_ms=2200):
+        if self._touch is None:
+            print("[TFT] Display selection unavailable: touch missing")
+            return None
+        presets = [normalize_display_config(item) for item in presets if isinstance(item, dict)]
+        if not presets:
+            return None
+        self._touch_mode = None
+        accepted = None
+        start = time.ticks_ms()
+        index = 0
+        while accepted is None:
+            preset = presets[index]
+            self.apply_display_config(preset, clear=False)
+            self._draw_display_selection_screen(preset, index + 1, len(presets))
+            print("[TFT] display preset", index + 1, preset)
+            shown_at = time.ticks_ms()
+            while time.ticks_diff(time.ticks_ms(), shown_at) < cycle_ms:
+                if self.has_display_selection_touch():
+                    accepted = preset
+                    self._wait_touch_release()
+                    break
+                time.sleep_ms(40)
+            index = (index + 1) % len(presets)
+            if time.ticks_diff(time.ticks_ms(), start) > 120000:
+                break
+        return accepted
+
     def _wait_touch_release(self, timeout_ms=1800):
         if self._touch is None:
             return
@@ -947,14 +1188,115 @@ class TFTBootUI:
         self._text(30, 146, "AUTO LOG", self._c_text_muted, bg=self._c_panel)
         self._text(124, 146, "ON" if auto_log_enabled else "OFF", self._c_text if auto_log_enabled else self._c_bad, bg=self._c_panel)
         self._toggle(214, 136, 64, 32, auto_log_enabled)
-        self._button(18, 194, 138, 38, "WIFI", self._c_accent, self._c_bg)
-        self._button(164, 194, 138, 38, "CALIB", self._c_panel_alt, self._c_text)
+        self._button(18, 194, 88, 38, "WIFI", self._c_accent, self._c_bg)
+        self._button(116, 194, 88, 38, "TRACK", self._c_panel_alt, self._c_text)
+        self._button(214, 194, 88, 38, "CALIB", self._c_panel_alt, self._c_text)
         self._show_regions((
             (0, 40, 320, 46),
             (18, 92, 284, 94),
             (18, 194, 284, 38),
         ))
         return True
+
+    def show_track_view(self, track_data, page=0):
+        page = 1 if int(page or 0) else 0
+        self._touch_mode = "track_detail" if page else "track_layout"
+        track_name = ""
+        if isinstance(track_data, dict):
+            track_name = track_data.get("track_name") or track_data.get("name") or ""
+        key = ("track_view", page, track_name)
+        if self._skip_same_render(key):
+            self.refresh_topbar("RaceSense")
+            return True
+
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
+
+        if not isinstance(track_data, dict):
+            self._draw_panel(18, 92, 284, 94, border=self._c_panel_alt, fill=self._c_panel)
+            self._centered_scaled(118, "No active track", scale=2, color=self._c_text_dim)
+            self._centered_scaled(150, "Sync to load", scale=1, color=self._c_text_muted)
+            self._button(196, 194, 106, 38, "DETAILS", self._c_panel, self._c_text_muted)
+            self._show_region(0, 40, 320, 200)
+            return True
+
+        if page == 0:
+            self._show_track_layout_page(track_data)
+        else:
+            self._show_track_detail_page(track_data)
+        self._show_region(0, 40, 320, 200)
+        return True
+
+    def _show_track_layout_page(self, track_data):
+        name = self._fit_text_px(track_data.get("track_name") or track_data.get("name") or "Active track", 190, "ui")
+        self._text(112, 58, name, self._c_text)
+        self._draw_panel(18, 88, 284, 106, border=self._c_panel_alt, fill=self._c_panel)
+        layout = self._prepare_logging_layout(track_data)
+        if layout:
+            for idx in range(1, len(layout["polyline"])):
+                x0, y0 = layout["polyline"][idx - 1]
+                x1, y1 = layout["polyline"][idx]
+                self._fb.line(x0, y0 + 34, x1, y1 + 34, self._c_accent_soft)
+            for idx, marker in enumerate(layout["sector_markers"]):
+                mx = marker[0]
+                my = marker[1] + 34
+                self._fb.fill_rect(mx - 2, my - 2, 5, 5, self._c_warn)
+                label = "S%d" % (idx + 1)
+                self._text(mx + 4, my - 6, self._fit_text_px(label, 20, "ui"), self._c_text_muted, bg=self._c_panel)
+            if layout["start_marker"]:
+                marker = layout["start_marker"]
+                mx = marker[0]
+                my = marker[1] + 34
+                self._fb.fill_rect(mx - 3, my - 3, 7, 7, self._c_good)
+                self._text(mx + 6, my - 6, "SF", self._c_text, bg=self._c_panel)
+        else:
+            self._centered_scaled(122, "Layout unavailable", scale=2, color=self._c_text_dim)
+        self._text(24, 200, "Sector map", self._c_text_muted)
+        self._button(196, 194, 106, 38, "DETAILS", self._c_accent, self._c_bg)
+
+    def _show_track_detail_page(self, track_data):
+        name = self._fit_text_px(track_data.get("track_name") or track_data.get("name") or "Track", 190, "ui")
+        self._text(112, 58, name, self._c_text)
+        tbl = track_data.get("tbl") if isinstance(track_data.get("tbl"), dict) else {}
+        sectors = tbl.get("sectors") if isinstance(tbl.get("sectors"), list) else []
+        tbl_total = 0.0
+        for value in sectors:
+            try:
+                tbl_total += float(value or 0)
+            except Exception:
+                pass
+        self._draw_panel(18, 84, 284, 54, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(30, 94, "BEST LAP", self._c_text_muted, bg=self._c_panel)
+        lap_text = self._format_track_time(tbl_total) if tbl_total > 0 else "--.---"
+        self._big_value(30, 108, lap_text, scale=4, color=self._c_text, shadow=False, bg=self._c_panel)
+
+        self._draw_panel(18, 144, 284, 48, border=self._c_panel_alt, fill=self._c_panel)
+        y = 154
+        for idx in range(min(len(sectors), 7)):
+            value = sectors[idx]
+            sector_label = "S%d" % (idx + 1)
+            sector_time = self._format_track_time(value)
+            col = 24 if idx < 4 else 164
+            row_y = y + ((idx % 4) * 10)
+            self._text(col, row_y, sector_label, self._c_text_muted, bg=self._c_panel)
+            self._text(col + 26, row_y, self._fit_text_px(sector_time, 90, "ui"), self._c_text, bg=self._c_panel)
+        if not sectors:
+            self._centered_scaled(164, "No TBL sectors", scale=1, color=self._c_text_dim)
+        self._button(196, 194, 106, 38, "LAYOUT", self._c_accent, self._c_bg)
+
+    def _format_track_time(self, value):
+        try:
+            total_ms = int(round(float(value or 0) * 1000.0))
+        except Exception:
+            return "--.---"
+        if total_ms <= 0:
+            return "--.---"
+        minutes = total_ms // 60000
+        seconds = (total_ms % 60000) / 1000.0
+        if minutes > 0:
+            return "%d:%06.3f" % (minutes, seconds)
+        return "%.3fs" % (total_ms / 1000.0)
 
     def update_settings_auto_log(self, auto_log_enabled=True):
         self._touch_mode = "settings"
@@ -1235,37 +1577,40 @@ class TFTBootUI:
         self._show_region(0, 40, 320, 200)
         return True
 
-    def show_logging_started(self, filename, track_name=None, elapsed_minutes=0, force=False):
+    def show_logging_started(self, filename, track_name=None, elapsed_minutes=0, force=False, track_data=None):
         self._touch_mode = None
-        self._fb.fill(self._c_bg)
-        self._header("LOGGING", color=self._c_good)
-        self._centered_scaled(82, "Recording", scale=2, color=self._c_text)
-        self._draw_panel(18, 130, 284, 42, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(30, 140, "TRACK", self._c_text_muted, bg=self._c_panel)
-        name = self._fit_text_px(track_name or "No track", 190, "ui")
-        self._text(98, 140, name, self._c_text if track_name else self._c_text_dim, bg=self._c_panel)
+        self._set_logging_context(track_name=track_name, elapsed_minutes=elapsed_minutes, gps_ok=True, track_data=track_data)
+        self._logging_status_mode = "status"
+        self._logging_status_text = "READY"
+        self._logging_status_color = "orange"
+        self._draw_logging_background(track_data)
         self.show()
         return True
 
-    def show_logging_live(self, filename, sats=0, gps_ok=False, track_name=None, elapsed_minutes=0):
+    def show_logging_live(self, filename, sats=0, gps_ok=False, track_name=None, elapsed_minutes=0, track_data=None):
         self._touch_mode = None
-        self._fb.fill(0x0000)
-        self._header("LOGGING", color=0x07E0 if gps_ok else 0xF800)
-        self._status_line(28, 62, "GPS", gps_ok)
-        self._draw_panel(28, 112, 264, 44, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(42, 126, "TRACK", self._c_text_muted, bg=self._c_panel)
-        name = self._fit_text_px(track_name or "No track", 168, "ui")
-        self._text(112, 126, name, self._c_text if track_name else self._c_text_dim, bg=self._c_panel)
-        self._centered_scaled(188, "T+%dm" % max(0, int(elapsed_minutes)), scale=2, color=0xFFFF)
+        self._set_logging_context(track_name=track_name, elapsed_minutes=elapsed_minutes, gps_ok=gps_ok, track_data=track_data)
+        self._draw_logging_background(track_data)
         self.show()
         return True
 
-    def show_track_event(self, event, track_name=None, sector=None):
+    def show_track_event(self, event, track_name=None, sector=None, track_data=None):
         self._touch_mode = None
-        footer = track_name or ""
-        if sector is not None:
-            footer = "Sector %s" % sector
-        return self.show_message(event, event.replace("_", " "), footer)
+        self._set_logging_context(
+            track_name=track_name or self._logging_track_name,
+            elapsed_minutes=self._logging_elapsed_minutes,
+            gps_ok=self._logging_gps_ok,
+            track_data=track_data,
+        )
+        self._apply_logging_event(event)
+        if self._logging_screen_active:
+            self.refresh_topbar("LOGGING", color=self._c_good if self._logging_gps_ok else self._c_bad)
+            self._draw_logging_status_band()
+            self._show_region(10, 192, 300, 40)
+            return True
+        self._draw_logging_background(track_data)
+        self.show()
+        return True
 
     def show_storage_critical(self, used_kb, total_kb, reason="Storage critical"):
         self._touch_mode = None
@@ -1344,16 +1689,35 @@ class TFTBootUI:
             if 160 <= x <= 319 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "wifi_exit"
+        if self._touch_mode == "track_layout":
+            if 0 <= x <= 116 and 40 <= y <= 92:
+                self._last_touch_ms = now
+                return "back"
+            if 190 <= x <= 319 and 186 <= y <= 239:
+                self._last_touch_ms = now
+                return "track_next"
+            return None
+        if self._touch_mode == "track_detail":
+            if 0 <= x <= 116 and 40 <= y <= 92:
+                self._last_touch_ms = now
+                return "back"
+            if 190 <= x <= 319 and 186 <= y <= 239:
+                self._last_touch_ms = now
+                return "track_prev"
+            return None
         if 0 <= x <= 116 and 40 <= y <= 92:
             self._last_touch_ms = now
             return "back"
         if 188 <= x <= 304 and 124 <= y <= 188:
             self._last_touch_ms = now
             return "toggle_auto_log"
-        if 0 <= x <= 160 and 189 <= y <= 239:
+        if 0 <= x <= 108 and 189 <= y <= 239:
             self._last_touch_ms = now
             return "wifi"
-        if 160 <= x <= 319 and 189 <= y <= 239:
+        if 109 <= x <= 211 and 189 <= y <= 239:
+            self._last_touch_ms = now
+            return "track"
+        if 212 <= x <= 319 and 189 <= y <= 239:
             self._last_touch_ms = now
             return "calibrate"
         return None

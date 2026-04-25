@@ -46,6 +46,7 @@ Your ESP32-S3 should have the following structure:
 ├── data/
 │   └── metadata/
 │       ├── device.json # (Auto-generated) WiFi & API credentials
+│       ├── display.json # Per-device TFT panel preset/config
 │       ├── track.json  # Active track metadata
 │       └── touch.json  # Per-device TFT touch calibration
 ├── drivers/
@@ -69,7 +70,10 @@ Your ESP32-S3 should have the following structure:
     └── captive_portal.py # Magic Link provisioning portal
 ```
 
-Normal firmware sync preserves `/data/metadata/`. Delete only `/data/metadata/touch.json` if you want to force the one-time TFT 5-point calibration to run again.
+Normal firmware sync preserves `/data/metadata/`.
+
+- Delete only `/data/metadata/display.json` if you want to force the first-boot TFT preset selection flow to run again.
+- Delete only `/data/metadata/touch.json` if you want to force the second-boot TFT 5-point calibration to run again.
 
 Clean sync must copy nested `lib` packages and raw assets. The current `flashtool.sh` and `push_to_device.sh` copy:
 
@@ -80,7 +84,7 @@ Clean sync must copy nested `lib` packages and raw assets. The current `flashtoo
 
 This is required for the TFT custom fonts, `tft_wordmark.raw`, display driver, touch driver, and SD driver. If `drivers/xpt2046.py` is missing, the TFT display now still initializes, but touch is disabled until a complete firmware sync restores the file.
 
-The TFT boot path depends on `/lib/tft_wordmark.raw`: `boot.py` streams this full-screen RGB565 asset before `main.py` starts. `main.py` then transitions to Home without redrawing the logo, so partial deploys that omit this raw asset will lose the intended fast boot wordmark.
+The TFT boot path depends on `/lib/tft_wordmark.raw`: `boot.py` streams this full-screen RGB565 asset before `main.py` starts when `/data/metadata/display.json` already exists. If the display has not been selected yet on a fresh unit, `boot.py` skips the branded splash and `main.py` enters the TFT preset-selection flow instead.
 
 ---
 

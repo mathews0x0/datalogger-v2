@@ -12,6 +12,7 @@ class ILI9341:
         height=320,
         rotation=0,
         baudrate=40_000_000,
+        madctl=None,
         clear_on_init=True,
         reset_on_init=True,
         init_on_init=True,
@@ -24,6 +25,7 @@ class ILI9341:
         self.height = height
         self.rotation = rotation % 4
         self.baudrate = baudrate
+        self.madctl = madctl
         self.clear_on_init = clear_on_init
         self.reset_on_init = reset_on_init
         self.init_on_init = init_on_init
@@ -104,7 +106,7 @@ class ILI9341:
         self.rotation = rotation
         # This panel wants BGR color order together with the framebuffer
         # byte-swap performed in tft_ui.show().
-        madctl = (0x48, 0x28, 0x88, 0xE8)[rotation]
+        madctl = self.madctl if self.madctl is not None else (0x48, 0x28, 0x88, 0xE8)[rotation]
         self.write_cmd(0x36, bytearray([madctl]))
         if rotation % 2:
             self.width = 320

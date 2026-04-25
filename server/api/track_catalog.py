@@ -284,6 +284,18 @@ def _normalize_start_line(start_line):
     return start_line
 
 
+def _ordered_centerline_from_start(centerline, start_line):
+    if not centerline:
+        return []
+    if len(centerline) < 2 or not start_line:
+        return list(centerline)
+    closest_idx = min(
+        range(len(centerline)),
+        key=lambda idx: _project_line_distance(centerline[idx]["lat"], centerline[idx]["lon"], start_line)
+    )
+    return centerline[closest_idx:] + centerline[:closest_idx]
+
+
 def _load_existing_centerline(track_dir, existing_track_json):
     centerline = existing_track_json.get("centerline")
     if isinstance(centerline, list) and centerline:
@@ -331,15 +343,121 @@ def _interpolate_point(start, end, ratio):
     }
 
 
+def _anchor_sector_index(anchor_name):
+    if not anchor_name:
+        return None
+    match = re.search(r"sector\s*(\d+)", str(anchor_name).lower())
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except Exception:
+        return None
+
+
+def _normalize_sector_gate(raw_gate, sector_index=None):
+    if not isinstance(raw_gate, dict):
+        return None
+
+    gate = dict(raw_gate)
+    center = gate.get("center") if isinstance(gate.get("center"), dict) else {}
+    lat = gate.get("end_lat", gate.get("lat", center.get("lat")))
+    lon = gate.get("end_lon", gate.get("lon", center.get("lon")))
+    if lat is None or lon is None:
+        return None
+
+    if sector_index is None:
+        sector_index = gate.get("sector_index")
+    try:
+        sector_index = int(sector_index)
+    except Exception:
+        sector_index = None
+    if sector_index is None or sector_index <= 0:
+        return None
+
+    radius = gate.get("radius_m", gate.get("radius", 15))
+    try:
+        radius = float(radius)
+    except Exception:
+        radius = 15.0
+
+    return {
+        "id": gate.get("id") or f"S{sector_index}",
+        "sector_index": sector_index,
+        "end_lat": float(lat),
+        "end_lon": float(lon),
+        "radius_m": max(5.0, radius),
+    }
+
+
+def _extract_explicit_sector_gates(package):
+    package = package or {}
+    explicit = []
+
+    for key_path in (
+        ("sectors",),
+        ("telemetry", "sectors"),
+        ("device", "sectors"),
+    ):
+        node = package
+        for key in key_path:
+            node = node.get(key) if isinstance(node, dict) else None
+        if not isinstance(node, list):
+            continue
+        for gate in node:
+            normalized = _normalize_sector_gate(gate)
+            if normalized:
+                explicit.append(normalized)
+
+    anchors = package.get("anchors") or []
+    geo_ref = package.get("telemetry", {}).get("geoReference")
+    auto_align = package.get("telemetry", {}).get("autoAlign")
+    if geo_ref and auto_align:
+        for anchor in anchors:
+            if not isinstance(anchor, dict):
+                continue
+            sector_index = _anchor_sector_index(anchor.get("name"))
+            if sector_index is None:
+                continue
+            geo = _anchor_geo(anchor, geo_ref, auto_align)
+            if not geo:
+                continue
+            explicit.append({
+                "id": anchor.get("id") or f"S{sector_index}",
+                "sector_index": sector_index,
+                "end_lat": float(geo["lat"]),
+                "end_lon": float(geo["lon"]),
+                "radius_m": 15.0,
+            })
+
+    if not explicit:
+        return []
+
+    deduped = {}
+    for gate in explicit:
+        idx = gate["sector_index"]
+        if idx not in deduped:
+            deduped[idx] = gate
+    ordered = [deduped[idx] for idx in sorted(deduped.keys())]
+    if len(ordered) != config.SECTOR_COUNT:
+        return []
+    return [
+        {
+            "id": gate["id"],
+            "end_lat": gate["end_lat"],
+            "end_lon": gate["end_lon"],
+            "radius_m": gate["radius_m"],
+        }
+        for gate in ordered
+    ]
+
+
 def _generate_sectors_from_centerline(centerline, start_line, sector_count):
     if not centerline or len(centerline) < 2:
         return []
 
-    closest_idx = min(
-        range(len(centerline)),
-        key=lambda idx: _project_line_distance(centerline[idx]["lat"], centerline[idx]["lon"], start_line)
-    )
-    ordered = centerline[closest_idx:] + centerline[:closest_idx] + [centerline[closest_idx]]
+    ordered = _ordered_centerline_from_start(centerline, start_line)
+    ordered = ordered + [ordered[0]]
 
     dists = [0.0]
     total = 0.0
@@ -379,6 +497,85 @@ def _generate_sectors_from_centerline(centerline, start_line, sector_count):
             "radius_m": round(dynamic_radius, 1),
         })
     return sectors
+
+
+def _downsample_points(points, max_points):
+    if len(points) <= max_points:
+        return list(points)
+    step = max(1, int(math.ceil(len(points) / float(max_points))))
+    sampled = [points[idx] for idx in range(0, len(points), step)]
+    if sampled[-1] != points[-1]:
+        sampled.append(points[-1])
+    return sampled
+
+
+def _build_device_layout(track_data, max_points=96):
+    if not isinstance(track_data, dict):
+        return None
+
+    start_line = _normalize_start_line(dict(track_data.get("start_line") or {})) if track_data.get("start_line") else None
+    centerline = _ordered_centerline_from_start(track_data.get("centerline") or [], start_line)
+    if len(centerline) < 2:
+        return None
+
+    path_points = _downsample_points(centerline, max_points)
+    ref_points = list(path_points)
+    if start_line and start_line.get("lat") is not None and start_line.get("lon") is not None:
+        ref_points.append({"lat": float(start_line["lat"]), "lon": float(start_line["lon"])})
+    for sector in track_data.get("sectors") or []:
+        if not isinstance(sector, dict):
+            continue
+        if sector.get("end_lat") is None or sector.get("end_lon") is None:
+            continue
+        ref_points.append({"lat": float(sector["end_lat"]), "lon": float(sector["end_lon"])})
+
+    lats = [float(point["lat"]) for point in ref_points]
+    lons = [float(point["lon"]) for point in ref_points]
+    min_lat = min(lats)
+    max_lat = max(lats)
+    min_lon = min(lons)
+    max_lon = max(lons)
+    lat_span = max(max_lat - min_lat, 1e-9)
+    lon_span = max(max_lon - min_lon, 1e-9)
+
+    def to_layout_point(lat, lon):
+        x = int(round(((float(lon) - min_lon) / lon_span) * 1000.0))
+        y = int(round(((max_lat - float(lat)) / lat_span) * 1000.0))
+        return {"x": max(0, min(1000, x)), "y": max(0, min(1000, y))}
+
+    layout = {
+        "version": 1,
+        "polyline": [to_layout_point(point["lat"], point["lon"]) for point in path_points],
+        "start_marker": to_layout_point(start_line["lat"], start_line["lon"]) if start_line else None,
+        "sector_markers": [],
+        "bounds": {
+            "min_lat": min_lat,
+            "max_lat": max_lat,
+            "min_lon": min_lon,
+            "max_lon": max_lon,
+        },
+        "source": "centerline",
+    }
+    for idx, sector in enumerate(track_data.get("sectors") or []):
+        if not isinstance(sector, dict):
+            continue
+        if sector.get("end_lat") is None or sector.get("end_lon") is None:
+            continue
+        marker = to_layout_point(sector["end_lat"], sector["end_lon"])
+        marker["id"] = sector.get("id") or f"S{idx + 1}"
+        layout["sector_markers"].append(marker)
+    return layout
+
+
+def build_device_track_payload(track_data):
+    if not isinstance(track_data, dict):
+        return track_data
+    payload = dict(track_data)
+    payload["sectors"] = list(track_data.get("sectors") or [])
+    payload["sector_count"] = len(payload["sectors"])
+    if not payload.get("device_layout"):
+        payload["device_layout"] = _build_device_layout(payload)
+    return payload
 
 
 def local_meters_to_canonical(local_x, local_y, auto_align):
@@ -537,7 +734,9 @@ def upsert_global_track_package(track_name, package, slug=None, track_id=None):
     centerline = _load_existing_centerline(track_dir, existing_track_json)
     if not centerline:
         centerline = _centerline_from_package(package)
-    sectors = _generate_sectors_from_centerline(centerline, start_line, config.SECTOR_COUNT)
+    sectors = _extract_explicit_sector_gates(package)
+    if not sectors:
+        sectors = _generate_sectors_from_centerline(centerline, start_line, config.SECTOR_COUNT)
     if not sectors:
         sectors = existing_track_json.get("sectors", [])
 
@@ -553,6 +752,7 @@ def upsert_global_track_package(track_name, package, slug=None, track_id=None):
         "start_line": start_line,
         "centerline": centerline,
         "sectors": sectors,
+        "sector_count": len(sectors),
         "canonical_layout": {
             "width": metadata["layout"]["width"],
             "height": metadata["layout"]["height"],
@@ -560,6 +760,7 @@ def upsert_global_track_package(track_name, package, slug=None, track_id=None):
             "metadata_file": "layout_metadata.json",
         },
     }
+    normalized_track["device_layout"] = _build_device_layout(normalized_track)
 
     with open(track_dir / "package.json", "w") as handle:
         json.dump(package, handle, indent=2)

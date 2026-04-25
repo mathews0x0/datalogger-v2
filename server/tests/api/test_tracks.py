@@ -6,7 +6,7 @@ import shutil
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from api.models import db, User, TrackMeta, GlobalTrack, SessionMeta
+from api.models import db, User, TrackMeta, GlobalTrack, SessionMeta, DeviceToken
 import api.config as config
 
 @pytest.fixture
@@ -125,3 +125,74 @@ def test_global_track_appears_for_user_and_is_read_only(client, app):
 
     rename_resp = client.post('/api/tracks/1000000/rename', json={'new_name': 'Nope'})
     assert rename_resp.status_code == 403
+
+
+def test_device_active_track_includes_device_layout_and_tbl(client, app):
+    with app.app_context():
+        user = User.query.filter_by(email='track@racesense.in').first()
+        global_track = GlobalTrack(
+            track_id=1000001,
+            slug='layouttrack',
+            track_name='Layout Track',
+            folder_name='layouttrack',
+            package_version=1,
+            layout_width=1000,
+            layout_height=800,
+            has_canonical_layout=True
+        )
+        db.session.add(global_track)
+        user.active_track_id = 1000001
+        device_token = DeviceToken(token='rsk_testtoken', user_id=user.id, device_name='Bench Device')
+        db.session.add(device_token)
+        db.session.commit()
+
+        global_dir = config.get_global_track_dir('layouttrack')
+        with open(global_dir / 'track.json', 'w') as f:
+            json.dump({
+                'track_id': 1000001,
+                'track_name': 'Layout Track',
+                'track_scope': 'global',
+                'track_source': 'global_package',
+                'has_canonical_layout': True,
+                'start_line': {
+                    'center': {'lat': 11.1001, 'lon': 77.1001},
+                    'lat': 11.1001,
+                    'lon': 77.1001,
+                    'radius_m': 20
+                },
+                'centerline': [
+                    {'lat': 11.1001, 'lon': 77.1001},
+                    {'lat': 11.1002, 'lon': 77.1006},
+                    {'lat': 11.0999, 'lon': 77.1009},
+                    {'lat': 11.0996, 'lon': 77.1003},
+                ],
+                'sectors': [
+                    {'id': 'S1', 'end_lat': 11.1002, 'end_lon': 77.1006, 'radius_m': 15},
+                    {'id': 'S2', 'end_lat': 11.0999, 'end_lon': 77.1009, 'radius_m': 15},
+                    {'id': 'S3', 'end_lat': 11.0996, 'end_lon': 77.1003, 'radius_m': 15},
+                ]
+            }, f)
+
+        user_track_dir = config.get_user_tracks_dir(user.id) / 'global_track_1000001'
+        user_track_dir.mkdir(parents=True, exist_ok=True)
+        with open(user_track_dir / 'tbl.json', 'w') as f:
+            json.dump({
+                'sectors': [
+                    {'sector_index': 2, 'best_time': 12.8},
+                    {'sector_index': 0, 'best_time': 11.5},
+                    {'sector_index': 1, 'best_time': 12.2},
+                ]
+            }, f)
+
+    resp = client.get(
+        '/api/device/active_track',
+        headers={'Authorization': 'Bearer rsk_testtoken'}
+    )
+    assert resp.status_code == 200
+    active_track = resp.json['active_track']
+    assert active_track['sector_count'] == 3
+    assert active_track['tbl']['sectors'] == [11.5, 12.2, 12.8]
+    assert 'device_layout' in active_track
+    assert len(active_track['device_layout']['polyline']) >= 2
+    assert active_track['device_layout']['start_marker'] is not None
+    assert len(active_track['device_layout']['sector_markers']) == 3

@@ -85,12 +85,7 @@ class TrackEngine:
         """
         Main update loop. Call with each GPS sample.
         
-        Returns:
-            None - No event
-            "TRACK_FOUND" - Just identified track
-            "SECTOR_FAST" - Sector completed faster than TBL
-            "SECTOR_NEUTRAL" - Sector within threshold
-            "SECTOR_SLOW" - Sector slower than TBL
+        Returns an event payload dict or None.
         """
         if not self.track:
             return None
@@ -108,9 +103,15 @@ class TrackEngine:
                     self.sector_start_ts = timestamp
                     self.lap_start_ts = timestamp
                     self.current_sector = 0
-                    self._pending_event = "TRACK_FOUND"
+                    event = {
+                        "type": "track_found",
+                        "led_event": "TRACK_FOUND",
+                        "display_color": "green",
+                        "display_text": "TRACK",
+                    }
+                    self._pending_event = event
                     print(f"[TrackEngine] Track Identified: {self.track.get('name')}")
-                    return "TRACK_FOUND"
+                    return event
             return None
         
         # Phase 2: Sector Crossing Detection
@@ -121,7 +122,7 @@ class TrackEngine:
             gate_lon = gate.get('end_lon')
             gate_radius = gate.get('radius_m', GATE_RADIUS_M)
             
-            if gate_lat and gate_lon:
+            if gate_lat is not None and gate_lon is not None:
                 dist = self._haversine_m(lat, lon, gate_lat, gate_lon)
                 
                 if dist < gate_radius:
@@ -142,19 +143,45 @@ class TrackEngine:
                     if isinstance(tbl_sectors, list) and self.current_sector < len(tbl_sectors):
                         tbl_time = tbl_sectors[self.current_sector]
                     
-                    event = self._calc_delta_event(sector_time, tbl_time)
+                    led_event, display_color, delta_s = self._calc_delta_event(sector_time, tbl_time)
                     
-                    print(f"[TrackEngine] S{self.current_sector+1}: {sector_time:.2f}s (TBL: {tbl_time}, Delta: {event})")
+                    sector_index = self.current_sector + 1
+                    print(f"[TrackEngine] S{sector_index}: {sector_time:.2f}s (TBL: {tbl_time}, LED: {led_event})")
                     
                     # Advance
                     self.current_sector += 1
                     self.sector_start_ts = timestamp
                     
                     # Check lap complete (back to sector 0)
+                    completed_sectors = [self.current_lap_sectors[idx] for idx in sorted(self.current_lap_sectors.keys())]
                     if self.current_sector >= len(sectors):
+                        lap_time = s_timestamp - (self.lap_start_ts / 1000.0)
+                        event = {
+                            "type": "lap_complete",
+                            "led_event": led_event,
+                            "display_color": display_color,
+                            "display_text": self._format_lap_time(lap_time),
+                            "lap_time": lap_time,
+                            "sector_index": sector_index,
+                            "sector_time": sector_time,
+                            "tbl_time": tbl_time,
+                            "delta_s": delta_s,
+                            "sector_times": completed_sectors,
+                        }
                         self.current_sector = 0
                         self.lap_start_ts = timestamp
                         self.current_lap_sectors = {}
+                    else:
+                        event = {
+                            "type": "sector_complete",
+                            "led_event": led_event,
+                            "display_color": display_color,
+                            "display_text": self._format_delta(delta_s),
+                            "sector_index": sector_index,
+                            "sector_time": sector_time,
+                            "tbl_time": tbl_time,
+                            "delta_s": delta_s,
+                        }
                     
                     self._pending_event = event
                     return event
@@ -162,19 +189,36 @@ class TrackEngine:
         return None
     
     def _calc_delta_event(self, sector_time, tbl_time):
-        """Determine feedback color based on delta."""
+        """Determine feedback color and LED state based on delta."""
         if tbl_time is None or tbl_time == 0:
-            return "SECTOR_NEUTRAL"  # No TBL data
-            
+            return "SECTOR_NEUTRAL", "orange", None
+
         delta = sector_time - tbl_time
-        
-        # Thresholds (in seconds)
-        if delta < 0:
-            return "SECTOR_FAST"  # Green (Faster than best)
-        elif delta <= 0.5:
-            return "SECTOR_NEUTRAL"  # Orange (Within 0.5s)
-        else:
-            return "SECTOR_SLOW"  # Red (Significant gap)
+
+        if delta <= 0:
+            return "SECTOR_FAST", "green", delta
+        if delta <= 1.0:
+            return "SECTOR_NEUTRAL", "orange", delta
+        return "SECTOR_SLOW", "red", delta
+
+    def _format_delta(self, delta_s):
+        if delta_s is None:
+            return "0.0s"
+        if abs(delta_s) < 0.05:
+            return "0.0s"
+        if delta_s > 0:
+            return "+%.1fs" % delta_s
+        return "%.1fs" % delta_s
+
+    def _format_lap_time(self, lap_time):
+        if lap_time is None:
+            return "--.---"
+        total_ms = int(round(float(lap_time) * 1000.0))
+        minutes = total_ms // 60000
+        seconds = (total_ms % 60000) / 1000.0
+        if minutes > 0:
+            return "%d:%06.3f" % (minutes, seconds)
+        return "%.3fs" % (total_ms / 1000.0)
     
     def _haversine_m(self, lat1, lon1, lat2, lon2):
         """Calculate distance in meters between two GPS points.
@@ -211,5 +255,6 @@ class TrackEngine:
             "track_name": self.track.get('track_name') or self.track.get('name', 'Unknown') if self.track else None,
             "track_identified": self.track_identified,
             "current_sector": self.current_sector,
-            "sector_count": len(self.track.get('sectors', [])) if self.track else 0
+            "sector_count": len(self.track.get('sectors', [])) if self.track else 0,
+            "device_layout": self.track.get('device_layout') if self.track else None,
         }

@@ -17,6 +17,18 @@ This document tracks high-priority technical tasks and architectural improvement
 - [ ] **Improved Progress Visualization**
     - Ensure the UI handles batched progress updates gracefully without appearing "stuck" between commits.
 
+## 🔋 Power Control
+- [ ] **Add Button Sense for Long-Press Soft Shutdown on RS-Core V4.2**
+    - **Current State**: RS-Core V4.2 now supports soft-power latching in hardware, and the firmware already asserts `IO41` early in boot to sustain power after the momentary button is released.
+    - **Next Step**: Add a sensed copy of the physical power button to a free GPIO/ADC input so the firmware can distinguish user press intent from `PWR_HOLD`.
+    - **Target Behavior**: Detect a long press, flush and sync pending storage safely, then release the `IO41` power hold for a clean soft shutdown.
+
+## 🖥️ TFT Variant Support
+- [ ] **Validate first-boot TFT preset selection and second-boot touch calibration on a freshly erased device**
+    - **Current State**: Firmware now stores per-device TFT panel settings in `/data/metadata/display.json` and runs touch calibration only after a panel preset is selected and saved.
+    - **Next Step**: Test the full erase -> preset selection -> reboot -> touch calibration -> reboot -> normal boot flow on both known TFT variants.
+    - **Target Behavior**: New devices self-identify a usable panel preset with a single touch, calibrate on the following boot, and then boot normally without needing a custom firmware build.
+
 ## 🏁 Future Features
 - [ ] **Global Race Visualization (Multi-Rider)**
     - **Concept**: Calculate and render precise movement for all concurrent riders on a track using the synchronized absolute `gps_epoch` timestamps.

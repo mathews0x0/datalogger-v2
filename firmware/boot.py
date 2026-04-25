@@ -1,14 +1,43 @@
 # boot.py - ESP32 boot script
 import time
 from machine import Pin, SPI
+from lib.display_config import display_config_exists, load_display_config
+
+PIN_POWER_HOLD = 41
+PIN_TFT_RST = 42
+PIN_TOUCH_IRQ = 38
+
+
+def _assert_power_hold():
+    try:
+        # Assert the self-hold rail as early as possible so the board stays
+        # powered after the momentary soft-power button is released.
+        hold = Pin(PIN_POWER_HOLD, Pin.OUT, value=1)
+        hold.value(1)
+        return hold
+    except Exception as e:
+        print("[PWR] Failed to assert hold:", e)
+        return None
 
 
 def _early_tft_racesense():
     try:
+        if not display_config_exists():
+            print("[TFT] boot splash skipped: display config not set")
+            return
         from drivers.ili9341 import ILI9341
+        cfg = load_display_config()
+        try:
+            Pin(7, Pin.OUT, value=1)
+        except Exception:
+            pass
+        try:
+            Pin(PIN_TOUCH_IRQ, Pin.IN, Pin.PULL_UP)
+        except Exception:
+            pass
         spi = SPI(
             1,
-            baudrate=40_000_000,
+            baudrate=cfg["baudrate"],
             polarity=0,
             phase=0,
             sck=Pin(15),
@@ -19,9 +48,10 @@ def _early_tft_racesense():
             spi=spi,
             cs=Pin(5, Pin.OUT),
             dc=Pin(6, Pin.OUT),
-            rst=None,
-            rotation=1,
-            baudrate=40_000_000,
+            rst=Pin(PIN_TFT_RST, Pin.OUT, value=1),
+            rotation=cfg["rotation"],
+            baudrate=cfg["baudrate"],
+            madctl=cfg["madctl"],
         )
         if not _draw_raw_wordmark(spi, display):
             display.fill(0x0000)
@@ -62,6 +92,7 @@ def _draw_raw_wordmark(spi, display):
             pass
 
 
+_power_hold = _assert_power_hold()
 _early_tft_racesense()
 
 # Status LED blink after the TFT splash so the display comes alive first.

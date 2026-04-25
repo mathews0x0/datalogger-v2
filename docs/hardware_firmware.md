@@ -18,24 +18,31 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 *   **Battery**: ADC **IO7** for voltage monitoring (VBAT-SENSE). Uses a 100k/100k resistor divider. Supports 1S/2S LiPo.
 *   **User Input**:
     *   **Sync Button (IO5)**: GND-button-IO5 (active LOW, internal pull-up). Determines device mode at boot.
+*   **Power Architecture (V4.2)**:
+    *   New board revision **RS-Core V4.2** adds a soft-power path using a momentary push button, switched battery rail, and firmware-controlled power latch.
+    *   The button momentarily powers the ESP32 through the regulator enable path.
+    *   **IO41** is reserved as `PWR_HOLD` and is asserted early in boot so the ESP32 can keep itself powered after the button is released.
+    *   This enables firmware-controlled power retention now, and creates a clear path for future long-press soft shutdown once button-sense input is added.
 *   **Indicators**: 
     *   **Feedback NeoPixel (IO4)**: 16x LED matrix. Main status & lap feedback.
     *   **Onboard NeoPixel (IO6)**: 1x LED. Mirrors Feedback NeoPixel color at all times.
     *   **Blue Debug LED (GPIO 2)**: Legacy debug indicator.
-*   **Validated Development Display**:
+    *   **Validated Development Display**:
     *   **TFT**: Generic 2.8" 240x320 SPI TFT using **ILI9341** controller.
     *   **Touch**: Resistive touchscreen using **XPT2046** controller.
-    *   **Validated dedicated SPI bus (temporary bring-up mapping)**:
+    *   **Validated dedicated SPI bus**:
         *   `TFT/T_CLK` on **IO15**
         *   `TFT/T_DIN` on **IO16**
         *   `TFT/T_OUT` on **IO9**
         *   `TFT_CS` on **IO5**
         *   `TFT_DC` on **IO6**
         *   `TOUCH_CS` on **IO7**
+        *   `TFT_RST` on **IO42**
+        *   `TOUCH_IRQ` on **IO38**
         *   temporary battery remap to **IO14**
     *   **Required panel ties**:
         *   `LED/BL` -> `3V3`
-        *   `RST` -> `3V3` or `EN`
+        *   panel reset is now driven from **IO42**, not tied high
     *   This display path is currently used for boot / Home / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
     *   TFT typography uses generated MicroPython font assets under `firmware/lib/tft_fonts/` instead of scaled `framebuf.text()`.
     *   The boot wordmark is stored as a raw RGB565 asset at `/lib/tft_wordmark.raw` and streamed directly to the ILI9341 window for faster startup.
@@ -58,20 +65,22 @@ Operationally, that means:
 *   After flashing, the firmware should print a boot-time memory line with `PSRAM=yes`
 
 ### **Boot Sequence**
-1.  5-second safe boot window (Ctrl-C to halt via mpremote).
-2.  Hardware initialization (NeoPixels, SD, IMU, GPS, WDT).
-3.  **Halt Opportunity**: 3 Blue Pulses confirm boot. (Ctrl-C via mpremote works here).
-4.  **Auto-Copy Check**: If SD is mounted AND sessions exist on Flash:
+1.  **Power-hold assertion**: `boot.py` drives **IO41** high immediately so the soft-latched V4.2 board stays on after the momentary power button is released.
+2.  If `/data/metadata/display.json` exists, `boot.py` renders the TFT boot wordmark using the saved panel config. If not, the boot splash is skipped and first-boot display selection happens later in `main.py`.
+3.  5-second safe boot window (Ctrl-C to halt via mpremote).
+4.  Hardware initialization (NeoPixels, SD, IMU, GPS, WDT).
+4.  **Halt Opportunity**: 3 Blue Pulses confirm boot. (Ctrl-C via mpremote works here).
+5.  **Auto-Copy Check**: If SD is mounted AND sessions exist on Flash:
     *   **White Flashing** LEDs.
     *   Files are moved to `/sd/sessions/` (with collision protection: `_1.csv`).
     *   Device reboots automatically after completion.
-5.  **Home / 10-Second Auto Log Window**: Granular hardware status feedback:
+6.  **Home / 10-Second Auto Log Window**: Granular hardware status feedback:
     *   **Fast Green Blink**: (DECISION_ALL_OK) SD, IMU, and GPS are all OK.
     *   **Fast Red Blink**: (DECISION_IMU_SD_FAILED) IMU or SD (or both) have failed.
     *   **Solid Red**: (DECISION_GPS_FAIL) No NMEA detected. Device **holds** here indefinitely until GPS is recovered or SYNC button pressed.
     *   **Button pressed** during Home → **SYNC MODE**.
     *   **TFT touch `SYNC`** during Home → **SYNC MODE**.
-    *   **TFT gear button** during Home → Settings (`WIFI`, `CALIB`, `BACK`, Auto Log toggle).
+    *   **TFT gear button** during Home → Settings (`WIFI`, `TRACK`, `CALIB`, `BACK`, Auto Log toggle).
     *   **TFT touch `LOG`** during Home and GPS OK → **LOGGING MODE**.
     *   **Exit condition**: 10s passed AND GPS OK AND Auto Log enabled → **LOGGING MODE**.
     *   If Auto Log is disabled in `/data/metadata/device.json`, the rider must tap `LOG`.
@@ -84,6 +93,7 @@ Operationally, that means:
 *   **Track Engine** provides lap/sector crossing events which are overlaid via `led.trigger_event()`.
 *   **Integrity markers**: The logger emits lightweight `M` rows (`LOG_OPEN`, periodic `CHECKPOINT`, `LOG_STOP`) so partial sessions are easier to recover and diagnose after resets or storage faults.
 *   **Protective shutdown behavior**: Storage-critical conditions are latched. At a hard threshold the logger stops file growth deliberately instead of continuing blindly into full-disk failure.
+*   **Soft-power hold**: The firmware reasserts `IO41` during `main.py` startup so normal runtime code preserves the V4.2 power latch after early boot.
 *   **Runtime diagnostics**: The firmware tracks queue depth, dropped rows, heap low watermark, loop overruns, GPS parser health, LED thread health, and battery voltage for post-mortem diagnosis.
 *   No uploader, no captive portal, no WiFi threads.
 
@@ -115,10 +125,11 @@ Operationally, that means:
     *   Home/settings touch paths are optimized for no-IRQ wiring with 110 ms debounce, touch-before-redraw ordering, and state-based redraw skipping
     *   cached top bar and partial content redraws are used to reduce visible screen-turn latency
 *   **Touch calibration**:
-    *   Runs once if `/data/metadata/touch.json` is missing.
+    *   Runs on the second boot after a TFT preset has been selected, if `/data/metadata/touch.json` is missing.
     *   Can be rerun from Settings -> `CALIB`.
     *   Uses five points: top-left, top-right, bottom-right, bottom-left, center.
     *   Calibration is per-device and should be preserved with other metadata.
+    *   Display preset selection is also per-device and is stored in `/data/metadata/display.json`.
     *   If `drivers/xpt2046.py` is missing after a partial sync, TFT display initialization continues but touch/calibration are disabled until the driver is restored.
 
 ---
@@ -165,6 +176,8 @@ The current validated display/touch bring-up on PSRAM firmware deliberately repu
 - `IO5`: used as `TFT_CS` instead of hardware sync button
 - `IO6`: used as `TFT_DC` instead of onboard NeoPixel
 - `IO7`: used as `TOUCH_CS` instead of the original battery ADC net
+- `IO42`: dedicated `TFT_RST`
+- `IO38`: dedicated `TOUCH_IRQ`
 
 To preserve battery monitoring during this phase, the firmware currently remaps battery sensing to `IO14`.
 

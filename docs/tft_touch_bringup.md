@@ -23,8 +23,8 @@ Control lines:
 | `TFT_CS` | `IO5` | Temporarily repurposes hardware sync button pin |
 | `TFT_DC` | `IO6` | Temporarily repurposes onboard NeoPixel pin |
 | `TOUCH_CS` | `IO7` | Temporarily repurposes original battery ADC net |
-| `TFT_RST` | Tie to `EN` or `3V3` | No dedicated GPIO used |
-| `TOUCH_IRQ` | Not connected | Optional, skipped for minimal wiring |
+| `TFT_RST` | `IO42` | Dedicated TFT hardware reset |
+| `TOUCH_IRQ` | `IO38` | Dedicated touch IRQ input |
 
 Battery sense is temporarily remapped to `IO14` during this TFT bring-up phase.
 
@@ -56,28 +56,39 @@ If you want both display and touch with the least firmware friction:
 
 1. Use the dedicated TFT/touch SPI bus on `IO15/16/9`.
 2. Keep SD card traffic isolated from TFT traffic.
-3. Keep `TFT_RST` and `TOUCH_IRQ` optional if you want the fewest wires.
+3. Use the dedicated reset and IRQ lines; this is now the preferred architecture.
 
 Required TFT/touch control lines:
 
 - `IO5` for `TFT_CS`
 - `IO6` for `TFT_DC`
 - `IO7` for `TOUCH_CS`
-
-Then either:
-
-- tie `TFT_RST` to `EN`, or
-- wire `TFT_RST` to a spare GPIO if you want software reset control.
+- `IO42` for `TFT_RST`
+- `IO38` for `TOUCH_IRQ`
 
 ## Important Constraint
 
 This temporary mapping deliberately repurposes the hardware sync button, onboard NeoPixel, and original battery-monitor net while the rider-facing TFT path is being developed.
 
-## Touch Calibration
+## First-Boot Display Selection and Calibration
+
+The TFT path now uses two per-device metadata files:
+
+- `/data/metadata/display.json`
+- `/data/metadata/touch.json`
+
+Current boot behavior:
+
+- If `/data/metadata/display.json` is missing, the device enters a first-boot TFT preset selection flow.
+- The screen cycles through known panel presets automatically.
+- Any touch is treated as “this preset looks correct”.
+- The selected display config is saved and the device reboots.
+- On the next boot, if `/data/metadata/touch.json` is still missing, the device runs the 5-point touch calibration flow.
+- After calibration is saved, the device reboots again.
 
 Touch calibration is device-specific and persists with metadata.
 
-- Calibration runs automatically once if `/data/metadata/touch.json` is missing.
+- Calibration runs automatically on the second boot if `/data/metadata/touch.json` is missing and `/data/metadata/display.json` already exists.
 - Calibration can be rerun from the TFT Settings screen via `CALIB`.
 - The calibration flow uses five points:
   - top-left
@@ -85,7 +96,8 @@ Touch calibration is device-specific and persists with metadata.
   - bottom-right
   - bottom-left
   - center
-- Normal firmware sync should preserve `/data/metadata/touch.json`.
+- Normal firmware sync should preserve `/data/metadata/display.json` and `/data/metadata/touch.json`.
+- Delete only `/data/metadata/display.json` if you want to force the panel-selection flow again.
 - Delete only `/data/metadata/touch.json` if you want to force recalibration.
 
 ## Touch Responsiveness
@@ -101,7 +113,7 @@ Software responsiveness improvements currently in firmware:
 - Home/settings loop delay is 30 ms
 - Sync entry and WiFi search invalidate stale render caches before drawing animation frames
 
-`TOUCH_IRQ` is still optional and not connected in the validated wiring. Adding it later should improve first-touch detection latency, but calibration quality, pressure threshold, shared SPI redraw blocking, and debounce still matter.
+`TOUCH_IRQ` is now part of the validated production wiring. It reduces idle polling, but calibration quality, pressure threshold, shared SPI redraw blocking, and debounce still matter.
 
 ## Current TFT UX Assets
 
@@ -113,7 +125,7 @@ The rider-facing TFT path now uses generated assets instead of scaled `framebuf.
 - `firmware/lib/tft_wordmark.raw` is the RaceSense boot wordmark as full-screen RGB565 data.
 - `firmware/tools/generate_tft_wordmark.swift` regenerates the wordmark raw asset and preview PNG.
 
-The boot wordmark is streamed directly to the ILI9341 window for speed. `main.py` does not redraw it after TFT UI construction; the main UI transitions from the early wordmark to Home. Do not convert it back to a thresholded 1-bit mask; that loses the edge quality and turns the artwork into a blob.
+The boot wordmark is streamed directly to the ILI9341 window for speed once a display preset has been selected. `main.py` does not redraw it after TFT UI construction; the main UI transitions from the early wordmark to Home. Do not convert it back to a thresholded 1-bit mask; that loses the edge quality and turns the artwork into a blob.
 
 Firmware sync must copy nested font packages, `.raw` files, and all drivers. Use the current `firmware/flashtool.sh` or `firmware/push_to_device.sh`, which copy `lib/*.py`, `lib/*.raw`, `lib/*/*.py`, and `drivers/*.py`.
 

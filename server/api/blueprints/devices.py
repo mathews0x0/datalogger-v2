@@ -10,6 +10,7 @@ import api.config as config
 import json
 from api.auth_utils import get_current_user_id
 from api.track_catalog import get_user_track_stats_dir, load_json_file, resolve_track, track_file_path
+from api.track_catalog import build_device_track_payload
 
 devices_bp = Blueprint('devices', __name__)
 
@@ -206,6 +207,7 @@ def get_device_active_track():
                         print(f"[active_track] TBL extraction error: {e}")
 
                 if track_data:
+                    track_data = build_device_track_payload(track_data)
                     response_data["active_track"] = track_data
                     
         return jsonify(response_data)

@@ -89,6 +89,8 @@ class XPT2046:
         return {"x": x, "y": y, "z": z}
 
     def read(self):
+        if not self.touched():
+            return None
         values_x = []
         values_y = []
         values_z = []

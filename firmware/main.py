@@ -21,6 +21,7 @@ from lib.track_engine import TrackEngine
 from lib.oled_status import OLEDStatus
 from lib.memory_profile import get_memory_profile, format_memory_profile
 from lib import boot_diagnostics as diag
+from lib.display_config import display_config_exists, iter_display_presets, load_display_config, save_display_config
 
 TRACK_RESPONSE_LIMIT = 16 * 1024
 TRACK_RESPONSE_READ_SIZE = 1024
@@ -32,6 +33,7 @@ _ram_total_mb = 0.0
 OLED_ADDR = 0x3C
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
+PIN_POWER_HOLD = 41    # Soft-power self-hold output
 PIN_LED_FEEDBACK = 4    # Feedback NeoPixel (16-LED matrix)
 PIN_BUTTON_SYNC = None  # Temporarily disabled; IO5 used for TFT_CS
 PIN_LED_ONBOARD = None  # Temporarily disabled; IO6 used for TFT_DC
@@ -48,7 +50,9 @@ PIN_BATTERY_ADC = 14     # Temporary battery sense remap
 PIN_DEBUG_LED = 2       # Blue Debug LED
 PIN_TFT_CS = 5
 PIN_TFT_DC = 6
+PIN_TFT_RST = 42
 PIN_TOUCH_CS = 7
+PIN_TOUCH_IRQ = 38
 PIN_TFT_SCK = 15
 PIN_TFT_MOSI = 16
 PIN_TFT_MISO = 9
@@ -118,15 +122,71 @@ def get_ram_usage_mb(force=False):
     return _ram_used_mb, _ram_total_mb
 
 
+def sanitize_active_track_payload(track_info):
+    if not isinstance(track_info, dict):
+        return None
+
+    sanitized = dict(track_info)
+    sectors = sanitized.get("sectors")
+    if not isinstance(sectors, list):
+        sanitized["sectors"] = []
+    else:
+        sanitized["sectors"] = sectors[:16]
+
+    tbl = sanitized.get("tbl")
+    if not isinstance(tbl, dict):
+        sanitized["tbl"] = {}
+    else:
+        tbl_sectors = tbl.get("sectors")
+        if isinstance(tbl_sectors, list):
+            sanitized["tbl"] = {"sectors": tbl_sectors[:16]}
+        else:
+            sanitized["tbl"] = {}
+
+    layout = sanitized.get("device_layout")
+    if isinstance(layout, dict):
+        polyline = layout.get("polyline")
+        sector_markers = layout.get("sector_markers")
+        if not isinstance(polyline, list) or len(polyline) > 160:
+            sanitized.pop("device_layout", None)
+        else:
+            layout_copy = dict(layout)
+            layout_copy["polyline"] = polyline[:160]
+            layout_copy["sector_markers"] = sector_markers[:16] if isinstance(sector_markers, list) else []
+            start_marker = layout_copy.get("start_marker")
+            if start_marker is not None and not isinstance(start_marker, dict):
+                layout_copy["start_marker"] = None
+            sanitized["device_layout"] = layout_copy
+    else:
+        sanitized.pop("device_layout", None)
+
+    return sanitized
+
+
 def prepare_shared_spi_bus():
     # Keep TFT control lines idle. TFT now uses a dedicated SPI bus.
-    for pin_no, value in ((PIN_TFT_CS, 1), (PIN_TOUCH_CS, 1), (PIN_TFT_DC, 0)):
+    for pin_no, value in ((PIN_TFT_CS, 1), (PIN_TOUCH_CS, 1), (PIN_TFT_DC, 0), (PIN_TFT_RST, 1)):
         if pin_no is None:
             continue
         try:
             machine.Pin(pin_no, machine.Pin.OUT, value=value)
         except Exception as e:
             print("[SPI] Pin prep failed on", pin_no, e)
+    if PIN_TOUCH_IRQ is not None:
+        try:
+            machine.Pin(PIN_TOUCH_IRQ, machine.Pin.IN, machine.Pin.PULL_UP)
+        except Exception as e:
+            print("[SPI] Touch IRQ prep failed on", PIN_TOUCH_IRQ, e)
+
+
+def assert_power_hold():
+    try:
+        hold = machine.Pin(PIN_POWER_HOLD, machine.Pin.OUT, value=1)
+        hold.value(1)
+        return hold
+    except Exception as e:
+        print("[PWR] Failed to assert hold:", e)
+        return None
 
 
 def raw_oled_wake(i2c, label="wake"):
@@ -211,6 +271,15 @@ def get_active_track_name():
         return data.get("track_name") or data.get("name") or ""
     except Exception:
         return ""
+
+
+def load_active_track_data():
+    try:
+        with open("/data/metadata/track.json", "r") as f:
+            data = ujson.load(f)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
 
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
@@ -380,19 +449,34 @@ def setup():
         print("[TFT] Importing TFTBootUI from lib.tft_ui")
         from lib.tft_ui import TFTBootUI
         print("[TFT] TFTBootUI import OK")
+        saved_display_cfg = load_display_config()
         tft = TFTBootUI(
             pin_sck=PIN_TFT_SCK,
             pin_mosi=PIN_TFT_MOSI,
             pin_miso=PIN_TFT_MISO,
             pin_tft_cs=PIN_TFT_CS,
             pin_tft_dc=PIN_TFT_DC,
+            pin_tft_rst=PIN_TFT_RST,
             pin_touch_cs=PIN_TOUCH_CS,
+            pin_touch_irq=PIN_TOUCH_IRQ,
+            display_config=saved_display_cfg,
         )
         print("[TFT] TFTBootUI instance created")
-        tft._boot_logo_visible = True
-        if not tft.has_touch_calibration():
-            print("[TFT] No touch calibration found. Starting one-time calibration.")
-            tft.calibrate_touch()
+        if not display_config_exists():
+            print("[TFT] No display config found. Starting first-boot panel selection.")
+            selected_preset = tft.select_display_preset(iter_display_presets())
+            if selected_preset and save_display_config(selected_preset):
+                print("[TFT] Display config saved:", selected_preset)
+                diag.mark_expected_reset("display_config_saved")
+                machine.reset()
+            print("[TFT] Display selection failed or timed out.")
+        else:
+            tft._boot_logo_visible = True
+            if not tft.has_touch_calibration():
+                print("[TFT] No touch calibration found. Starting second-boot calibration.")
+                if tft.calibrate_touch():
+                    diag.mark_expected_reset("touch_calibration_saved")
+                    machine.reset()
         print("[TFT] Boot UI initialized")
     except Exception as e:
         tft = None
@@ -443,7 +527,8 @@ def run_home_window(led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, 
     from lib.wifi_manager import load_device_config
     config = load_device_config()
     auto_log_enabled = bool(config.get("auto_log_enabled", True))
-    home_track_name = get_active_track_name()
+    active_track_data = load_active_track_data()
+    home_track_name = (active_track_data or {}).get("track_name") or (active_track_data or {}).get("name") or ""
     if not config.get('ssid'):
         print("\n[System] No WiFi configured — staying on Home. Use SYNC or Settings > WIFI to configure.")
         auto_log_enabled = False
@@ -498,6 +583,12 @@ def run_home_window(led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, 
             if not settings_rendered:
                 if settings_page == "wifi_options":
                     tft.show_wifi_options(config.get('ssid', ''))
+                elif settings_page == "track_layout":
+                    active_track_data = load_active_track_data()
+                    tft.show_track_view(active_track_data, page=0)
+                elif settings_page == "track_detail":
+                    active_track_data = load_active_track_data()
+                    tft.show_track_view(active_track_data, page=1)
                 else:
                     tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
                 settings_rendered = True
@@ -506,6 +597,21 @@ def run_home_window(led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, 
             settings_action = tft.settings_touch()
             if settings_action == "wifi":
                 settings_page = "wifi_options"
+                settings_rendered = False
+                tft.invalidate()
+                continue
+            if settings_action == "track":
+                settings_page = "track_layout"
+                settings_rendered = False
+                tft.invalidate()
+                continue
+            if settings_action == "track_next":
+                settings_page = "track_detail"
+                settings_rendered = False
+                tft.invalidate()
+                continue
+            if settings_action == "track_prev":
+                settings_page = "track_layout"
                 settings_rendered = False
                 tft.invalidate()
                 continue
@@ -551,6 +657,12 @@ def run_home_window(led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, 
             if settings_open:
                 if settings_page == "wifi_options":
                     tft.show_wifi_options(config.get('ssid', ''))
+                elif settings_page == "track_layout":
+                    active_track_data = load_active_track_data()
+                    tft.show_track_view(active_track_data, page=0)
+                elif settings_page == "track_detail":
+                    active_track_data = load_active_track_data()
+                    tft.show_track_view(active_track_data, page=1)
                 else:
                     tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
                 settings_rendered = True
@@ -660,6 +772,7 @@ def run_home_window(led, sm, oled, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, 
 
 
 def main():
+    power_hold = assert_power_hold()
     prev_state, current_state = diag.boot_start()
     print("[Diag] Reset cause:", current_state.get("reset_cause"))
     if prev_state:
@@ -1128,7 +1241,7 @@ def run_sync_mode(led, sm, oled, tft, sync_btn, wdt, vbat_adc, force_pairing=Fal
                         try:
                             t_data = ujson.loads(body)
                             if t_data and "active_track" in t_data:
-                                track_info = t_data["active_track"]
+                                track_info = sanitize_active_track_payload(t_data["active_track"])
                                 if track_info:
                                     with open('/data/metadata/track.json', 'w') as f:
                                         ujson.dump(track_info, f)
@@ -1559,7 +1672,13 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt):
             ram_used_mb=ram_used_mb,
             ram_total_mb=ram_total_mb,
         )
-        tft.show_logging_started(log_file, track_name=track_status.get("track_name"), elapsed_minutes=0, force=True)
+        tft.show_logging_started(
+            log_file,
+            track_name=track_status.get("track_name"),
+            elapsed_minutes=0,
+            force=True,
+            track_data=track_eng.track,
+        )
     
     # RTC sync flag
     rtc_synced = False
@@ -1762,8 +1881,10 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt):
                 try:
                     event = track_eng.update(fix['lat'], fix['lon'], float(tick_ms))
                     if event:
-                        led.trigger_event(event)
-                        if event == "TRACK_FOUND":
+                        led_event = event.get("led_event") if isinstance(event, dict) else event
+                        if led_event:
+                            led.trigger_event(led_event)
+                        if led_event == "TRACK_FOUND":
                             led.set_track_mode(True)
                         if oled:
                             track_status = track_eng.get_status()
@@ -1775,10 +1896,19 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt):
                                 ram_used_mb=ram_used_mb,
                                 ram_total_mb=ram_total_mb,
                             )
-                            oled.show_track_event(event, track_name=track_status.get("track_name"), sector=(track_status.get("current_sector", 0) + 1))
+                            oled.show_track_event(
+                                led_event or event,
+                                track_name=track_status.get("track_name"),
+                                sector=(event.get("sector_index") if isinstance(event, dict) else (track_status.get("current_sector", 0) + 1)),
+                            )
                         if tft:
                             track_status = track_eng.get_status()
-                            tft.show_track_event(event, track_name=track_status.get("track_name"), sector=(track_status.get("current_sector", 0) + 1))
+                            tft.show_track_event(
+                                event,
+                                track_name=track_status.get("track_name"),
+                                sector=(event.get("sector_index") if isinstance(event, dict) else (track_status.get("current_sector", 0) + 1)),
+                                track_data=track_eng.track,
+                            )
                 except Exception as e:
                     if loop_count % 100 == 0:
                         print(f"TrackEng Error: {e}")
@@ -1850,6 +1980,7 @@ def logging_loop(led, gps, imu, sm, track_eng, oled, tft, vbat_adc, wdt):
                     gps_ok=fix.get('valid', False),
                     track_name=track_status.get("track_name"),
                     elapsed_minutes=elapsed_minutes,
+                    track_data=track_eng.track,
                 )
         if loop_count % 1000 == 0:
             ram_used_mb_storage, ram_total_mb_storage = get_ram_usage_mb()
