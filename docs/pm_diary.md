@@ -2,7 +2,7 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2026-03-22
+**Last Updated:** 2026-04-28
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
@@ -2391,7 +2391,7 @@ Fundamental shift in the uploader's networking model:
 ### Actions Completed:
 1.  **Firmware Pivot**: Modified `main.py` and `flashtool.sh` to exclusively target the BMI323 driver.
 2.  **Driver Refactoring**: Updated `bmi323.py` to expose sensitivity constants (`ACC_SENSITIVITY`, `GYR_SENSITIVITY`) as class properties, allowing `main.py` to dynamically adjust scaling without hardcoded globals.
-3.  **Legacy Preservation**: Kept the `bmi270.py` driver in the codebase for reference but removed all operational imports and deployment hooks.
+3.  **Legacy Preservation**: Initially kept the `bmi270.py` driver in the codebase for reference while removing all operational imports and deployment hooks. This was later fully cleaned out once the BMI323-only baseline was locked.
 
 **Status:** ✅ **Complete.** The RS-Core platform now natively targets BMI323.
 
@@ -3843,6 +3843,175 @@ Long-press soft shutdown is not fully implemented yet because the current latch 
 - major power architecture upgrade recorded
 - firmware-side power hold support implemented
 - long-press shutdown path identified as the next power-management milestone
+
+## 2026-04-28: Single-Switch Power Architecture Locked for V4.2
+
+### Objective
+
+Turn the V4.2 power-latch concept into a concrete **single-switch product architecture**:
+
+- one physical button to wake the board
+- firmware hold to keep the board alive
+- the same button used again as an intentional long-press shutdown request
+
+The PM goal was to avoid adding a second external user power control while still giving the firmware deliberate control over power-off behavior.
+
+### Hardware Model
+
+The single-switch power path is now defined as:
+
+- the physical power button momentarily enables the board
+- `IO41` asserts `PWR_HOLD` early in boot and sustains the board after the button is released
+- a protected sensed copy of the same button is routed to `IO8`
+- the button-sense path is isolated from the hold path so firmware can detect user press intent without back-driving the latch
+
+This creates a much cleaner user model:
+
+- short press -> boot
+- no need to keep holding the button once firmware claims the hold rail
+- long press -> request shutdown
+
+### Firmware Direction
+
+The firmware direction for this architecture was also clarified:
+
+- `boot.py` remains responsible for asserting `IO41` immediately
+- `main.py` documents and maintains the power-hold state
+- the protected button-sense input on `IO8` is the basis for long-press shutdown detection
+- shutdown behavior is intended to be global rather than screen-specific
+
+The intended rider experience is:
+
+1. press button once to power on
+2. firmware latches power with `IO41`
+3. hold the same button for about 3 seconds to power off
+4. device shows `SHUTDOWN`, flushes storage, then releases the hold rail
+
+### Product Significance
+
+This is a substantial architecture improvement over the earlier assumptions of either always-on power or abrupt external power removal.
+
+It means the device is now moving toward:
+
+- a more consumer-like one-button power model
+- safer file handling on power-off
+- less dependence on ignition-cut timing or hard power loss
+
+### Next Step
+
+The next PM step is not architectural invention anymore; it is **hardware validation and threshold tuning**:
+
+- verify long-press detection on real V4.2 hardware
+- confirm no false shutdowns from noise or charger events
+- tune hold duration / sense thresholds if needed
+- confirm the one-button power model works consistently across Home, Sync, and Logging
+
+### Outcome
+
+- single-switch power architecture formally adopted for RS-Core V4.2
+- one-button on/off behavior defined at product level
+- `IO41` hold + `IO8` button-sense roles clearly assigned
+- follow-up work reduced to tuning and validation rather than architecture discovery
+
+## 2026-04-28: Single-Switch Power Path Documented as the V4.2 Baseline
+
+### Objective
+
+Turn the newly discussed power wiring and firmware behavior into explicit project documentation so there is one unambiguous baseline for V4.2.
+
+The key PM requirement was to document the actual intended rider-facing behavior, not just the schematic primitives:
+
+- one button starts the device
+- firmware immediately claims the power latch
+- the same button can request a clean shutdown
+
+### Architecture Record
+
+The V4.2 single-switch power model is now recorded as:
+
+- the physical push button momentarily brings the board up
+- `IO41` is the firmware-owned hold output and must be asserted at the very start of boot
+- the same physical switch is also sensed on `IO8` through an isolated protected path
+- the sense path exists only to detect intentional user press, not to power the board
+
+This separates the two roles clearly:
+
+- `IO41` = sustain power
+- `IO8` = observe shutdown intent
+
+### Product Behavior
+
+The one-button rider experience is now documented as:
+
+1. short press powers the board
+2. firmware claims `PWR_HOLD`
+3. releasing the button does not turn the board back off
+4. holding the same button for about 3 seconds requests shutdown
+5. the UI shows `SHUTDOWN`, storage is flushed, and the hold rail is released
+
+### Documentation Outcome
+
+The PM diary, hardware/firmware reference, and TODO documentation now describe the same V4.2 power architecture and the same remaining work:
+
+- validate thresholds on real hardware
+- confirm stable behavior on battery and charger power
+- ensure no false shutdown triggers across Home, Sync, and Logging
+
+## 2026-04-28: OLED and BMI270 Cleanup, TFT/BMI323 Baseline Locked
+
+### Objective
+
+Remove obsolete runtime paths that no longer match the real product direction or active hardware.
+
+The board and firmware are now firmly centered on:
+
+- TFT as the only rider-facing display path
+- BMI323 as the only active IMU target
+
+Keeping old OLED and BMI270 code around was no longer helping validation or deployment. It was creating avoidable complexity and leaving the repo in a state that no longer matched the actual product.
+
+### What Was Cleaned
+
+The firmware cleanup removed the inactive OLED path:
+
+- OLED imports and wake logic were removed from `main.py`
+- OLED-specific boot, sync, logging, and shutdown rendering paths were removed
+- `firmware/drivers/oled.py` was deleted
+- `firmware/lib/oled_status.py` was deleted
+
+The IMU cleanup removed the final BMI270 remnants:
+
+- the legacy `firmware/drivers/bmi270.py` driver was deleted
+- the bundled `firmware/lib/micropython_bmi270/` support package was deleted
+- stale flashtool comments referring to BMI270 support were removed
+
+### Product / Architecture Meaning
+
+This cleanup matters because it turns an implied direction into an explicit baseline:
+
+- TFT is no longer a “new path” or “primary path with OLED fallback”
+- BMI323 is no longer “the active target while BMI270 remains around for reference”
+
+The repo now reflects the real product more honestly:
+
+- one active display stack
+- one active IMU stack
+- fewer dead branches in boot, sync, and logging logic
+
+### Documentation Outcome
+
+Active documentation was updated to match the cleanup:
+
+- current-state docs now describe the firmware as TFT-only
+- the hardware stack now describes BMI323 as the active IMU driver
+- ramp-up guidance no longer says OLED remains as a firmware fallback
+
+### Outcome
+
+- OLED runtime path fully removed
+- BMI270 runtime path fully removed
+- TFT-only / BMI323-only baseline locked into both firmware and docs
+- future work is now less likely to be confused by stale fallback paths
 
 ## 2026-04-25: TFT Variant Mismatch Confirmed, Per-Device Display Selection Adopted
 

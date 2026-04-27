@@ -18,10 +18,10 @@ This document tracks high-priority technical tasks and architectural improvement
     - Ensure the UI handles batched progress updates gracefully without appearing "stuck" between commits.
 
 ## 🔋 Power Control
-- [ ] **Add Button Sense for Long-Press Soft Shutdown on RS-Core V4.2**
-    - **Current State**: RS-Core V4.2 now supports soft-power latching in hardware, and the firmware already asserts `IO41` early in boot to sustain power after the momentary button is released.
-    - **Next Step**: Add a sensed copy of the physical power button to a free GPIO/ADC input so the firmware can distinguish user press intent from `PWR_HOLD`.
-    - **Target Behavior**: Detect a long press, flush and sync pending storage safely, then release the `IO41` power hold for a clean soft shutdown.
+- [ ] **Validate and Tune Single-Switch Shutdown on RS-Core V4.2**
+    - **Current State**: RS-Core V4.2 now uses a single physical power button with `IO41` as the hold output and `IO8` as the protected sense input for the same switch. Firmware support for long-press shutdown has been wired in.
+    - **Next Step**: Validate real hardware thresholds, debounce, and hold timing across Home, Sync, WiFi-search, and Logging on battery and USB power.
+    - **Target Behavior**: One short press turns the device on, firmware claims the latch immediately, and one long press shows `SHUTDOWN`, flushes storage safely, and releases `IO41` without false triggers.
 
 ## 🖥️ TFT Variant Support
 - [ ] **Validate first-boot TFT preset selection and second-boot touch calibration on a freshly erased device**

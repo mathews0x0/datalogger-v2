@@ -19,10 +19,17 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 *   **User Input**:
     *   **Sync Button (IO5)**: GND-button-IO5 (active LOW, internal pull-up). Determines device mode at boot.
 *   **Power Architecture (V4.2)**:
-    *   New board revision **RS-Core V4.2** adds a soft-power path using a momentary push button, switched battery rail, and firmware-controlled power latch.
-    *   The button momentarily powers the ESP32 through the regulator enable path.
+    *   New board revision **RS-Core V4.2** adds a **single-switch soft-power path** using one momentary push button for both power-on and power-off intent.
+    *   The same physical button momentarily powers the ESP32 through the regulator enable path on press.
     *   **IO41** is reserved as `PWR_HOLD` and is asserted early in boot so the ESP32 can keep itself powered after the button is released.
-    *   This enables firmware-controlled power retention now, and creates a clear path for future long-press soft shutdown once button-sense input is added.
+    *   A sensed copy of the same button is routed to **IO8** through a protected diode + divider network so the firmware can detect a deliberate long press without back-driving the power path.
+    *   Functional split:
+        *   `IO41` owns power sustain
+        *   `IO8` only senses button intent
+    *   This gives the board a single-user-control power model:
+        *   short press to turn on
+        *   firmware hold to stay on
+        *   long press to request clean shutdown
 *   **Indicators**: 
     *   **Feedback NeoPixel (IO4)**: 16x LED matrix. Main status & lap feedback.
     *   **Onboard NeoPixel (IO6)**: 1x LED. Mirrors Feedback NeoPixel color at all times.
@@ -46,6 +53,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
     *   This display path is currently used for boot / Home / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
     *   TFT typography uses generated MicroPython font assets under `firmware/lib/tft_fonts/` instead of scaled `framebuf.text()`.
     *   The boot wordmark is stored as a raw RGB565 asset at `/lib/tft_wordmark.raw` and streamed directly to the ILI9341 window for faster startup.
+    *   The active firmware baseline is now **TFT-only**; the older OLED status path has been removed from the current runtime.
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
     *   2.4GHz WiFi with **Stealth Provisioning** (OS probe suppression for Success/204). Only active in Sync Mode.
@@ -94,6 +102,9 @@ Operationally, that means:
 *   **Integrity markers**: The logger emits lightweight `M` rows (`LOG_OPEN`, periodic `CHECKPOINT`, `LOG_STOP`) so partial sessions are easier to recover and diagnose after resets or storage faults.
 *   **Protective shutdown behavior**: Storage-critical conditions are latched. At a hard threshold the logger stops file growth deliberately instead of continuing blindly into full-disk failure.
 *   **Soft-power hold**: The firmware reasserts `IO41` during `main.py` startup so normal runtime code preserves the V4.2 power latch after early boot.
+*   **Single-switch shutdown path**: The firmware monitors **IO8** as the protected power-button sense input. If the same power button is held for roughly 3 seconds, the logger can display `SHUTDOWN`, flush storage, and release `IO41` for a controlled power-off.
+*   **Single-switch user model**: There is no separate external power-off control in V4.2. The rider-facing contract is one short press to power on and one deliberate long press to power off safely.
+*   **Display baseline**: Boot, Home, Sync, Settings, calibration, and logging UI are all routed through the TFT stack. There is no active OLED runtime path in the current firmware baseline.
 *   **Runtime diagnostics**: The firmware tracks queue depth, dropped rows, heap low watermark, loop overruns, GPS parser health, LED thread health, and battery voltage for post-mortem diagnosis.
 *   No uploader, no captive portal, no WiFi threads.
 
@@ -106,6 +117,7 @@ Operationally, that means:
 *   **Resumable Upload Safety**: If horizontal scaling or network instability drops a request mid-batch, the device queries the server and seamlessly resumes the upload from the exact byte offset (`X-Upload-Offset`) instead of restarting the whole file.
 *   **Recovered handshake path**: If the initial cloud handshake fails, later heartbeat recovery can still trigger uploads in the same sync session.
 *   **Power-aware sync**: Under weak battery voltage, LED brightness and WiFi TX power are reduced. At critical battery voltage the uploader may be deferred to avoid brownouts.
+*   **Single-switch shutdown support**: The same power button is intended to be honored globally, not just on Home. Long-press shutdown should work during rider-facing TFT screens and non-logging sync flows as well.
 *   **Global Brightness**: A master `self.brightness` setting (0.0-1.0) is now applied to actual LED output, not just animation choice.
 *   **Deferred Pairing Transition**: Long press (>3s) requests Pairing Mode, but the firmware now waits for active network work to quiesce before switching into AP + Captive Portal.
 *   Device stays in Sync Mode indefinitely (no automatic reboot).

@@ -82,6 +82,7 @@ class TFTBootUI:
         self._tx_buf = bytearray(4096)
         self._last_touch_ms = 0
         self._battery_pct = None
+        self._charging = False
         self._sd_pct = None
         self._sd_ok = None
         self._ram_used_mb = None
@@ -207,12 +208,14 @@ class TFTBootUI:
             print("[TFT] Touch calibration save failed:", e)
             return False
 
-    def set_context(self, battery_pct=None, sd_ok=None, sd_pct=None, ram_used_mb=None, ram_total_mb=None):
+    def set_context(self, battery_pct=None, charging=None, sd_ok=None, sd_pct=None, ram_used_mb=None, ram_total_mb=None):
         if battery_pct is not None:
             try:
                 self._battery_pct = max(0, min(100, int(battery_pct)))
             except Exception:
                 self._battery_pct = None
+        if charging is not None:
+            self._charging = bool(charging)
         if sd_ok is not None:
             self._sd_ok = bool(sd_ok)
         if sd_pct is not None:
@@ -490,7 +493,13 @@ class TFTBootUI:
     def _topbar_values(self):
         ram_used_key = int(self._ram_used_mb or 0) if self._ram_used_mb is not None else None
         ram_total_key = int(self._ram_total_mb or 0) if self._ram_total_mb is not None else None
-        return (self._battery_pct, self._sd_ok, self._sd_pct, ram_used_key, ram_total_key)
+        return (self._battery_pct, self._charging, self._sd_ok, self._sd_pct, ram_used_key, ram_total_key)
+
+    def _draw_charge_bolt(self, x, y, color):
+        self._fb.fill_rect(x + 2, y, 4, 2, color)
+        self._fb.fill_rect(x + 1, y + 2, 3, 2, color)
+        self._fb.fill_rect(x + 3, y + 4, 3, 2, color)
+        self._fb.fill_rect(x + 2, y + 6, 2, 2, color)
 
     def _draw_topbar_to_fb(self, title=None, color=None, ram_only=False):
         title = self._topbar_title if title is None else str(title)
@@ -502,7 +511,11 @@ class TFTBootUI:
             title_x = max(0, (self.width - self._text_width(title, "ui")) // 2)
             self._text(title_x, 5, title, self._c_bg, bg=color)
             if self._battery_pct is not None:
-                self._text(8, 24, "BAT %d%%" % self._battery_pct, self._c_bg, bg=color)
+                batt_x = 8
+                if self._charging:
+                    self._draw_charge_bolt(batt_x, 24, self._c_bg)
+                    batt_x += 11
+                self._text(batt_x, 24, "BAT %d%%" % self._battery_pct, self._c_bg, bg=color)
             if self._sd_ok is not None:
                 sd_label = "SD --"
                 if self._sd_ok:
@@ -519,7 +532,7 @@ class TFTBootUI:
         now = time.ticks_ms()
         title = self._topbar_title if title is None else str(title)
         color = self._topbar_color if color is None else color
-        full_key = (title, color, self._battery_pct, self._sd_ok, self._sd_pct)
+        full_key = (title, color, self._battery_pct, self._charging, self._sd_ok, self._sd_pct)
         ram_key = (self._ram_used_mb, self._ram_total_mb)
         if force or full_key != self._topbar_key or time.ticks_diff(now, self._topbar_last_full_ms) >= 30000:
             self._draw_topbar_to_fb(title, color, ram_only=False)

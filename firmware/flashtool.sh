@@ -208,8 +208,6 @@ except: pass"
         done
     fi
     
-    # (BMI270 library sync removed as part of BMI323 switch)
-    
     # Show saved device config (WiFi creds + token)
     echo -e "${CYAN}Device Config:${NC}"
     $MPREMOTE_CMD connect "$PORT" exec "
@@ -295,10 +293,7 @@ except: pass"
         
         sleep 1 # Wait for USB to stabilize after file write
         
-        # Install BMI270 config file library if deploying full system test
         if [[ "$src_file" == *"full_system_test"* ]]; then
-            # BMI270 library install removed
-            
             # Also deploy the neopixel driver just in case the OS wipe killed it
             echo -e "${MAGENTA}Ensuring neopixel library is present...${NC}"
             $MPREMOTE_CMD connect "$PORT" cp "neopixel.py" : 2>/dev/null || true

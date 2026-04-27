@@ -170,8 +170,8 @@ Track-resolution layering as of the canonical package rollout:
 - **Subscription Tiers**: Enforced via `@require_tier` decorator in the backend and `user.subscription_tier` in the frontend UI.
 
 ### 6. Current Device UI State
-- The original OLED path still exists and is kept as a hybrid fallback in firmware.
 - The active development display path is now the 2.8" TFT + touch panel under `firmware/lib/tft_ui.py`.
+- The firmware is now TFT-only for rider-facing display behavior; the old OLED fallback path has been removed.
 - The TFT currently handles:
   - per-device TFT panel selection on first boot when `/data/metadata/display.json` is missing
   - fast RaceSense boot wordmark from a raw RGB565 asset streamed by `boot.py` once display selection is complete
