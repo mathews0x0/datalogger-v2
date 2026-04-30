@@ -27,6 +27,7 @@ def _early_tft_racesense():
             return
         from drivers.ili9341 import ILI9341
         cfg = load_display_config()
+        print("[TFT] boot display config:", cfg)
         try:
             Pin(7, Pin.OUT, value=1)
         except Exception:

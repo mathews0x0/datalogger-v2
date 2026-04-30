@@ -15,6 +15,7 @@ from api.decorators import require_tier, local_only
 import api.config as config
 from api.helpers import get_track_folder
 from api.track_catalog import get_track_display_name, resolve_track
+from api.blueprints.tracks import clear_user_track_tbl_if_no_sessions
 
 sessions_bp = Blueprint('sessions', __name__)
 
@@ -314,6 +315,8 @@ def delete_session_endpoint(session_id):
         return jsonify({"error": "Access denied — you can only delete your own sessions"}), 403
 
     try:
+        track_id = s_meta.track_id
+        owner_user_id = s_meta.user_id
         sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
         s_path = sessions_dir / f"{session_id}.json"
         t_path = sessions_dir / f"{session_id}_telemetry.json"
@@ -323,6 +326,8 @@ def delete_session_endpoint(session_id):
         
         db.session.delete(s_meta)
         db.session.commit()
+        if track_id is not None:
+            clear_user_track_tbl_if_no_sessions(owner_user_id, track_id)
         return jsonify({"success": True, "message": f"Deleted {session_id}"})
             
     except Exception as e:

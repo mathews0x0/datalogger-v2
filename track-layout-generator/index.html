@@ -90,6 +90,10 @@
             <span>Anchor Mode</span>
           </label>
           <div class="controls-row">
+            <button id="createStartFinishBtn" class="primary">Create Start/Finish</button>
+            <button id="clearStartFinishBtn">Clear Start/Finish</button>
+          </div>
+          <div class="controls-row">
             <button id="undoAnchorBtn">Undo</button>
             <button id="deleteAnchorBtn">Delete Selected</button>
           </div>
@@ -105,6 +109,25 @@
             <input id="anchorType" type="text" placeholder="start_finish_crossing" />
           </div>
           <ol id="anchorList" class="anchor-list"></ol>
+        </section>
+
+        <section class="panel">
+          <h2>Sectors</h2>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Sector Count</span>
+              <input id="sectorCount" type="number" min="2" max="20" step="1" value="7" />
+            </label>
+            <label class="field">
+              <span>Sector Radius (m)</span>
+              <input id="sectorRadius" type="number" min="5" max="100" step="1" value="15" />
+            </label>
+          </div>
+          <div class="controls-row">
+            <button id="autoAddSectorsBtn" class="primary">Auto Add Sectors</button>
+            <button id="updateSectorRadiusBtn">Update Radius</button>
+          </div>
+          <ol id="sectorList" class="anchor-list"></ol>
         </section>
 
         <section class="panel">

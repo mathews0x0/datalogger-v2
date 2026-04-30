@@ -92,7 +92,7 @@ def main():
         
         # Generate Split Points
         # Enforce Fixed Sector Count
-        num_sectors = config.SECTOR_COUNT
+        num_sectors = config.get_default_sector_count()
         
         step = total_dist / num_sectors
         
@@ -128,7 +128,7 @@ def main():
         },
         "metadata": {
             "sector_strategy": "distance_equal_v1",
-            "num_sectors": config.SECTOR_COUNT
+            "num_sectors": num_sectors
         },
         "sectors": sectors,
         "records": {

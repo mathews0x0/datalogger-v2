@@ -58,6 +58,8 @@ def process_job(job):
             script_path = os.path.join(server_path, 'core', 'run_analysis.py')
             output_dir = str(config.get_user_sessions_dir(user_id))
             tracks_dir = str(config.get_user_tracks_dir(user_id))
+            child_env = os.environ.copy()
+            child_env[config.DEFAULT_SECTOR_COUNT_ENV_KEY] = str(config.get_default_sector_count())
             
             # Execute subprocess identically as before
             print(f"[Worker] Running analysis on {csv_path}...")
@@ -65,7 +67,7 @@ def process_job(job):
                 sys.executable, script_path, csv_path,
                 '--output', output_dir,
                 '--tracks', tracks_dir
-            ], capture_output=True, text=True, timeout=60)
+            ], capture_output=True, text=True, timeout=60, env=child_env)
             
             if result.returncode == 0:
                 print(f"[Worker] Job {job.id} completed successfully.")

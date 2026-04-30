@@ -9,7 +9,7 @@ from api.models import db, User, DeviceToken
 import api.config as config
 import json
 from api.auth_utils import get_current_user_id
-from api.track_catalog import get_user_track_stats_dir, load_json_file, resolve_track, track_file_path
+from api.track_catalog import get_user_track_stats_dir, load_json_file, resolve_track, track_file_path, load_track_json
 from api.track_catalog import build_device_track_payload
 
 devices_bp = Blueprint('devices', __name__)
@@ -186,7 +186,7 @@ def get_device_active_track():
                 track_data = {}
                 if track_json_path.exists():
                     try:
-                        track_data = load_json_file(track_json_path)
+                        track_data = load_track_json(resolved) or {}
                     except Exception:
                         track_data = {}
 

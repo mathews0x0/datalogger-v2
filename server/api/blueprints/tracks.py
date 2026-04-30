@@ -28,6 +28,27 @@ def _user_track_summary(user_id, track_id):
     return len(sessions_meta), best_lap_time
 
 
+def user_tbl_file_path(user_id, resolved_track):
+    if resolved_track["track_scope"] == "global":
+        user_track_dir = get_user_track_stats_dir(user_id, resolved_track["track_id"], resolved_track["track_name"])
+        return user_track_dir / "tbl.json"
+    return track_file_path(resolved_track, "tbl.json")
+
+
+def clear_user_track_tbl_if_no_sessions(user_id, track_id):
+    sessions_count, _ = _user_track_summary(user_id, track_id)
+    if sessions_count > 0:
+        return False
+    resolved = resolve_track(track_id, user_id=user_id)
+    if not resolved:
+        return False
+    tbl_file = user_tbl_file_path(user_id, resolved)
+    if tbl_file.exists():
+        tbl_file.unlink()
+        return True
+    return False
+
+
 @tracks_bp.route('/api/tracks')
 @jwt_required()
 def get_tracks():
@@ -87,16 +108,15 @@ def get_track(track_id):
     if not track_data:
         return jsonify({"error": "Track data not found"}), 404
 
+    sessions_count, best_lap_time = _user_track_summary(user_id, track_id)
     tbl_data = None
-    if resolved["track_scope"] == "global":
-        user_track_dir = get_user_track_stats_dir(user_id, track_id, resolved["track_name"])
-        tbl_file = user_track_dir / "tbl.json"
-    else:
-        tbl_file = track_file_path(resolved, "tbl.json")
-    if tbl_file.exists():
+    tbl_file = user_tbl_file_path(user_id, resolved)
+    if sessions_count == 0:
+        if tbl_file.exists():
+            tbl_file.unlink()
+    elif tbl_file.exists():
         tbl_data = load_json_file(tbl_file)
 
-    sessions_count, best_lap_time = _user_track_summary(user_id, track_id)
     return jsonify({
         **track_data,
         "tbl": tbl_data,
@@ -165,6 +185,9 @@ def get_track_layout(track_id):
     layout = load_track_layout(resolved)
     if not layout:
         return jsonify({"error": "Canonical layout not found"}), 404
+    track_data = load_track_json(resolved) or {}
+    layout["sectors"] = track_data.get("sectors") or []
+    layout["start_line"] = track_data.get("start_line")
     return jsonify(layout)
 
 

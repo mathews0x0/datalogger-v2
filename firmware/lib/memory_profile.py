@@ -85,7 +85,7 @@ def format_memory_profile(info):
 def recommended_stream_chunk_size():
     info = get_memory_profile()
     free_mem = info.get("gc_free", 0)
-    max_chunk = 32 * 1024 if info.get("psram_present") else 4 * 1024
+    max_chunk = 128 * 1024 if info.get("psram_present") else 4 * 1024
     if free_mem <= 0:
         return 1024
     target = free_mem // 4

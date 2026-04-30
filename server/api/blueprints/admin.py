@@ -2,12 +2,22 @@ from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity
 import shutil
 
-from api.models import db, User, SessionMeta, TrackMeta, Team, TeamMember, GlobalTrack, UnmatchedTrackReport
+from api.models import db, User, SessionMeta, TrackMeta, Team, TeamMember, GlobalTrack, UnmatchedTrackReport, AppSetting
 from api.decorators import admin_required
 from api.track_catalog import TrackPackageError, upsert_global_track_package
 import api.config as config
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
+
+
+def _get_or_create_app_setting(key, default_value):
+    setting = AppSetting.query.filter_by(key=key).first()
+    if setting:
+        return setting
+    setting = AppSetting(key=key, value=str(default_value))
+    db.session.add(setting)
+    db.session.flush()
+    return setting
 
 @admin_bp.route('/users', methods=['GET'])
 @admin_required
@@ -240,6 +250,37 @@ def admin_list_tracks():
         payload.append(item)
     return jsonify({"tracks": payload})
 
+
+@admin_bp.route('/settings', methods=['GET'])
+@admin_required
+def admin_get_settings():
+    return jsonify({
+        "default_sector_count": config.get_default_sector_count(),
+    })
+
+
+@admin_bp.route('/settings/default-sector-count', methods=['PUT'])
+@admin_required
+def admin_update_default_sector_count():
+    data = request.get_json() or {}
+    raw_value = data.get('value')
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return jsonify({"error": "Default sector count must be an integer"}), 400
+
+    if value < 1 or value > 16:
+        return jsonify({"error": "Default sector count must be between 1 and 16"}), 400
+
+    setting = _get_or_create_app_setting(config.DEFAULT_SECTOR_COUNT_SETTING_KEY, config.SECTOR_COUNT)
+    setting.value = str(value)
+    db.session.commit()
+
+    return jsonify({
+        "success": True,
+        "default_sector_count": value,
+    })
+
 @admin_bp.route('/tracks/package', methods=['POST'])
 @admin_required
 def admin_upload_track_package():
@@ -297,13 +338,6 @@ def admin_delete_track(track_id):
     global_track = GlobalTrack.query.filter_by(track_id=track_id).first()
     if not global_track:
         return jsonify({"error": "Global track not found"}), 404
-
-    matched_sessions = SessionMeta.query.filter_by(track_id=track_id).count()
-    if matched_sessions > 0:
-        return jsonify({
-            "error": "Track cannot be deleted while matched sessions exist",
-            "matched_sessions_count": matched_sessions
-        }), 409
 
     track_dir = config.get_global_track_dir(global_track.folder_name)
     if track_dir.exists():

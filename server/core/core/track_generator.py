@@ -332,7 +332,7 @@ class TrackGenerator:
             total += d
             dists.append(total)
 
-        num_sectors = config.SECTOR_COUNT
+        num_sectors = config.get_default_sector_count()
         step = total / num_sectors
         # Dynamic Radius Calculation to prevent overlap on short tracks
         # Radius should be less than half the sector length (step / 2)
@@ -357,6 +357,7 @@ class TrackGenerator:
 
             sectors.append({
                 "id": f"S{i}",
+                "sector_index": i,
                 "end_lat": s_lat,
                 "end_lon": s_lon,
                 "radius_m": round(dynamic_radius, 1)

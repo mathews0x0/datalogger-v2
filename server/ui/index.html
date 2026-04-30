@@ -801,6 +801,12 @@
           <h3 style="margin-top: 0;">Central Track Packages</h3>
           <div style="display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 1rem; align-items: start;">
             <div>
+              <label for="adminDefaultSectorCount" class="help-text" style="display:block; margin-bottom:0.35rem;">Default sector count for non-canonical tracks</label>
+              <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap;">
+                <input type="number" id="adminDefaultSectorCount" class="filter-select" min="1" max="16" step="1" style="width: 120px;">
+                <button onclick="saveAdminDefaultSectorCount()" class="btn btn-sm">Save</button>
+              </div>
+              <p class="help-text" style="margin-top: 0; margin-bottom: 0.75rem;">Only used when a track does not include explicit sector data in its package.</p>
               <input type="text" id="adminTrackNameInput" class="filter-select" placeholder="Track name" style="margin-bottom: 0.5rem; width: 100%;">
               <input type="text" id="adminTrackSlugInput" class="filter-select" placeholder="Optional slug" style="margin-bottom: 0.5rem; width: 100%;">
               <input type="file" id="adminTrackPackageFile" accept="application/json,.json" class="filter-select" style="margin-bottom: 0.75rem; width: 100%;">

@@ -15,6 +15,8 @@ METADATA_DIR = DATA_DIR / "metadata"
 REGISTRY_FILE = METADATA_DIR / "registry.json"
 SECTOR_COUNT = 7
 GLOBAL_TRACK_ID_MIN = 1_000_000
+DEFAULT_SECTOR_COUNT_SETTING_KEY = "default_sector_count"
+DEFAULT_SECTOR_COUNT_ENV_KEY = "RACESENSE_DEFAULT_SECTOR_COUNT"
 
 
 
@@ -56,3 +58,25 @@ def get_global_track_dir(folder_name):
     t_dir = get_global_tracks_dir() / folder_name
     t_dir.mkdir(parents=True, exist_ok=True)
     return t_dir
+
+
+def get_default_sector_count():
+    try:
+        env_value = os.environ.get(DEFAULT_SECTOR_COUNT_ENV_KEY)
+        if env_value:
+            value = int(env_value)
+            if value > 0:
+                return value
+        from flask import has_app_context
+        if not has_app_context():
+            return SECTOR_COUNT
+        from api.models import AppSetting
+        setting = AppSetting.query.filter_by(key=DEFAULT_SECTOR_COUNT_SETTING_KEY).first()
+        if not setting:
+            return SECTOR_COUNT
+        value = int(setting.value)
+        if value <= 0:
+            return SECTOR_COUNT
+        return value
+    except Exception:
+        return SECTOR_COUNT

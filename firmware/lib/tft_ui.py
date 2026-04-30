@@ -13,7 +13,7 @@ except ImportError:
     micropython = _MicroPythonCompat()
 
 from drivers.ili9341 import ILI9341
-from lib.display_config import DEFAULT_DISPLAY_CONFIG, normalize_display_config
+from lib.display_config import DEFAULT_DISPLAY_CONFIG, normalize_display_config, save_display_config, load_display_config
 try:
     from drivers.xpt2046 import XPT2046
 except ImportError:
@@ -51,6 +51,7 @@ class TFTBootUI:
         self.width = 320
         self.height = 240
         self._display_config = normalize_display_config(display_config)
+        self._swap_bytes = bool(self._display_config.get("swap_bytes", True))
         self._pin_tft_cs = pin_tft_cs
         self._pin_tft_dc = pin_tft_dc
         self._pin_tft_rst = pin_tft_rst
@@ -79,7 +80,7 @@ class TFTBootUI:
         self._fb = framebuf.FrameBuffer(self._buf, self.width, self.height, framebuf.RGB565)
         self._mono_buf = bytearray(self.width)
         self._mono_fb = framebuf.FrameBuffer(self._mono_buf, self.width, 8, framebuf.MONO_VLSB)
-        self._tx_buf = bytearray(4096)
+        self._tx_buf = bytearray(32 * 1024)
         self._last_touch_ms = 0
         self._battery_pct = None
         self._charging = False
@@ -126,6 +127,7 @@ class TFTBootUI:
         self._logging_layout_cache = None
         self._logging_layout_key = None
         self._logging_screen_active = False
+        self._settings_scroll_index = 0
         self._fb.fill(self._c_bg)
 
     def _make_display(self, display_config):
@@ -146,6 +148,7 @@ class TFTBootUI:
     def apply_display_config(self, display_config, clear=True):
         cfg = normalize_display_config(display_config)
         self._display_config = cfg
+        self._swap_bytes = bool(cfg.get("swap_bytes", True))
         self._spi.init(baudrate=cfg["baudrate"], polarity=0, phase=0)
         self._display = self._make_display(cfg)
         if clear:
@@ -295,10 +298,10 @@ class TFTBootUI:
         self._display._activate_spi()
         self._display.cs.value(0)
         self._display.dc.value(1)
-        # MicroPython's framebuf.RGB565 byte order can differ from what the
-        # ILI9341 expects over SPI on this board. Swap each 16-bit pixel before
-        # transfer so orange/amber UI colors land correctly on-panel.
-        self._write_swapped_from_buffer(0, len(self._buf))
+        if self._swap_bytes:
+            self._write_swapped_from_buffer(0, len(self._buf))
+        else:
+            self._spi.write(self._buf)
         self._display.cs.value(1)
 
     def _show_region(self, x, y, w, h):
@@ -320,11 +323,20 @@ class TFTBootUI:
         self._display._activate_spi()
         self._display.cs.value(0)
         self._display.dc.value(1)
-        if x == 0 and w == self.width:
-            self._write_swapped_from_buffer((y * self.width) * 2, w * h * 2)
+        if self._swap_bytes:
+            if x == 0 and w == self.width:
+                self._write_swapped_from_buffer((y * self.width) * 2, w * h * 2)
+            else:
+                for row in range(y, y + h):
+                    self._write_swapped_from_buffer(((row * self.width) + x) * 2, w * 2)
         else:
-            for row in range(y, y + h):
-                self._write_swapped_from_buffer(((row * self.width) + x) * 2, w * 2)
+            if x == 0 and w == self.width:
+                start = (y * self.width) * 2
+                self._spi.write(memoryview(self._buf)[start:start + (w * h * 2)])
+            else:
+                for row in range(y, y + h):
+                    start = ((row * self.width) + x) * 2
+                    self._spi.write(memoryview(self._buf)[start:start + (w * 2)])
         self._display.cs.value(1)
 
     def _show_regions(self, regions):
@@ -388,6 +400,18 @@ class TFTBootUI:
             sy = inner_y + ((max(0, min(1000, py)) * inner_h) // 1000)
             return (sx, sy)
 
+        def marker_label(point, fallback_idx):
+            try:
+                sector_index = int(point.get("sector_index"))
+                if sector_index > 0:
+                    return "S%d" % sector_index
+            except Exception:
+                pass
+            marker_id = point.get("id")
+            if marker_id:
+                return str(marker_id)
+            return "S%d" % (fallback_idx + 1)
+
         scaled_polyline = []
         for point in polyline:
             scaled = scale_point(point)
@@ -397,10 +421,14 @@ class TFTBootUI:
             return None
 
         scaled_sectors = []
-        for point in layout.get("sector_markers") or []:
+        for idx, point in enumerate(layout.get("sector_markers") or []):
             scaled = scale_point(point)
             if scaled:
-                scaled_sectors.append(scaled)
+                scaled_sectors.append({
+                    "x": scaled[0],
+                    "y": scaled[1],
+                    "label": marker_label(point, idx),
+                })
 
         start_marker = None
         if isinstance(layout.get("start_marker"), dict):
@@ -427,7 +455,7 @@ class TFTBootUI:
                 x1, y1 = points[idx]
                 self._fb.line(x0, y0, x1, y1, self._c_accent_soft)
             for marker in layout["sector_markers"]:
-                self._fb.fill_rect(marker[0] - 2, marker[1] - 2, 5, 5, self._c_warn)
+                self._fb.fill_rect(marker["x"] - 2, marker["y"] - 2, 5, 5, self._c_warn)
             if layout["start_marker"]:
                 marker = layout["start_marker"]
                 self._fb.fill_rect(marker[0] - 3, marker[1] - 3, 7, 7, self._c_good)
@@ -648,6 +676,20 @@ class TFTBootUI:
         self._fb.fill_rect(x, y, w, h, fill)
         self._fb.rect(x, y, w, h, border)
 
+    def _arrow_button(self, x, y, w, h, direction, enabled=True):
+        fill = self._c_accent if enabled else self._c_panel
+        fg = self._c_bg if enabled else self._c_text_muted
+        self._fb.fill_rect(x, y, w, h, fill)
+        self._fb.rect(x, y, w, h, self._c_text_dim)
+        mid_x = x + (w // 2)
+        mid_y = y + (h // 2)
+        if direction == "up":
+            for step in range(6):
+                self._fb.line(mid_x - step, mid_y - 2 + step, mid_x + step, mid_y - 2 + step, fg)
+        else:
+            for step in range(6):
+                self._fb.line(mid_x - step, mid_y + 2 - step, mid_x + step, mid_y + 2 - step, fg)
+
     def _draw_mask(self, x, y, w, h, mask, mask_w, mask_h, color, glow=None):
         if not mask or mask_w <= 0 or mask_h <= 0 or w <= 0 or h <= 0:
             return
@@ -764,6 +806,14 @@ class TFTBootUI:
 
     def _format_bytes_pair(self, current, total):
         return "%s/%s" % (self._format_bytes_compact(current), self._format_bytes_compact(total))
+
+    def _format_mb_label(self, value):
+        try:
+            value = int(value or 0)
+        except Exception:
+            value = 0
+        mb = value / (1024.0 * 1024.0)
+        return "[%.1f MB]" % mb
 
     def _format_eta(self, seconds):
         if seconds is None:
@@ -939,27 +989,69 @@ class TFTBootUI:
         self._centered_scaled(206, label, scale=1, color=self._c_text_muted)
         self.show()
 
-    def _draw_display_selection_screen(self, preset, index, total):
+    def _mix565(self, c0, c1, t, span):
+        if span <= 0:
+            return c1 & 0xFFFF
+        t = max(0, min(span, int(t)))
+        r0 = (c0 >> 11) & 0x1F
+        g0 = (c0 >> 5) & 0x3F
+        b0 = c0 & 0x1F
+        r1 = (c1 >> 11) & 0x1F
+        g1 = (c1 >> 5) & 0x3F
+        b1 = c1 & 0x1F
+        r = r0 + (((r1 - r0) * t) // span)
+        g = g0 + (((g1 - g0) * t) // span)
+        b = b0 + (((b1 - b0) * t) // span)
+        return (r << 11) | (g << 5) | b
+
+    def _rainbow565(self, pos, span):
+        anchors = (
+            0xF800,  # red
+            0xFD20,  # orange
+            0xFFE0,  # yellow
+            0x07E0,  # green
+            0x07FF,  # cyan
+            0x001F,  # blue
+            0xF81F,  # magenta
+            0xF800,  # red
+        )
+        if span <= 0:
+            return anchors[0]
+        pos = pos % span
+        seg_count = len(anchors) - 1
+        seg_span = max(1, span // seg_count)
+        seg = min(seg_count - 1, pos // seg_span)
+        local_t = pos - (seg * seg_span)
+        return self._mix565(anchors[seg], anchors[seg + 1], local_t, seg_span)
+
+    def _draw_color_calibration_strip(self, y, h, frame):
+        width = self.width
+        span = max(1, width * 3)
+        for x in range(width):
+            color = self._rainbow565(frame + (x * 3), span)
+            self._fb.fill_rect(x, y, 1, h, color)
+
+    def _draw_display_selection_screen(self, preset, index, total, frame=0):
         self._fb.fill(self._c_bg)
         self._header("DISPLAY", color=self._c_accent)
         self._draw_panel(16, 52, 288, 176, border=self._c_panel_alt, fill=self._c_panel)
-        self._centered_scaled(66, "Preset %d/%d" % (index, total), scale=2, color=self._c_text)
-        self._centered_scaled(92, str(preset.get("name", "display")), scale=2, color=self._c_text_muted)
-        self._draw_block_text("HELLO", 60, 116, 6, self._c_text, accent=self._c_accent)
-        self._fb.fill_rect(24, 62, 30, 16, self._c_bad)
-        self._fb.fill_rect(272, 62, 16, 30, self._c_good)
-        self._fb.fill_rect(24, 196, 16, 24, 0x001F)
-        self._fb.fill_rect(248, 204, 40, 16, self._c_warn)
-        stripe_y = 168
-        stripe_h = 12
-        stripe_w = self.width // 6
-        colors = (0xF800, 0x07E0, 0x001F, 0xFFE0, 0xF81F, 0x07FF)
-        for idx, color in enumerate(colors):
-            self._fb.fill_rect(idx * stripe_w, stripe_y, stripe_w, stripe_h, color)
-        self._centered_scaled(212, "Touch to save", scale=1, color=self._c_text)
+        self._centered_scaled(64, "Preset %d/%d" % (index, total), scale=2, color=self._c_text)
+        self._centered_scaled(88, str(preset.get("name", "display")), scale=2, color=self._c_text_muted)
+        cards = (
+            (28, "RED", 0xF800),
+            (121, "GREEN", 0x07E0),
+            (214, "BLUE", 0x001F),
+        )
+        for card_x, label, color in cards:
+            self._draw_panel(card_x, 110, 78, 42, border=self._c_panel_alt, fill=self._c_bg)
+            text_x = card_x + max(4, (78 - self._text_width(label, "ui")) // 2)
+            self._text(text_x, 124, label, color, bg=self._c_bg)
+        self._draw_color_calibration_strip(166, 20, frame)
+        self._centered_scaled(196, "Touch when colors look right", scale=1, color=self._c_text)
+        self._centered_scaled(212, "Spectrum should sweep cleanly", scale=1, color=self._c_text_muted)
         self.show()
 
-    def select_display_preset(self, presets, cycle_ms=2200):
+    def select_display_preset(self, presets, cycle_ms=2200, frame_step_ms=140):
         if self._touch is None:
             print("[TFT] Display selection unavailable: touch missing")
             return None
@@ -973,14 +1065,21 @@ class TFTBootUI:
         while accepted is None:
             preset = presets[index]
             self.apply_display_config(preset, clear=False)
-            self._draw_display_selection_screen(preset, index + 1, len(presets))
+            self._draw_display_selection_screen(preset, index + 1, len(presets), frame=0)
             print("[TFT] display preset", index + 1, preset)
             shown_at = time.ticks_ms()
+            frame = 0
+            last_frame_ms = shown_at
             while time.ticks_diff(time.ticks_ms(), shown_at) < cycle_ms:
                 if self.has_display_selection_touch():
                     accepted = preset
                     self._wait_touch_release()
                     break
+                now = time.ticks_ms()
+                if time.ticks_diff(now, last_frame_ms) >= frame_step_ms:
+                    frame = (frame + 11) % (self.width * 3)
+                    self._draw_display_selection_screen(preset, index + 1, len(presets), frame=frame)
+                    last_frame_ms = now
                 time.sleep_ms(40)
             index = (index + 1) % len(presets)
             if time.ticks_diff(time.ticks_ms(), start) > 120000:
@@ -1113,6 +1212,123 @@ class TFTBootUI:
         time.sleep_ms(900)
         return True
 
+    def _draw_color_profile_screen(self, profile, frame):
+        self._fb.fill(self._c_bg)
+        self._header("COLOR", color=self._c_accent)
+        self._draw_panel(16, 52, 288, 176, border=self._c_panel_alt, fill=self._c_panel)
+        self._centered_scaled(64, str(profile.get("name", "color-profile")), scale=2, color=self._c_text)
+        stripe_y = 104
+        stripe_h = 32
+        stripe_colors = (
+            self._rainbow565(frame + 0, max(1, self.width * 6)),
+            self._rainbow565(frame + 80, max(1, self.width * 6)),
+            self._rainbow565(frame + 160, max(1, self.width * 6)),
+            self._rainbow565(frame + 240, max(1, self.width * 6)),
+        )
+        for idx, color in enumerate(stripe_colors):
+            self._fb.fill_rect(34 + (idx * 63), stripe_y, 55, stripe_h, color)
+        cards = (
+            (34, "RED", 0xF800),
+            (126, "GREEN", 0x07E0),
+            (218, "BLUE", 0x001F),
+            (92, "ORANGE", self._c_warn),
+        )
+        for card_x, label, color in cards:
+            card_y = 150 if label != "ORANGE" else 188
+            card_w = 70 if label != "ORANGE" else 136
+            self._draw_panel(card_x, card_y, card_w, 28, border=self._c_panel_alt, fill=self._c_bg)
+            text_x = card_x + max(4, (card_w - self._text_width(label, "ui")) // 2)
+            self._text(text_x, card_y + 8, label, color, bg=self._c_bg)
+        self._centered_scaled(224, "Each profile shows for 3 seconds", scale=1, color=self._c_text_muted)
+        self._centered_scaled(210, "Touch when colors are correct", scale=1, color=self._c_text)
+        self.show()
+
+    def _build_color_profiles(self):
+        base = normalize_display_config(self._display_config)
+        madctl_rgb = base.get("madctl", DEFAULT_DISPLAY_CONFIG["madctl"]) & 0xF7
+        madctl_bgr = madctl_rgb | 0x08
+        return (
+            {
+                "name": "RGB + swap",
+                "rotation": base["rotation"],
+                "madctl": madctl_rgb,
+                "baudrate": base["baudrate"],
+                "swap_bytes": True,
+            },
+            {
+                "name": "RGB + direct",
+                "rotation": base["rotation"],
+                "madctl": madctl_rgb,
+                "baudrate": base["baudrate"],
+                "swap_bytes": False,
+            },
+            {
+                "name": "BGR + swap",
+                "rotation": base["rotation"],
+                "madctl": madctl_bgr,
+                "baudrate": base["baudrate"],
+                "swap_bytes": True,
+            },
+            {
+                "name": "BGR + direct",
+                "rotation": base["rotation"],
+                "madctl": madctl_bgr,
+                "baudrate": base["baudrate"],
+                "swap_bytes": False,
+            },
+        )
+
+    def calibrate_display_colors(self, cycle_ms=3000, frame_step_ms=110):
+        if self._touch is None:
+            self.show_message("COLOR", "Touch driver missing", "Display check skipped")
+            time.sleep_ms(900)
+            return False
+        self._touch_mode = None
+        accepted = None
+        start = time.ticks_ms()
+        frame = 0
+        profiles = self._build_color_profiles()
+        index = 0
+        while accepted is None:
+            profile = profiles[index]
+            self.apply_display_config(profile, clear=False)
+            shown_at = time.ticks_ms()
+            last_frame_ms = shown_at
+            self._draw_color_profile_screen(profile, frame)
+            while time.ticks_diff(time.ticks_ms(), shown_at) < cycle_ms:
+                if self.has_display_selection_touch():
+                    accepted = profile
+                    self._wait_touch_release()
+                    break
+                now = time.ticks_ms()
+                if time.ticks_diff(now, last_frame_ms) >= frame_step_ms:
+                    frame = (frame + 13) % (self.width * 6)
+                    self._draw_color_profile_screen(profile, frame)
+                    last_frame_ms = now
+                time.sleep_ms(35)
+            index = (index + 1) % len(profiles)
+            if time.ticks_diff(time.ticks_ms(), start) > 180000:
+                break
+        if accepted is None:
+            self.show_message("COLOR", "Timed out", "Keeping current profile")
+            time.sleep_ms(900)
+            return False
+        if not save_display_config(accepted):
+            self.show_message("COLOR", "Save failed", "Keeping current profile")
+            time.sleep_ms(900)
+            return False
+        loaded_cfg = load_display_config(accepted)
+        self.apply_display_config(loaded_cfg, clear=True)
+        self.invalidate()
+        self.show_message("COLOR", "Saved", str(loaded_cfg.get("name", "profile")))
+        time.sleep_ms(900)
+        return True
+
+    def calibrate_touch_and_display(self):
+        if not self.calibrate_touch():
+            return False
+        return self.calibrate_display_colors()
+
     def _header(self, title, color=None):
         color = self._c_accent if color is None else color
         self._draw_topbar_to_fb(title, color, ram_only=False)
@@ -1185,30 +1401,64 @@ class TFTBootUI:
     def show_decision(self, *args, **kwargs):
         return self.show_home(*args, **kwargs)
 
-    def show_settings(self, ssid="", auto_log_enabled=True):
+    def show_settings(self, ssid="", auto_log_enabled=True, pending_count=0, scroll_index=0):
         self._touch_mode = "settings"
-        key = ("settings", str(ssid), bool(auto_log_enabled))
+        total_items = 5
+        max_scroll = max(0, total_items - 3)
+        scroll_index = max(0, min(max_scroll, int(scroll_index or 0)))
+        self._settings_scroll_index = scroll_index
+        key = ("settings", str(ssid), bool(auto_log_enabled), int(pending_count or 0), scroll_index)
         if self._skip_same_render(key):
             self.refresh_topbar("RaceSense")
             return True
         self._start_content_screen()
         self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
         self._text(128, 58, "SETTINGS", self._c_text)
-        self._draw_panel(18, 92, 284, 94, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(30, 104, "SAVED WIFI", self._c_text_muted, bg=self._c_panel)
-        wifi_label = self._truncate_text(ssid or "Not configured", 28)
-        self._text(30, 120, self._fit_text_px(wifi_label, 260, "ui"), self._c_text if ssid else self._c_bad, bg=self._c_panel)
-        self._text(30, 146, "AUTO LOG", self._c_text_muted, bg=self._c_panel)
-        self._text(124, 146, "ON" if auto_log_enabled else "OFF", self._c_text if auto_log_enabled else self._c_bad, bg=self._c_panel)
-        self._toggle(214, 136, 64, 32, auto_log_enabled)
-        self._button(18, 194, 88, 38, "WIFI", self._c_accent, self._c_bg)
-        self._button(116, 194, 88, 38, "TRACK", self._c_panel_alt, self._c_text)
-        self._button(214, 194, 88, 38, "CALIB", self._c_panel_alt, self._c_text)
-        self._show_regions((
-            (0, 40, 320, 46),
-            (18, 92, 284, 94),
-            (18, 194, 284, 38),
-        ))
+        self._draw_panel(18, 88, 252, 136, border=self._c_panel_alt, fill=self._c_bg)
+        items = (
+            ("wifi", "wifi", self._fit_text_px(ssid or "Not configured", 170, "ui"), self._c_text if ssid else self._c_bad),
+            ("track", "track", "view selected layout", self._c_text_dim),
+            ("calibrate", "calibration", "touch and display setup", self._c_text_dim),
+            ("toggle_auto_log", "auto log", "on" if auto_log_enabled else "off", self._c_text if auto_log_enabled else self._c_bad),
+            ("archive", "archive all", "%d file%s pending" % (int(pending_count or 0), "" if int(pending_count or 0) == 1 else "s"), self._c_warn if pending_count else self._c_text_dim),
+        )
+        visible = items[scroll_index : scroll_index + 3]
+        row_y = 96
+        for action, title, detail, detail_color in visible:
+            self._draw_panel(22, row_y, 248, 36, border=self._c_panel_alt, fill=self._c_panel)
+            self._text(38, row_y + 6, title.upper(), self._c_text, bg=self._c_panel)
+            detail_text = self._fit_text_px(str(detail), 190, "ui")
+            self._text(38, row_y + 20, detail_text, detail_color, bg=self._c_panel)
+            if action == "toggle_auto_log":
+                self._toggle(214, row_y + 6, 36, 16, auto_log_enabled)
+            else:
+                self._text(236, row_y + 12, ">", self._c_accent if action in ("wifi", "track", "archive") else self._c_text_dim, bg=self._c_panel)
+            row_y += 42
+        can_up = scroll_index > 0
+        can_down = scroll_index < max_scroll
+        self._arrow_button(278, 104, 28, 40, "up", enabled=can_up)
+        self._arrow_button(278, 168, 28, 40, "down", enabled=can_down)
+        self._show_region(0, 40, 320, 200)
+        return True
+
+    def show_archive_confirm(self, pending_count=0):
+        self._touch_mode = "archive_confirm"
+        pending_count = max(0, int(pending_count or 0))
+        file_label = "%d file%s" % (pending_count, "" if pending_count == 1 else "s")
+        key = ("archive_confirm", pending_count)
+        if self._skip_same_render(key):
+            self.refresh_topbar("RaceSense")
+            return True
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
+        self._text(102, 58, "ARCHIVE ALL", self._c_text)
+        self._draw_panel(18, 88, 284, 82, border=self._c_panel_alt, fill=self._c_panel)
+        self._centered_scaled(106, "Move pending logs", scale=2, color=self._c_text)
+        self._centered_scaled(130, self._fit_text_px(file_label + " to uploaded/", 220, "ui"), scale=1, color=self._c_text_muted)
+        self._centered_scaled(148, "No cloud sync", scale=1, color=self._c_bad)
+        self._button(166, 188, 136, 40, "YES", self._c_warn, self._c_bg)
+        self._show_region(0, 40, 320, 200)
         return True
 
     def show_track_view(self, track_data, page=0):
@@ -1252,10 +1502,10 @@ class TFTBootUI:
                 x1, y1 = layout["polyline"][idx]
                 self._fb.line(x0, y0 + 34, x1, y1 + 34, self._c_accent_soft)
             for idx, marker in enumerate(layout["sector_markers"]):
-                mx = marker[0]
-                my = marker[1] + 34
+                mx = marker["x"]
+                my = marker["y"] + 34
                 self._fb.fill_rect(mx - 2, my - 2, 5, 5, self._c_warn)
-                label = "S%d" % (idx + 1)
+                label = marker.get("label") or ("S%d" % (idx + 1))
                 self._text(mx + 4, my - 6, self._fit_text_px(label, 20, "ui"), self._c_text_muted, bg=self._c_panel)
             if layout["start_marker"]:
                 marker = layout["start_marker"]
@@ -1311,14 +1561,6 @@ class TFTBootUI:
             return "%d:%06.3f" % (minutes, seconds)
         return "%.3fs" % (total_ms / 1000.0)
 
-    def update_settings_auto_log(self, auto_log_enabled=True):
-        self._touch_mode = "settings"
-        self._fb.fill_rect(120, 136, 170, 34, self._c_panel)
-        self._text(124, 146, "ON" if auto_log_enabled else "OFF", self._c_text if auto_log_enabled else self._c_bad, bg=self._c_panel)
-        self._toggle(214, 136, 64, 32, auto_log_enabled)
-        self._show_region(120, 136, 170, 34)
-        return True
-
     def show_wifi_options(self, ssid=""):
         self._touch_mode = "wifi_options"
         key = ("wifi_options", str(ssid))
@@ -1326,14 +1568,14 @@ class TFTBootUI:
             self.refresh_topbar("RaceSense")
             return True
         self._start_content_screen()
+        self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
         self._text(142, 48, "WIFI", self._c_text)
         self._draw_panel(18, 72, 284, 78, border=self._c_panel_alt, fill=self._c_panel)
         self._text(30, 86, "SAVED WIFI", self._c_text_muted, bg=self._c_panel)
         label = self._fit_text_px(ssid or "Not configured", 250, "ui")
         self._text(30, 110, label, self._c_text if ssid else self._c_bad, bg=self._c_panel)
-        self._button(18, 184, 138, 44, "CHANGE", self._c_accent, self._c_bg)
-        self._button(164, 184, 138, 44, "EXIT", self._c_panel_alt, self._c_text)
-        self._show_regions(((0, 40, 320, 118), (18, 184, 284, 44)))
+        self._button(90, 184, 140, 44, "CHANGE", self._c_accent, self._c_bg)
+        self._show_regions(((0, 40, 320, 118), (90, 184, 140, 44)))
         return True
 
     def show_first_time_setup(self, ap_name="RS-Core AP"):
@@ -1400,7 +1642,12 @@ class TFTBootUI:
         self._header("CLOUD")
         self._draw_panel(64, 54, 192, 132, border=self._c_panel_alt, fill=self._c_panel)
         self._draw_heart(160, 112, self._c_good if ok else self._c_bad)
-        self._centered_scaled(198, "ACK RECEIVED" if ok else "CONTACTING CLOUD", scale=1, color=self._c_text_muted)
+        if ok:
+            self._centered_scaled(188, "racesense servers", scale=1, color=self._c_text_muted)
+            self._centered_scaled(202, "says hello back", scale=1, color=self._c_text_muted)
+        else:
+            self._centered_scaled(188, "saying hi to", scale=1, color=self._c_text_muted)
+            self._centered_scaled(202, "racesense servers", scale=1, color=self._c_text_muted)
         self.show()
         if not ok:
             for scale in (7, 8, 7):
@@ -1446,21 +1693,26 @@ class TFTBootUI:
 
     def show_sync_upload(self, filename, file_index, total_files, sent_bytes, total_bytes, global_current=0, global_total=0, phase="UPLOADING", detail="", batch_count=0, total_batches=0):
         self._touch_mode = None
+        self.refresh_topbar("RaceSense")
         global_pct, eta_text, rate_text = self._sync_stats(global_current, global_total)
-        short_name = self._truncate_text(str(filename).split("/")[-1], 28)
+        remaining_mb = self._format_mb_label(max(0, int(global_total or 0) - int(global_current or 0)))
+        file_size_label = self._format_mb_label(total_bytes)
+        file_pos = "%d/%d" % (int(file_index or 0) + 1, int(total_files or 1))
+        file_pos_w = self._text_width(file_pos, "ui")
+        file_line_max = max(40, 262 - file_pos_w - 10)
+        short_name = self._fit_text_px("%s %s" % (str(filename).split("/")[-1], file_size_label), file_line_max, "ui")
         chunks = "--"
         if total_batches:
             chunks = "%d/%d" % (int(batch_count or 0), int(total_batches or 0))
         elif total_bytes:
             chunks = "%s/%s" % (self._format_bytes_compact(sent_bytes), self._format_bytes_compact(total_bytes))
-        values = (short_name, int(file_index or 0), int(total_files or 0), global_pct, eta_text, chunks)
+        values = (short_name, int(file_index or 0), int(total_files or 0), global_pct, remaining_mb, eta_text, chunks)
         screen_key = ("sync_upload_screen",)
         if self._sync_upload_screen_key != screen_key:
             self._reset_sync_search_screen()
             self._sync_upload_screen_key = screen_key
             self._sync_upload_values = None
             self._start_content_screen()
-            self.refresh_topbar("RaceSense")
             self._text(142, 48, "SYNC", self._c_text)
             self._draw_panel(12, 46, 296, 178, border=self._c_panel_alt, fill=self._c_panel)
             self._text(24, 62, "OVERALL PROGRESS", self._c_text_muted)
@@ -1474,13 +1726,14 @@ class TFTBootUI:
 
         pct_text = "%d%%" % global_pct
         self._fb.fill_rect(22, 78, 276, 58, self._c_panel)
-        self._big_value((self.width - self._big_value_width(pct_text)) // 2, 78, pct_text, scale=5, color=self._c_accent, bg=self._c_panel)
+        self._big_value(24, 78, pct_text, scale=4, color=self._c_accent, bg=self._c_panel)
+        remaining_x = 294 - self._text_width(remaining_mb, "ui")
+        self._text(max(120, remaining_x), 92, remaining_mb, self._c_text_muted, bg=self._c_panel)
         self._progress_bar(24, 124, 262, 10, global_pct, fill=self._c_accent, border=self._c_panel_alt, bg=self._c_bg)
         self._show_region(22, 76, 276, 62)
 
         self._fb.fill_rect(22, 156, 276, 20, self._c_panel)
         self._text(24, 156, short_name, self._c_text, bg=self._c_panel)
-        file_pos = "%d/%d" % (int(file_index or 0) + 1, int(total_files or 1))
         self._text(288 - self._text_width(file_pos, "ui"), 156, file_pos, self._c_text_dim, bg=self._c_panel)
         self._show_region(22, 154, 276, 24)
 
@@ -1521,6 +1774,33 @@ class TFTBootUI:
             self._button(210, 184, 100, 44, "REBOOT", self._c_accent, self._c_bg)
         else:
             self._button(210, 184, 100, 44, "WAIT", self._c_panel, self._c_text_muted)
+        self._show_region(0, 40, 320, 200)
+        return True
+
+    def show_sync_complete(self, synced_count=0, track_name="", allow_reboot=False):
+        self._touch_mode = "sync_done" if allow_reboot else "sync_repair"
+        self._reset_sync_metrics()
+        self._reset_sync_upload_screen()
+        self._reset_sync_search_screen()
+        key = ("sync_complete", int(synced_count or 0), str(track_name), bool(allow_reboot))
+        if self._skip_render(key, 700):
+            self.refresh_topbar("RaceSense")
+            return True
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense")
+        self._text(112, 48, "SYNC DONE", self._c_text)
+        self._draw_panel(12, 48, 296, 138, border=self._c_panel_alt, fill=self._c_panel)
+        self._status_pill(22, 58, 132, "FILES SYNCED", str(max(0, int(synced_count or 0))), self._c_accent)
+        self._status_pill(166, 58, 132, "CLOUD", "READY", self._c_accent)
+        self._status_pill(22, 92, 276, "ACTIVE TRACK", self._truncate_text(track_name or "NONE", 24), self._c_text)
+        self._text(24, 136, "STATUS", self._c_text_muted)
+        self._text(24, 150, "Upload complete. Ready to exit.", self._c_text)
+        self._button(10, 190, 92, 40, "PAIR", self._c_panel_alt, self._c_text)
+        self._button(110, 190, 92, 40, "EXIT", self._c_panel_alt, self._c_text)
+        if allow_reboot:
+            self._button(210, 190, 100, 40, "REBOOT", self._c_accent, self._c_bg)
+        else:
+            self._button(210, 190, 100, 40, "WAIT", self._c_panel, self._c_text_muted)
         self._show_region(0, 40, 320, 200)
         return True
 
@@ -1695,13 +1975,22 @@ class TFTBootUI:
         x = point["sx"]
         y = point["sy"]
         print("[TFT] touch:", x, y, self._touch_mode)
+        if self._touch_mode == "archive_confirm":
+            if 0 <= x <= 116 and 40 <= y <= 92:
+                self._last_touch_ms = now
+                return "back"
+            if 160 <= x <= 319 and 180 <= y <= 239:
+                self._last_touch_ms = now
+                return "archive_yes"
+            return None
         if self._touch_mode == "wifi_options":
-            if 0 <= x <= 160 and 176 <= y <= 239:
+            if 0 <= x <= 116 and 40 <= y <= 92:
+                self._last_touch_ms = now
+                return "back"
+            if 90 <= x <= 230 and 176 <= y <= 239:
                 self._last_touch_ms = now
                 return "wifi_change"
-            if 160 <= x <= 319 and 176 <= y <= 239:
-                self._last_touch_ms = now
-                return "wifi_exit"
+            return None
         if self._touch_mode == "track_layout":
             if 0 <= x <= 116 and 40 <= y <= 92:
                 self._last_touch_ms = now
@@ -1718,19 +2007,29 @@ class TFTBootUI:
                 self._last_touch_ms = now
                 return "track_prev"
             return None
+        max_scroll = 2
         if 0 <= x <= 116 and 40 <= y <= 92:
             self._last_touch_ms = now
             return "back"
-        if 188 <= x <= 304 and 124 <= y <= 188:
+        if 278 <= x <= 306 and 104 <= y <= 144 and self._settings_scroll_index > 0:
             self._last_touch_ms = now
-            return "toggle_auto_log"
-        if 0 <= x <= 108 and 189 <= y <= 239:
+            return "settings_up"
+        if 278 <= x <= 306 and 168 <= y <= 208 and self._settings_scroll_index < max_scroll:
             self._last_touch_ms = now
-            return "wifi"
-        if 109 <= x <= 211 and 189 <= y <= 239:
-            self._last_touch_ms = now
-            return "track"
-        if 212 <= x <= 319 and 189 <= y <= 239:
-            self._last_touch_ms = now
-            return "calibrate"
+            return "settings_down"
+        if 22 <= x <= 270:
+            action_map = ("wifi", "track", "calibrate", "toggle_auto_log", "archive")
+            rows = (
+                (96, 132),
+                (138, 174),
+                (180, 216),
+            )
+            for idx, bounds in enumerate(rows):
+                y0, y1 = bounds
+                if y0 <= y <= y1:
+                    item_index = self._settings_scroll_index + idx
+                    if 0 <= item_index < len(action_map):
+                        self._last_touch_ms = now
+                        return action_map[item_index]
+                    return None
         return None

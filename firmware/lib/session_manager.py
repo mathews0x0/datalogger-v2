@@ -202,6 +202,23 @@ class SessionManager:
             except Exception as e:
                 print(f"Error archiving {filename} from {directory}: {e}")
                 return False
+
+    def archive_all_pending_entries(self, wdt=None):
+        """Archive all pending session entries without uploading them."""
+        entries = self.list_session_entries()
+        archived = 0
+        failed = 0
+        for entry in entries:
+            if wdt:
+                try:
+                    wdt.feed()
+                except Exception:
+                    pass
+            if self.archive_session_entry(entry):
+                archived += 1
+            else:
+                failed += 1
+        return {"total": len(entries), "archived": archived, "failed": failed}
     
     def get_storage_info(self):
         """Get storage statistics for flash and SD card"""
@@ -312,7 +329,7 @@ class SessionManager:
                         with open(dst, 'wb') as f_dst:
                             chunk_count = 0
                             while True:
-                                chunk = f_src.read(4096)
+                                chunk = f_src.read(64 * 1024)
                                 if not chunk:
                                     break
                                 f_dst.write(chunk)

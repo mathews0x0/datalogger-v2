@@ -34,6 +34,7 @@ SOFT_SHUTDOWN_HOLD_MS = 3000
 SOFT_SHUTDOWN_SCREEN_MS = 2000
 BUTTON_SENSE_PRESS_DELTA_V = 0.12
 BUTTON_SENSE_BASELINE_HYST_V = 0.06
+BATTERY_DIVIDER_SCALE = 2.10
 
 # --- MASTER PINOUT CONFIG (ESP32-S3 RS-CORE V2) ---
 PIN_POWER_HOLD = 41    # Soft-power self-hold output
@@ -69,6 +70,9 @@ _battery_filtered_v = 0.0
 _battery_slow_v = 0.0
 _battery_pct_cached = 0
 _battery_charging = False
+_battery_prev_raw_v = 0.0
+_battery_charge_score = 0
+_battery_debug_last_ms = 0
 _button_sense_adc = None
 _button_sense_last_ms = 0
 _button_sense_v = 0.0
@@ -108,7 +112,7 @@ def calculate_battery_percentage(voltage):
 
 def read_vbatt(vbat_adc):
     try:
-        return (vbat_adc.read_uv() / 1000000.0) * 2.0
+        return (vbat_adc.read_uv() / 1000000.0) * BATTERY_DIVIDER_SCALE
     except Exception:
         return 0.0
 
@@ -126,24 +130,53 @@ def _read_vbatt_average(vbat_adc, samples=6):
             pass
     if count <= 0:
         return 0.0
-    return ((total_uv / count) / 1000000.0) * 2.0
+    return ((total_uv / count) / 1000000.0) * BATTERY_DIVIDER_SCALE
 
 
 def get_battery_state(vbat_adc, force=False):
     global _battery_last_ms, _battery_raw_v, _battery_filtered_v, _battery_slow_v
-    global _battery_pct_cached, _battery_charging
+    global _battery_pct_cached, _battery_charging, _battery_prev_raw_v, _battery_charge_score
+    global _battery_debug_last_ms
     now = time.ticks_ms()
     if force or time.ticks_diff(now, _battery_last_ms) >= BATTERY_SAMPLE_INTERVAL_MS:
         raw_v = _read_vbatt_average(vbat_adc)
+        prev_raw_v = _battery_prev_raw_v
+        rise_v = 0.0
+        fast_delta = 0.0
         _battery_raw_v = raw_v
         if raw_v > 0:
             if _battery_filtered_v <= 0:
                 _battery_filtered_v = raw_v
                 _battery_slow_v = raw_v
+                _battery_prev_raw_v = raw_v
+                _battery_charge_score = 0
             else:
                 alpha_fast = 0.22 if raw_v >= _battery_filtered_v else 0.10
                 _battery_filtered_v = (_battery_filtered_v * (1.0 - alpha_fast)) + (raw_v * alpha_fast)
                 _battery_slow_v = (_battery_slow_v * 0.97) + (raw_v * 0.03)
+                rise_v = raw_v - prev_raw_v if prev_raw_v > 0 else 0.0
+                fast_delta = _battery_filtered_v - _battery_slow_v
+                evidence = 0
+                if raw_v >= 3.70 and fast_delta >= 0.025:
+                    evidence += 1
+                if raw_v >= 3.70 and rise_v >= 0.012:
+                    evidence += 1
+                if raw_v >= 3.85 and fast_delta >= 0.045:
+                    evidence += 1
+                if evidence > 0:
+                    _battery_charge_score = min(6, _battery_charge_score + evidence)
+                else:
+                    # Keep USB-charge detection sticky enough to survive noisy ADC
+                    # samples once charging has already been inferred.
+                    if _battery_charging and raw_v >= 3.85 and fast_delta >= -0.004:
+                        decay = 0
+                    else:
+                        decay = 2 if (raw_v <= 3.62 or fast_delta <= 0.008) else 1
+                    _battery_charge_score = max(0, _battery_charge_score - decay)
+                _battery_charging = (_battery_charge_score >= 2) or (
+                    _battery_charging and _battery_charge_score >= 1 and raw_v >= 3.80
+                )
+                _battery_prev_raw_v = raw_v
             pct = calculate_battery_percentage(_battery_filtered_v)
             if _battery_pct_cached == 0:
                 _battery_pct_cached = pct
@@ -153,16 +186,27 @@ def get_battery_state(vbat_adc, force=False):
                 if (step > 0 and next_pct > pct) or (step < 0 and next_pct < pct):
                     next_pct = pct
                 _battery_pct_cached = max(0, min(100, next_pct))
-            fast_delta = _battery_filtered_v - _battery_slow_v
-            if raw_v >= 3.75 and fast_delta >= 0.08:
-                _battery_charging = True
-            elif raw_v <= 3.68 or fast_delta <= 0.03:
-                _battery_charging = False
         else:
             _battery_filtered_v = 0.0
             _battery_slow_v = 0.0
             _battery_pct_cached = 0
             _battery_charging = False
+            _battery_prev_raw_v = 0.0
+            _battery_charge_score = 0
+        if force or time.ticks_diff(now, _battery_debug_last_ms) >= 1000:
+            print(
+                "[BATDBG] raw=%.3f filt=%.3f slow=%.3f rise=%.3f score=%d charging=%s pct=%d"
+                % (
+                    raw_v,
+                    _battery_filtered_v,
+                    _battery_slow_v,
+                    rise_v,
+                    _battery_charge_score,
+                    "yes" if _battery_charging else "no",
+                    _battery_pct_cached,
+                )
+            )
+            _battery_debug_last_ms = now
         _battery_last_ms = now
     return _battery_filtered_v, _battery_pct_cached, _battery_charging
 
@@ -608,9 +652,9 @@ def setup():
         else:
             tft._boot_logo_visible = True
             if not tft.has_touch_calibration():
-                print("[TFT] No touch calibration found. Starting second-boot calibration.")
-                if tft.calibrate_touch():
-                    diag.mark_expected_reset("touch_calibration_saved")
+                print("[TFT] No touch calibration found. Starting touch + display calibration.")
+                if tft.calibrate_touch_and_display():
+                    diag.mark_expected_reset("touch_display_calibration_saved")
                     machine.reset()
         print("[TFT] Boot UI initialized")
     except Exception as e:
@@ -650,6 +694,7 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
     force_pairing_requested = False
     settings_open = False
     settings_page = "settings"
+    settings_scroll_index = 0
     start = time.ticks_ms()
     paused = False
     paused_started_ms = 0
@@ -685,6 +730,7 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
 
         if settings_open and tft:
             if not settings_rendered:
+                pending_summary = sm.get_pending_summary() if sm else {"count": 0}
                 if settings_page == "wifi_options":
                     tft.show_wifi_options(config.get('ssid', ''))
                 elif settings_page == "track_layout":
@@ -693,12 +739,29 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 elif settings_page == "track_detail":
                     active_track_data = load_active_track_data()
                     tft.show_track_view(active_track_data, page=1)
+                elif settings_page == "archive_confirm":
+                    tft.show_archive_confirm(pending_count=pending_summary.get("count", 0))
                 else:
-                    tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                    tft.show_settings(
+                        config.get('ssid', ''),
+                        auto_log_enabled=auto_log_enabled,
+                        pending_count=pending_summary.get("count", 0),
+                        scroll_index=settings_scroll_index,
+                    )
                 settings_rendered = True
                 time.sleep_ms(30)
                 continue
             settings_action = tft.settings_touch()
+            if settings_action == "settings_up":
+                settings_scroll_index = max(0, settings_scroll_index - 1)
+                settings_rendered = False
+                tft.invalidate()
+                continue
+            if settings_action == "settings_down":
+                settings_scroll_index = min(2, settings_scroll_index + 1)
+                settings_rendered = False
+                tft.invalidate()
+                continue
             if settings_action == "wifi":
                 settings_page = "wifi_options"
                 settings_rendered = False
@@ -727,38 +790,76 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 force_pairing_requested = True
                 print("[System] WiFi change requested from settings.")
                 break
-            if settings_action == "wifi_exit":
+            if settings_action == "calibrate":
+                print("[System] Touch + display calibration requested from settings.")
+                tft.calibrate_touch_and_display()
+                tft.invalidate()
                 settings_page = "settings"
-                settings_open = False
                 settings_rendered = False
-                if paused:
-                    paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
-                    paused = False
+                continue
+            if settings_action == "archive":
+                settings_page = "archive_confirm"
+                settings_rendered = False
                 tft.invalidate()
                 continue
-            if settings_action == "calibrate":
-                print("[System] Touch calibration requested from settings.")
-                tft.calibrate_touch()
+            if settings_action == "archive_yes":
+                tft.show_message("ARCHIVE", "Moving files", "No cloud sync")
+                archive_result = sm.archive_all_pending_entries(wdt=wdt) if sm else {"total": 0, "archived": 0, "failed": 0}
+                print(
+                    "[System] Archive all complete: %d/%d archived, %d failed."
+                    % (
+                        archive_result.get("archived", 0),
+                        archive_result.get("total", 0),
+                        archive_result.get("failed", 0),
+                    )
+                )
+                if archive_result.get("failed", 0):
+                    tft.show_message(
+                        "ARCHIVE",
+                        "%d archived\n%d failed" % (archive_result.get("archived", 0), archive_result.get("failed", 0)),
+                        "Check storage",
+                    )
+                else:
+                    tft.show_message(
+                        "ARCHIVE",
+                        "%d file%s archived"
+                        % (
+                            archive_result.get("archived", 0),
+                            "" if archive_result.get("archived", 0) == 1 else "s",
+                        ),
+                        "Moved to uploaded/",
+                    )
+                time.sleep_ms(1000)
+                settings_page = "settings"
+                settings_rendered = False
                 tft.invalidate()
-                tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
-                settings_rendered = True
+                continue
             if settings_action == "toggle_auto_log":
                 auto_log_enabled = not auto_log_enabled
                 config["auto_log_enabled"] = auto_log_enabled
                 save_device_config(config)
-                tft.update_settings_auto_log(auto_log_enabled=auto_log_enabled)
-                settings_rendered = True
-                print("[System] Auto log %s from settings." % ("enabled" if auto_log_enabled else "disabled"))
-            if settings_action == "back":
-                if paused:
-                    paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
-                    paused = False
-                settings_open = False
                 settings_page = "settings"
                 settings_rendered = False
-                if tft:
-                    tft.invalidate()
+                tft.invalidate()
+                print("[System] Auto log %s from settings." % ("enabled" if auto_log_enabled else "disabled"))
+                continue
+            if settings_action == "back":
+                if settings_page == "settings":
+                    if paused:
+                        paused_accum_ms += time.ticks_diff(now_ms, paused_started_ms)
+                        paused = False
+                    settings_open = False
+                    settings_page = "settings"
+                    settings_rendered = False
+                    if tft:
+                        tft.invalidate()
+                else:
+                    settings_page = "settings"
+                    settings_rendered = False
+                    if tft:
+                        tft.invalidate()
             if settings_open:
+                pending_summary = sm.get_pending_summary() if sm else {"count": 0}
                 if settings_page == "wifi_options":
                     tft.show_wifi_options(config.get('ssid', ''))
                 elif settings_page == "track_layout":
@@ -767,8 +868,15 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 elif settings_page == "track_detail":
                     active_track_data = load_active_track_data()
                     tft.show_track_view(active_track_data, page=1)
+                elif settings_page == "archive_confirm":
+                    tft.show_archive_confirm(pending_count=pending_summary.get("count", 0))
                 else:
-                    tft.show_settings(config.get('ssid', ''), auto_log_enabled=auto_log_enabled)
+                    tft.show_settings(
+                        config.get('ssid', ''),
+                        auto_log_enabled=auto_log_enabled,
+                        pending_count=pending_summary.get("count", 0),
+                        scroll_index=settings_scroll_index,
+                    )
                 settings_rendered = True
             time.sleep_ms(30)
             continue
@@ -808,6 +916,7 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                     paused_started_ms = now_ms
                 settings_open = True
                 settings_page = "settings"
+                settings_scroll_index = 0
                 settings_rendered = False
                 tft.invalidate()
                 print("[System] Settings opened from touchscreen.")
@@ -962,6 +1071,8 @@ def run_sync_mode(led, sm, tft, sync_btn, wdt, vbat_adc, power_hold, force_pairi
     sync_state = {
         "uploader_busy": False,
         "uploader_started": False,
+        "sync_complete": False,
+        "synced_files_count": 0,
         "hb_ok": False,
         "wifi_connected": wifi_connected,
         "wifi_failed": not wifi_connected and bool(config.get('ssid')),
@@ -996,7 +1107,14 @@ def run_sync_mode(led, sm, tft, sync_btn, wdt, vbat_adc, power_hold, force_pairi
             return False
         print("[Sync] Spawning uploader thread.")
         diag.record_phase("SYNC_UPLOADER_START")
-        set_state(allow_reboot=False, reboot_requested=False, phase_label="Queueing", last_result="")
+        set_state(
+            allow_reboot=False,
+            reboot_requested=False,
+            phase_label="Queueing",
+            last_result="",
+            sync_complete=False,
+            synced_files_count=0,
+        )
         gc.collect()
         _thread.stack_size(32768) # 32KB for SSL uploader
         _thread.start_new_thread(uploader_thread_func, (sm, led))
@@ -1388,14 +1506,26 @@ def run_sync_mode(led, sm, tft, sync_btn, wdt, vbat_adc, power_hold, force_pairi
                 if success:
                     print("[Sync] All files uploaded successfully!")
                     led_ref.play_idle() # Back to idle/ready
-                    set_state(allow_reboot=True, phase_label="Complete", last_result="All files uploaded", pending_bytes=0)
+                    synced_count = len(pending)
+                    set_state(
+                        allow_reboot=True,
+                        phase_label="Complete",
+                        last_result="All files uploaded",
+                        pending_bytes=0,
+                        sync_complete=True,
+                        synced_files_count=synced_count,
+                    )
                     if tft:
-                        tft.show_sync_result(True, detail="All files uploaded", allow_reboot=True)
+                        tft.show_sync_complete(
+                            synced_count=synced_count,
+                            track_name=get_state("last_track_name"),
+                            allow_reboot=True,
+                        )
                 else:
                     print("[Sync] One or more uploads failed.")
                     led_ref.play_heartbeat_error()
                     fail_reason = get_state("last_result") or "One or more uploads failed"
-                    set_state(allow_reboot=False, phase_label="Upload failed", last_result=fail_reason)
+                    set_state(allow_reboot=False, phase_label="Upload failed", last_result=fail_reason, sync_complete=False)
                     if tft:
                         tft.show_sync_result(False, detail=fail_reason, allow_reboot=False)
             else:
@@ -1524,7 +1654,7 @@ def run_sync_mode(led, sm, tft, sync_btn, wdt, vbat_adc, power_hold, force_pairi
                 continue
             
         # Periodic Heartbeat (Every 15s)
-        if wifi_connected and not get_state("uploader_busy") and not get_state("portal_requested") and time.ticks_diff(current_time, last_ping) > 15000:
+        if wifi_connected and not get_state("uploader_busy") and not get_state("portal_requested") and not get_state("sync_complete") and time.ticks_diff(current_time, last_ping) > 15000:
             if network_lock.acquire(False): # Only heartbeat if lock is free
                 try:
                     last_ping = current_time
@@ -1584,6 +1714,12 @@ def run_sync_mode(led, sm, tft, sync_btn, wdt, vbat_adc, power_hold, force_pairi
             if tft:
                 if get_state("wifi_failed"):
                     tft.show_sync_wifi_failed(config.get('ssid', ''), allow_retry=True)
+                elif get_state("sync_complete"):
+                    tft.show_sync_complete(
+                        synced_count=get_state("synced_files_count"),
+                        track_name=get_state("last_track_name"),
+                        allow_reboot=get_state("allow_reboot"),
+                    )
                 else:
                     tft.show_sync_idle(
                         get_state("hb_ok"),
@@ -1698,7 +1834,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
     def queue_row(line):
         nonlocal dropped_rows, max_queue_depth
         pending = len(write_buf) + len(flush_buf)
-        if pending >= 200:
+        if pending >= 800:
             dropped_rows += 1
             if dropped_rows == 1 or dropped_rows % 100 == 0:
                 print(f"[System] WRITE QUEUE OVERFLOW: dropped_rows={dropped_rows}")

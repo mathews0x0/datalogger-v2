@@ -12,6 +12,7 @@ PREFERRED_FIRMWARE_BIN="esp32s3-micropython-psram-oct.bin"
 BLINK_SRC="../hardware/workbench/blink_simple.py"
 FULL_TEST_SRC="../hardware/workbench/full_system_test.py"
 PSRAM_PROBE_SRC="tools/psram_probe.py"
+DEVICE_MANIFEST_PATH="/data/metadata/firmware_manifest.txt"
 
 # --- Color Codes ---
 GREEN='\033[0;32m'
@@ -134,6 +135,185 @@ do_psram_probe() {
     $MPREMOTE_CMD connect "$PORT" run "$PSRAM_PROBE_SRC"
 }
 
+local_file_hash() {
+    local file_path="$1"
+    python3 - "$file_path" <<'PY'
+import sys
+path = sys.argv[1]
+h = 2166136261
+size = 0
+with open(path, "rb") as f:
+    while True:
+        chunk = f.read(4096)
+        if not chunk:
+            break
+        size += len(chunk)
+        for b in chunk:
+            h = ((h ^ b) * 16777619) & 0xFFFFFFFF
+print(f"{h:08x}:{size}")
+PY
+}
+
+remove_remote_path() {
+    local remote_path="$1"
+    $MPREMOTE_CMD connect "$PORT" exec "import os
+path='${remote_path}'
+try:
+    mode = os.stat(path)[0]
+    if mode & 0x4000:
+        def rmtree(d):
+            try:
+                mode = os.stat(d)[0]
+                if mode & 0x4000:
+                    for name in os.listdir(d):
+                        child = d.rstrip('/') + '/' + name if d != '/' else '/' + name
+                        rmtree(child)
+                    os.rmdir(d)
+                else:
+                    os.remove(d)
+            except Exception:
+                pass
+        rmtree(path)
+    else:
+        os.remove(path)
+except Exception:
+    pass" >/dev/null 2>&1
+}
+
+build_local_sync_manifest() {
+    local manifest_path="$1"
+    : > "$manifest_path"
+
+    for f in *.py; do
+        [ -e "$f" ] || continue
+        [[ "$f" == "reset.py" || "$f" == "secrets.py" ]] && continue
+        printf "%s|/%s|%s\n" "$f" "$f" "$(local_file_hash "$f")" >> "$manifest_path"
+    done
+
+    if [ -d "lib" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            printf "%s|/%s|%s\n" "$f" "$f" "$(local_file_hash "$f")" >> "$manifest_path"
+        done < <(find lib -type f \( -name '*.py' -o -name '*.raw' \) ! -path '*/__pycache__/*' | sort)
+    fi
+
+    if [ -d "drivers" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            printf "%s|/%s|%s\n" "$f" "$f" "$(local_file_hash "$f")" >> "$manifest_path"
+        done < <(find drivers -type f -name '*.py' ! -path '*/__pycache__/*' | sort)
+    fi
+}
+
+scan_remote_sync_manifest() {
+    $MPREMOTE_CMD connect "$PORT" exec "import os
+def emit(path):
+    if path.endswith('.py') or path.endswith('.raw'):
+        try:
+            f=open(path,'rb')
+            h=2166136261
+            size=0
+            while True:
+                chunk=f.read(4096)
+                if not chunk:
+                    break
+                size += len(chunk)
+                for b in chunk:
+                    h=((h ^ b) * 16777619) & 0xffffffff
+            f.close()
+            print('%s|%08x:%d' % (path, h, size))
+        except Exception:
+            pass
+def walk(path):
+    try:
+        mode = os.stat(path)[0]
+    except Exception:
+        return
+    if mode & 0x4000:
+        try:
+            names = os.listdir(path)
+        except Exception:
+            names = []
+        for name in names:
+            child = path.rstrip('/') + '/' + name if path != '/' else '/' + name
+            walk(child)
+    else:
+        emit(path)
+try:
+    names = os.listdir('/')
+except Exception:
+    names = []
+for name in names:
+    path = '/' + name
+    if name in ('lib', 'drivers'):
+        walk(path)
+    elif name.endswith('.py'):
+        emit(path)" 2>/dev/null | tr -d '\r'
+}
+
+fetch_device_manifest() {
+    local out_path="$1"
+    rm -f "$out_path"
+    $MPREMOTE_CMD connect "$PORT" cp ":${DEVICE_MANIFEST_PATH#/}" "$out_path" >/dev/null 2>&1
+    return $?
+}
+
+write_device_manifest() {
+    local manifest_path="$1"
+    local normalized_manifest
+    normalized_manifest=$(mktemp)
+    while IFS='|' read -r col1 col2 col3; do
+        [ -n "$col1" ] || continue
+        if [ -n "$col3" ]; then
+            printf "%s|%s\n" "$col2" "$col3" >> "$normalized_manifest"
+        else
+            printf "%s|%s\n" "$col1" "$col2" >> "$normalized_manifest"
+        fi
+    done < "$manifest_path"
+    remove_remote_path "$DEVICE_MANIFEST_PATH"
+    $MPREMOTE_CMD connect "$PORT" cp "$normalized_manifest" ":${DEVICE_MANIFEST_PATH#/}" >/dev/null 2>&1
+    rm -f "$normalized_manifest"
+}
+
+ensure_remote_dirs_from_manifest() {
+    local manifest_path="$1"
+    local dir_list_file
+    dir_list_file=$(mktemp)
+    {
+        printf "/lib\n/drivers\n/data\n/data/metadata\n/sd\n"
+        cut -d'|' -f2 "$manifest_path" | while IFS= read -r remote_path; do
+            [ -n "$remote_path" ] || continue
+            dirname "$remote_path"
+        done
+    } | awk 'NF && !seen[$0]++' > "$dir_list_file"
+
+    echo -e "${CYAN}Ensuring remote directories ($(wc -l < "$dir_list_file" | tr -d ' '))...${NC}"
+    {
+        echo "import os"
+        echo "dirs = ["
+        while IFS= read -r dir_path; do
+            [ -n "$dir_path" ] || continue
+            printf "    %s,\n" "'$dir_path'"
+        done < "$dir_list_file"
+        cat <<'PY'
+]
+for d in dirs:
+    if not d or d == '/':
+        continue
+    parts = [p for p in d.split('/') if p]
+    current = ""
+    for part in parts:
+        current += "/" + part
+        try:
+            os.mkdir(current)
+        except Exception:
+            pass
+PY
+    } > "$dir_list_file.py"
+    $MPREMOTE_CMD connect "$PORT" exec "$(cat "$dir_list_file.py")" >/dev/null 2>&1 || true
+    rm -f "$dir_list_file" "$dir_list_file.py"
+}
+
 do_sync_source() {
     echo -e "${YELLOW}Syncing Firmware Source Files...${NC}"
     
@@ -207,6 +387,11 @@ except: pass"
             $MPREMOTE_CMD connect "$PORT" cp "$f" :drivers/
         done
     fi
+    local manifest_file
+    manifest_file=$(mktemp)
+    build_local_sync_manifest "$manifest_file"
+    write_device_manifest "$manifest_file"
+    rm -f "$manifest_file"
     
     # Show saved device config (WiFi creds + token)
     echo -e "${CYAN}Device Config:${NC}"
@@ -242,6 +427,117 @@ except Exception as e:
 "
 
     echo -e "${GREEN}Source Sync Complete!${NC}"
+    echo -e "${CYAN}Resetting device...${NC}"
+    $MPREMOTE_CMD connect "$PORT" reset >/dev/null 2>&1 || true
+}
+
+do_simple_sync() {
+    echo -e "${YELLOW}Simple Sync (checksum-based selective replace)...${NC}"
+    local manifest_file
+    local remote_manifest_file
+    local next_manifest_file
+    manifest_file=$(mktemp)
+    remote_manifest_file=$(mktemp)
+    next_manifest_file=$(mktemp)
+
+    echo -e "${CYAN}Building local manifest...${NC}"
+    build_local_sync_manifest "$manifest_file"
+    local manifest_count
+    manifest_count=$(wc -l < "$manifest_file" | tr -d ' ')
+    echo -e "${GREEN}Local manifest ready.${NC} files=$manifest_count"
+    ensure_remote_dirs_from_manifest "$manifest_file"
+    echo -e "${CYAN}Reading device manifest...${NC}"
+    if fetch_device_manifest "$remote_manifest_file"; then
+        echo -e "${GREEN}Device manifest loaded.${NC}"
+    else
+        echo -e "${MAGENTA}Device manifest missing. Running clean sync to seed manifest...${NC}"
+        rm -f "$manifest_file" "$remote_manifest_file" "$next_manifest_file"
+        do_sync_source
+        return
+    fi
+
+    local removed=0
+    local copied=0
+    local skipped=0
+    local stale_count=0
+    local changed_count=0
+
+    : > "$next_manifest_file"
+
+    echo -e "${CYAN}Comparing manifests...${NC}"
+    while IFS='|' read -r remote_path remote_hash; do
+        [ -n "$remote_path" ] || continue
+        if ! awk -F'|' -v target="$remote_path" '$2 == target { found=1; exit } END { exit(found ? 0 : 1) }' "$manifest_file"; then
+            stale_count=$((stale_count + 1))
+        fi
+    done < "$remote_manifest_file"
+
+    while IFS='|' read -r local_path remote_path local_hash; do
+        [ -n "$local_path" ] || continue
+        remote_hash=$(awk -F'|' -v target="$remote_path" '$1 == target { print $2; exit }' "$remote_manifest_file")
+        if [ -z "$remote_hash" ]; then
+            remote_hash="MISSING"
+        fi
+        if [ "$local_hash" = "$remote_hash" ]; then
+            skipped=$((skipped + 1))
+            printf "%s|%s\n" "$remote_path" "$local_hash" >> "$next_manifest_file"
+            continue
+        fi
+        changed_count=$((changed_count + 1))
+    done < "$manifest_file"
+
+    echo -e "${GREEN}Diff summary:${NC} changed=$changed_count stale=$stale_count unchanged=$skipped"
+
+    if [ "$stale_count" -gt 0 ]; then
+        echo -e "${CYAN}Removing stale remote files...${NC}"
+        while IFS='|' read -r remote_path remote_hash; do
+            [ -n "$remote_path" ] || continue
+            if ! awk -F'|' -v target="$remote_path" '$2 == target { found=1; exit } END { exit(found ? 0 : 1) }' "$manifest_file"; then
+                echo -e "${MAGENTA}Removing stale remote file:${NC} $remote_path"
+                remove_remote_path "$remote_path"
+                removed=$((removed + 1))
+            fi
+        done < "$remote_manifest_file"
+    fi
+
+    if [ "$changed_count" -gt 0 ]; then
+        echo -e "${CYAN}Copying changed files...${NC}"
+    fi
+
+    while IFS='|' read -r local_path remote_path local_hash; do
+        [ -n "$local_path" ] || continue
+        remote_hash=$(awk -F'|' -v target="$remote_path" '$1 == target { print $2; exit }' "$remote_manifest_file")
+        if [ -z "$remote_hash" ]; then
+            remote_hash="MISSING"
+        fi
+        if [ "$local_hash" = "$remote_hash" ]; then
+            continue
+        fi
+        if [ "$remote_hash" != "MISSING" ]; then
+            echo -e "${YELLOW}Replacing changed file:${NC} $remote_path"
+            remove_remote_path "$remote_path"
+            removed=$((removed + 1))
+        else
+            echo -e "${CYAN}Copying new file:${NC} $remote_path"
+        fi
+        if [[ "$remote_path" == /* ]]; then
+            $MPREMOTE_CMD connect "$PORT" cp "$local_path" ":${remote_path#/}"
+        else
+            $MPREMOTE_CMD connect "$PORT" cp "$local_path" ":$remote_path"
+        fi
+        if [ $? -eq 0 ]; then
+            copied=$((copied + 1))
+            printf "%s|%s\n" "$remote_path" "$local_hash" >> "$next_manifest_file"
+        else
+            echo -e "${RED}Copy failed:${NC} $local_path -> $remote_path"
+        fi
+    done < "$manifest_file"
+
+    write_device_manifest "$next_manifest_file"
+    rm -f "$manifest_file" "$remote_manifest_file" "$next_manifest_file"
+    echo -e "${GREEN}Simple Sync Complete!${NC} copied=$copied removed=$removed skipped=$skipped"
+    echo -e "${CYAN}Resetting device...${NC}"
+    $MPREMOTE_CMD connect "$PORT" reset >/dev/null 2>&1 || true
 }
 
 do_sync_drivers_only() {
@@ -382,6 +678,24 @@ except Exception as e:
 "
 }
 
+do_reset_display_calibration() {
+    echo -e "${YELLOW}Removing saved display/touch calibration files...${NC}"
+    $MPREMOTE_CMD connect "$PORT" exec "import os
+for path in (
+    '/data/metadata/display.json',
+    '/data/metadata/touch.json',
+):
+    try:
+        os.remove(path)
+        print('removed', path)
+    except Exception:
+        print('missing', path)
+" 
+    echo -e "${CYAN}Resetting device...${NC}"
+    $MPREMOTE_CMD connect "$PORT" reset >/dev/null 2>&1 || true
+    echo -e "${GREEN}Calibration metadata cleared. Next boot will re-enter display/touch calibration.${NC}"
+}
+
 
 # --- 5. Interactive Menu ---
 show_menu() {
@@ -391,13 +705,15 @@ show_menu() {
     echo -e "${GREEN}==========================================${NC}"
     echo "1) First Setup (Wipe + OS + Flash Blink script)"
     echo "2) Clean Sync (Replace firmware code, keep user data)"
-    echo "3) Nuke Sync (Full Wipe + Install OS + Sync latest)"
-    echo "4) Backup & Purge Device Data (Internal flash only)"
-    echo "5) View Boot Diagnostics"
-    echo "6) Run PSRAM Probe"
-    echo "7) Exit"
+    echo "3) Simple Sync (Replace only changed firmware files)"
+    echo "4) Nuke Sync (Full Wipe + Install OS + Sync latest)"
+    echo "5) Backup & Purge Device Data (Internal flash only)"
+    echo "6) View Boot Diagnostics"
+    echo "7) Reset Display Calibration"
+    echo "8) Run PSRAM Probe"
+    echo "9) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-7]: "
+    echo -ne "Select an option [1-9]: "
 }
 
 main() {
@@ -405,12 +721,12 @@ main() {
     read choice
     
     # We need a port for all menu actions except exit
-    if [[ "$choice" != "7" ]]; then
+    if [[ "$choice" != "9" ]]; then
         echo ""
         detect_port
         free_port
         # Only force ROM bootloader for actions that actually reflash the OS.
-        if [[ "$choice" == "1" || "$choice" == "3" ]]; then
+        if [[ "$choice" == "1" || "$choice" == "4" ]]; then
             echo -e "${YELLOW}Triggering Bootloader...${NC}"
             $MPREMOTE_CMD connect "$PORT" exec "import machine; machine.bootloader()" 2>/dev/null
             sleep 2
@@ -430,21 +746,28 @@ main() {
             echo -e "${GREEN}Clean Sync Complete!${NC}"
             ;;
         3)
+            do_simple_sync
+            echo -e "${GREEN}Simple Sync Complete!${NC}"
+            ;;
+        4)
             do_wipe
             do_flash_os
             do_sync_source
             echo -e "${GREEN}Nuke Sync Complete!${NC}"
             ;;
-        4)
+        5)
             do_backup
             ;;
-        5)
+        6)
             do_view_boot_history
             ;;
-        6)
+        8)
             do_psram_probe
             ;;
         7)
+            do_reset_display_calibration
+            ;;
+        9)
             echo "Exiting."
             exit 0
             ;;

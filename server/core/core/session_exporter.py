@@ -10,6 +10,7 @@ IST = timezone(timedelta(hours=5, minutes=30))
 from src.analysis.core.models import Session, Lap
 import src.config as config
 from src.analysis.processing.diagnostics import DiagnosticsEngine
+from src.analysis.processing.stats import StatsEngine
 
 class SessionExporter:
     """
@@ -334,7 +335,7 @@ class SessionExporter:
         sectors_def = track_info.get("sectors", [])
         
         for sec in sectors_def:
-            sec_id = sec["id"]
+            sec_id = StatsEngine.sector_time_key(sec)
             # Gather all times for this sector
             times = []
             for lap in session.laps:
@@ -345,7 +346,7 @@ class SessionExporter:
                 continue
                 
             stats.append({
-                "sector_index": sec.get("id"), # Or index
+                "sector_index": sec.get("sector_index", sec.get("id")),
                 "best_time_this_session": min(times),
                 "median_time": sorted(times)[len(times)//2],
                 "worst_time": max(times),

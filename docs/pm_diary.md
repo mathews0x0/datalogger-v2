@@ -4134,3 +4134,232 @@ The next PM-guided steps are:
 - per-device display configuration was adopted
 - first-boot panel selection and second-boot touch calibration flow were implemented
 - the product can now absorb mixed TFT panel behavior without forking firmware
+
+## 2026-04-30 - Sync UX Stabilization And Sector Number Consistency
+
+### Objective
+
+Stabilize the rider-facing sync experience and remove sector-number inconsistencies between:
+
+- canonical track packages
+- server-side track views
+- device track views
+
+PM also wanted a configurable fallback sector count for non-canonical tracks without allowing that fallback to override package-defined sector data.
+
+### Sync UX Findings
+
+The sync flow had two rider-facing issues:
+
+- heartbeat copy was still using generic cloud language instead of RaceSense-specific wording
+- after file upload completion, the TFT could fall back into competing idle / heartbeat / post-upload renders, causing visible flicker before it settled
+
+The root cause of the flicker was not graphics performance. It was sync-state churn:
+
+- the upload-complete screen rendered once
+- the main sync loop then resumed its normal idle rendering path
+- periodic heartbeat logic could also continue after upload success
+
+So the problem was state ownership, not drawing speed.
+
+### Product Decision
+
+PM chose to treat “all pending files uploaded” as a proper terminal sync state rather than a transient message.
+
+That means:
+
+- the device should stop cycling through interim sync screens after success
+- the completion screen should remain steady until rider action
+- the completion screen should show useful rider-facing summary information, not transport-layer details
+
+### Implemented Sync Changes
+
+The rider-facing heartbeat text was updated to:
+
+- while contacting: “SAYING HI TO / RACESENSE SERVERS”
+- after ACK: “RACESENSE SERVERS / SAYS HELLO BACK”
+
+The sync success path was also reworked so that:
+
+- successful upload sets an explicit terminal completion state
+- periodic heartbeat no longer resumes once completion is active
+- the TFT shows a stable “SYNC DONE” summary screen
+- that summary includes:
+  - synced file count
+  - active track
+  - exit / reboot actions
+
+This resolves the “goes a bit crazy after file sync” behavior by making the UI state machine deterministic after success.
+
+### Sector Number Investigation
+
+PM raised a specific canonical-track concern:
+
+> the package defined a gate near start / finish as sector 7, but the device displayed it as sector 1
+
+The investigation showed this was a real consistency bug, but not an ordering bug.
+
+Important distinction:
+
+- sector ordering around the lap was still correct
+- the original package numbering was being discarded and rewritten
+
+The renumbering happened during canonical package normalization:
+
+- package sector gates were sorted by progress around the centerline
+- then reassigned to `S1..S7` by positional order from start / finish
+
+That meant the first gate after start / finish was always presented as sector 1, even if the uploaded package explicitly called it sector 7.
+
+### Product Decision
+
+PM decided the canonical package must be the source of truth for sector numbers.
+
+From this point forward:
+
+- package-defined sector labels / indices are authoritative
+- server UI should show the same sector numbers as the package
+- device UI should show the same sector numbers as the package
+- fallback sector generation is only for tracks that do not provide explicit sector data
+
+This was an explicit consistency decision, not just a code cleanup.
+
+### Implemented Sector Changes
+
+Canonical-package sector handling was changed so that:
+
+- explicit sector gates keep their original `sector_index`
+- explicit sector gates keep their original labels / IDs
+- progress along the lap is still computed, but no renumbering happens afterward
+
+Track layout rendering was updated so that:
+
+- server canonical layout markers display the real sector label from payload data
+- device TFT layout markers display the real sector label from payload data
+- sector markers no longer derive labels from raw array position alone
+
+As a result, if a package says the start / finish-adjacent gate is `S7`, both server and device now show `S7` there.
+
+### Admin Configuration Change
+
+PM also requested an admin setting:
+
+> “default sector count”
+
+This setting is intended only for non-canonical / fallback track generation.
+
+The new behavior is:
+
+- admin can set the default fallback sector count in the Admin view
+- fallback generators read that setting
+- explicit sector data in a package is **never** overridden by that fallback
+
+An important secondary fix was required here:
+
+- package-sector extraction previously depended on the same global sector-count constant
+- if the fallback default changed, valid explicit package sectors could be rejected unintentionally
+
+That coupling was removed so canonical package sectors remain valid regardless of the fallback default.
+
+### Outcome
+
+- rider-facing sync heartbeat copy now uses RaceSense-specific language
+- post-upload sync flicker was fixed by introducing a true terminal completion state
+- sync success now stays on a stable summary screen with synced file count and active track
+- canonical package sector numbering now survives end-to-end
+- server and device track layouts now display package-trusted sector numbers
+- an admin-configurable fallback “default sector count” now exists for non-canonical tracks
+- fallback sector count no longer risks overriding or invalidating canonical package sector data
+
+## 2026-04-30 - Device Sync Status And Settings UX Refresh
+
+### Objective
+
+PM requested two usability improvements on the device:
+
+- make sync progress more legible by exposing remaining total size and current file size
+- make destructive maintenance actions easier to reach without making them easy to trigger accidentally
+
+The specific asks were:
+
+- show remaining total MB next to overall sync percentage
+- show current file size next to the current filename
+- add `Archive all` to device settings, with confirmation
+- redesign settings into a larger, stacked, scrollable menu because the existing controls were too small to tap reliably
+
+### Sync Display Change
+
+The sync upload screen was updated so it now shows:
+
+- total progress percentage with remaining total size in brackets
+- current filename with current file size in brackets
+- existing ETA and chunk progress retained underneath
+
+This was implemented entirely in the TFT renderer because the uploader was already providing both global and per-file byte counts.
+
+### Product Decision
+
+PM direction here was clear:
+
+- progress information should prioritize “how much is left” over only showing an abstract percentage
+- file-level context should stay visible during upload so the rider can tell what is currently moving
+- settings actions should be organized as a touch-first menu, not as a compressed dashboard of mixed widgets
+
+For `Archive all`, the product-safe interpretation was:
+
+- archive all pending session log files the device knows how to sync
+- do not sweep unrelated SD-card assets like track metadata or config
+- require an explicit confirmation step before moving files
+
+### Implemented Settings Refresh
+
+The old settings page was replaced with a vertically stacked list:
+
+1. wifi
+2. track
+3. calibration
+4. auto log
+5. archive all
+
+Because all five rows do not fit comfortably with large touch targets on the device display, the screen now shows:
+
+- three stacked rows at a time
+- large up/down arrows on the side for scrolling
+- a preserved scroll position while navigating inside settings
+
+The submenu navigation was also normalized:
+
+- `wifi` now has a back path into settings
+- `track` already had back navigation and remains consistent
+- `archive all` confirmation now uses a back button rather than a small cancel target
+- `calibration` still remains the only flow without a normal back interaction, per PM direction
+
+### Archive All Flow
+
+`Archive all` now works as a device-side maintenance action:
+
+- opening the menu item shows a confirmation screen
+- pressing `YES` moves all pending session files into each source directory’s `uploaded/` folder
+- no sync is attempted
+- the device returns to settings after showing the result
+
+This reuses the same archive semantics already used after successful sync, which keeps the file lifecycle consistent.
+
+### Copy Change
+
+PM also requested softer casing in the sync heartbeat copy.
+
+The device wording now uses lowercase:
+
+- `saying hi to`
+- `racesense servers`
+- `says hello back`
+
+### Outcome
+
+- sync progress now communicates both percentage and remaining storage in a more rider-readable way
+- current file uploads now show per-file size inline
+- `Archive all` is available on-device with a confirmation step
+- destructive maintenance is easier to reach but still guarded
+- settings is now organized as a scrollable, touch-friendly menu with larger targets
+- submenu navigation is more consistent, especially for returning back into settings

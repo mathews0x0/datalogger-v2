@@ -57,6 +57,30 @@ class SessionProcessor:
             return center["lat"], center["lon"], sl.get("radius_m", 20.0)
         return None, None, sl.get("radius_m", 20.0) if isinstance(sl, dict) else 20.0
 
+    @staticmethod
+    def _lap_boundary_target(track_info):
+        sectors = track_info.get("sectors") or []
+        if sectors:
+            ordered = []
+            for idx, sector in enumerate(sectors, start=1):
+                sector_index = sector.get("sector_index", idx)
+                try:
+                    sector_index = int(sector_index)
+                except Exception:
+                    sector_index = idx
+                ordered.append((sector_index, sector))
+            ordered.sort(key=lambda item: item[0])
+            last_sector = ordered[-1][1]
+            lat = last_sector.get("end_lat")
+            lon = last_sector.get("end_lon")
+            radius_m = last_sector.get("radius_m", 20.0)
+            if lat is not None and lon is not None:
+                try:
+                    return float(lat), float(lon), float(radius_m)
+                except Exception:
+                    pass
+        return SessionProcessor._start_line_target(track_info.get("start_line"))
+
     def _global_track_matches_package(self, session, track_info):
         layout_meta = self._load_layout_metadata(track_info)
         if not layout_meta:
@@ -218,9 +242,8 @@ class SessionProcessor:
                 self.log.info(f"Identified Track: {track_info['track_name']}", data={"track_id": track_info['id']})
 
             # 4. Lap Detection & Stats
-            # Use DB Start Line
-            sl = track_info["start_line"]
-            sl_lat, sl_lon, sl_radius = self._start_line_target(sl)
+            # For known tracks, use the last sector boundary as the lap boundary when present.
+            sl_lat, sl_lon, sl_radius = self._lap_boundary_target(track_info)
             if sl_lat is None or sl_lon is None:
                 self.log.error("Track start line missing usable coordinates", data={"track_id": track_info.get("track_id")})
                 return False

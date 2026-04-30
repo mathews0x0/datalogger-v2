@@ -39,8 +39,10 @@ let communitySearchQuery = localStorage.getItem('ui:communitySearch') || '';
 let adminUsersData = [];
 let adminTracksData = [];
 let adminUnmatchedTracks = [];
+let adminSettings = {};
 let adminCurrentPage = 1;
 let adminPerPage = 50;
+let pendingAdminTrackDeleteId = null;
 let deviceTokensCache = [];
 let hasRestoredInitialView = false;
 let processUploadSummary = null;
@@ -2418,12 +2420,15 @@ function renderTracksGrid(trackList) {
     container.innerHTML = filteredTracks.map(track => {
         const isActive = activeTrackId == track.track_id;
         const isGlobal = track.track_scope === 'global';
-        return `
-        <div class="track-card ${isActive ? 'active' : ''}" onclick="viewTrack(${track.track_id})">
-            <img src="${API_BASE}/api/tracks/${track.track_id}/map" 
+        const mapMarkup = isGlobal
+            ? `<div id="trackCardMap${track.track_id}" class="track-map"><div class="loading">Loading track map...</div></div>`
+            : `<img src="${API_BASE}/api/tracks/${track.track_id}/map" 
                  alt="${track.track_name}" 
                  class="track-map"
-                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%232a2a2a%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23666%22 text-anchor=%22middle%22%3ENo Map%3C/text%3E%3C/svg%3E'">
+                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%232a2a2a%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23666%22 text-anchor=%22middle%22%3ENo Map%3C/text%3E%3C/svg%3E'">`;
+        return `
+        <div class="track-card ${isActive ? 'active' : ''}" onclick="viewTrack(${track.track_id})">
+            ${mapMarkup}
             <div class="track-info">
                 <div class="card-head-inline">
                     <div class="track-name">${track.track_name}</div>
@@ -2451,6 +2456,25 @@ function renderTracksGrid(trackList) {
         </div>
         `;
     }).join('');
+
+    loadTracksGridCanonicalMaps(filteredTracks);
+}
+
+async function loadTracksGridCanonicalMaps(trackList) {
+    const globalTracks = (trackList || []).filter(track => track.track_scope === 'global' && track.has_canonical_layout);
+    await Promise.all(globalTracks.map(async track => {
+        const slot = document.getElementById(`trackCardMap${track.track_id}`);
+        if (!slot) return;
+        try {
+            const layout = await apiCall(`/api/tracks/${track.track_id}/layout`, { displayError: false });
+            slot.outerHTML = generateCanonicalTrackSVG(layout, null, { compact: true, maxHeight: 220, hideFrame: true });
+        } catch (error) {
+            slot.outerHTML = `<img src="${API_BASE}/api/tracks/${track.track_id}/map" 
+                 alt="${track.track_name}" 
+                 class="track-map"
+                 onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%22300%22 height=%22200%22%3E%3Crect fill=%22%232a2a2a%22 width=%22300%22 height=%22200%22/%3E%3Ctext x=%2250%25%22 y=%2250%25%22 fill=%22%23666%22 text-anchor=%22middle%22%3ENo Map%3C/text%3E%3C/svg%3E'">`;
+        }
+    }));
 }
 
 function projectTelemetryToCanonicalRaw(layout, telemetry) {
@@ -2482,6 +2506,29 @@ function projectTelemetryToCanonicalRaw(layout, telemetry) {
             y: rotY * scale + align.translateY,
         };
     });
+}
+
+function projectLatLonToCanonical(layout, lat, lon) {
+    if (!layout || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    const projected = projectTelemetryToCanonicalRaw(layout, { lats: [lat], lons: [lon] });
+    return projected?.[0] || null;
+}
+
+function canonicalSectorMarkers(layout) {
+    if (!layout?.sectors?.length) return [];
+    return layout.sectors
+        .map((sector, index) => {
+            const point = projectLatLonToCanonical(layout, Number(sector.end_lat), Number(sector.end_lon));
+            if (!point) return null;
+            const sectorIndex = Number(sector.sector_index);
+            return {
+                id: sector.id || `S${index + 1}`,
+                label: Number.isFinite(sectorIndex) && sectorIndex > 0 ? `S${sectorIndex}` : (sector.id || `S${index + 1}`),
+                x: point.x,
+                y: point.y,
+            };
+        })
+        .filter(Boolean);
 }
 
 function rotatePointAround(point, center, angleRad) {
@@ -2579,6 +2626,9 @@ function applyCanonicalCorrection(points, correction) {
 function projectTelemetryToCanonical(layout, telemetry) {
     const projected = projectTelemetryToCanonicalRaw(layout, telemetry);
     if (!projected.length) return projected;
+    if (layout?.affine_fit?.x_coeffs?.length === 3 && layout?.affine_fit?.y_coeffs?.length === 3) {
+        return projected;
+    }
     const correction = estimateCanonicalCorrection(layout, projected);
     return applyCanonicalCorrection(projected, correction);
 }
@@ -2597,12 +2647,24 @@ function generateCanonicalTrackSVG(layout, telemetry = null, options = {}) {
         : '';
     const stroke = options.stroke || '#c85b12';
     const strokeWidth = options.strokeWidth || 8;
+    const sectorMarkers = canonicalSectorMarkers(layout);
+    const markerRadius = Math.max(10, strokeWidth * 1.1);
+    const markerFontSize = Math.max(16, strokeWidth * 1.35);
+    const frameStyle = options.hideFrame
+        ? ''
+        : `background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:${options.compact ? '0.5rem' : '1rem'}; margin:${options.title ? '1rem 0' : '0'};`;
 
     return `
-        <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:${options.compact ? '0.5rem' : '1rem'}; margin:${options.title ? '1rem 0' : '0'};">
+        <div class="${options.hideFrame ? 'track-map' : ''}" style="${frameStyle}">
             ${options.title ? `<h3 style="margin:0 0 1rem 0;">${options.title}</h3>` : ''}
             <svg viewBox="0 0 ${width} ${height}" style="width:100%; height:auto; max-height:${options.maxHeight || 520}px;">
                 <image href="${baseSvg}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image>
+                ${sectorMarkers.map(marker => `
+                    <g>
+                        <circle cx="${marker.x.toFixed(2)}" cy="${marker.y.toFixed(2)}" r="${markerRadius}" fill="rgba(20,108,67,0.95)" stroke="#f3efe7" stroke-width="3"></circle>
+                        <text x="${(marker.x + markerRadius + 8).toFixed(2)}" y="${(marker.y - markerRadius + 4).toFixed(2)}" text-anchor="start" font-size="${markerFontSize}" font-weight="800" fill="#ffffff" stroke="rgba(0,0,0,0.85)" stroke-width="5" paint-order="stroke fill">${marker.label}</text>
+                    </g>
+                `).join('')}
                 ${pathData ? `<path d="${pathData}" fill="none" stroke="${stroke}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" opacity="0.95"></path>` : ''}
                 ${points.length ? `<circle cx="${points[0].x}" cy="${points[0].y}" r="${Math.max(5, strokeWidth * 0.75)}" fill="#4CAF50" stroke="#111" stroke-width="2"></circle>` : ''}
             </svg>
@@ -2638,11 +2700,18 @@ function generateCanonicalComparisonSVG(layout, telemetryA, telemetryB, options 
     const second = projectTelemetryToCanonical(layout, telemetryToSimpleArrays(telemetryB));
     const pathA = first.length ? `M ${first.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}` : '';
     const pathB = second.length ? `M ${second.map(point => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' L ')}` : '';
+    const sectorMarkers = canonicalSectorMarkers(layout);
 
     return `
         <div style="background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:${options.compact ? '0.5rem' : '1rem'};">
             <svg viewBox="0 0 ${width} ${height}" style="width:100%; height:auto; max-height:${options.maxHeight || 520}px;">
                 <image href="${baseSvg}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid meet"></image>
+                ${sectorMarkers.map(marker => `
+                    <g>
+                        <circle cx="${marker.x.toFixed(2)}" cy="${marker.y.toFixed(2)}" r="${Math.max(11, (options.strokeWidth || 10) * 1.05)}" fill="rgba(20,108,67,0.9)" stroke="#f3efe7" stroke-width="3"></circle>
+                        <text x="${marker.x.toFixed(2)}" y="${(marker.y + 4).toFixed(2)}" text-anchor="middle" font-size="${Math.max(16, (options.strokeWidth || 10) * 1.25)}" font-weight="700" fill="#ffffff">${marker.label}</text>
+                    </g>
+                `).join('')}
                 ${pathA ? `<path d="${pathA}" fill="none" stroke="#4CAF50" stroke-width="${options.strokeWidth || 10}" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"></path>` : ''}
                 ${pathB ? `<path d="${pathB}" fill="none" stroke="#F44336" stroke-width="${options.strokeWidth || 10}" stroke-linecap="round" stroke-linejoin="round" opacity="0.92"></path>` : ''}
             </svg>
@@ -6498,7 +6567,8 @@ let pbState = {
     bounds: null,
     canonicalLayout: null,
     layoutImage: null,
-    projectedPoints: null
+    projectedPoints: null,
+    renderedLapKey: null
 };
 
 function loadImageAsset(src) {
@@ -6522,7 +6592,8 @@ async function openPlayback(sessionId, shareToken = null) {
         mapMode: 'speed',
         canonicalLayout: null,
         layoutImage: null,
-        projectedPoints: null
+        projectedPoints: null,
+        renderedLapKey: null
     };
 
     // 2. Show Modal (Loading)
@@ -6732,6 +6803,29 @@ function projectPlaybackPoint(index) {
     return project(pbState.data.lat[index], pbState.data.lon[index]);
 }
 
+function currentPlaybackLapBounds() {
+    const times = pbState.data?.time || [];
+    if (!times.length) return { startIndex: 0, endIndex: 0, lapKey: 'empty' };
+    const currentTime = times[Math.max(0, Math.min(times.length - 1, Math.floor(pbState.currentIndex)))];
+    const laps = pbState.laps || [];
+    for (let i = 0; i < laps.length; i += 1) {
+        const lap = laps[i];
+        const lapEnd = Number.isFinite(lap.end_time) ? lap.end_time : (lap.start_time + (lap.lap_time || 0));
+        if (currentTime >= lap.start_time && currentTime <= lapEnd) {
+            let startIndex = times.findIndex(t => t >= lap.start_time);
+            if (startIndex < 0) startIndex = 0;
+            let endIndex = times.findIndex(t => t > lapEnd);
+            if (endIndex < 0) endIndex = times.length;
+            return {
+                startIndex,
+                endIndex: Math.max(startIndex + 1, endIndex),
+                lapKey: `lap-${lap.lap_number || i + 1}`,
+            };
+        }
+    }
+    return { startIndex: 0, endIndex: times.length, lapKey: 'session' };
+}
+
 function renderStaticMap() {
     if (!pbState.pathCache) {
         pbState.pathCache = document.createElement('canvas');
@@ -6742,6 +6836,8 @@ function renderStaticMap() {
 
     const data = pbState.data;
     const count = data.lat.length;
+    const { startIndex, endIndex, lapKey } = currentPlaybackLapBounds();
+    pbState.renderedLapKey = lapKey;
 
     if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
         if (pbState.layoutImage) {
@@ -6756,8 +6852,8 @@ function renderStaticMap() {
 
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
-        ctx.lineWidth = 3;
-        for (let i = 0; i < count - 1; i++) {
+        ctx.lineWidth = 1;
+        for (let i = startIndex; i < Math.min(endIndex - 1, count - 1); i++) {
             const p1 = projectPlaybackPoint(i);
             const p2 = projectPlaybackPoint(i + 1);
             ctx.beginPath();
@@ -6768,11 +6864,11 @@ function renderStaticMap() {
                 ctx.strokeStyle = getHeatmapColor(s, 40, 200);
             } else if (pbState.mapMode === 'accel') {
                 const ax = data.aligned_accel_x ? data.aligned_accel_x[i] : (data.ax ? data.ax[i] : 0);
-                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 0, ${Math.min(ax / 0.5, 1)})`;
-                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 0, 0, ${Math.min(Math.abs(ax) / 0.8, 1)})`;
-                else ctx.strokeStyle = '#444';
+                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 140, ${Math.min(ax / 0.5, 1)})`;
+                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 70, 70, ${Math.min(Math.abs(ax) / 0.8, 1)})`;
+                else ctx.strokeStyle = '#2a2a2a';
             } else {
-                ctx.strokeStyle = '#555';
+                ctx.strokeStyle = '#1ea7ff';
             }
             ctx.stroke();
         }
@@ -6781,7 +6877,7 @@ function renderStaticMap() {
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.lineWidth = 3;
+    ctx.lineWidth = 1;
 
     // Draw segments in chunks
     const step = 1;
@@ -6792,16 +6888,16 @@ function renderStaticMap() {
     // If mapMode is 'speed' or 'accel', we need colored segments
 
     if (pbState.mapMode === 'clean') {
-        ctx.strokeStyle = '#555';
-        for (let i = 0; i < count - 1; i += 2) { // 2x stride for perf
+        ctx.strokeStyle = '#1ea7ff';
+        for (let i = startIndex; i < Math.min(endIndex - 1, count - 1); i += 2) { // 2x stride for perf
             const p = project(data.lat[i], data.lon[i]);
-            if (i === 0) ctx.moveTo(p.x, p.y);
+            if (i === startIndex) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
         }
         ctx.stroke();
     } else {
         // Colored segments
-        for (let i = 0; i < count - step; i += step) {
+        for (let i = startIndex; i < Math.min(endIndex - step, count - step); i += step) {
             const p1 = project(data.lat[i], data.lon[i]);
             const p2 = project(data.lat[i + step], data.lon[i + step]);
 
@@ -6814,9 +6910,9 @@ function renderStaticMap() {
                 ctx.strokeStyle = getHeatmapColor(s, 40, 200);
             } else if (pbState.mapMode === 'accel') {
                 const ax = data.aligned_accel_x ? data.aligned_accel_x[i] : (data.ax ? data.ax[i] : 0);
-                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 0, ${Math.min(ax / 0.5, 1)})`; // Green
-                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 0, 0, ${Math.min(Math.abs(ax) / 0.8, 1)})`; // Red
-                else ctx.strokeStyle = '#444';
+                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 140, ${Math.min(ax / 0.5, 1)})`;
+                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 70, 70, ${Math.min(Math.abs(ax) / 0.8, 1)})`;
+                else ctx.strokeStyle = '#2a2a2a';
             }
             ctx.stroke();
         }
@@ -6827,9 +6923,16 @@ function getHeatmapColor(val, min, max) {
     let t = (val - min) / (max - min);
     if (t < 0) t = 0;
     if (t > 1) t = 1;
-    // 120 (Green) -> 0 (Red)
-    const hue = 120 - (t * 120);
-    return `hsl(${hue}, 100%, 50%)`;
+    if (t < 0.33) {
+        const local = t / 0.33;
+        return `rgb(${Math.round(0)}, ${Math.round(180 + (75 * local))}, ${Math.round(255 - (135 * local))})`;
+    }
+    if (t < 0.66) {
+        const local = (t - 0.33) / 0.33;
+        return `rgb(${Math.round(255 * local)}, ${Math.round(255 - (55 * local))}, ${Math.round(120 - (120 * local))})`;
+    }
+    const local = (t - 0.66) / 0.34;
+    return `rgb(255, ${Math.round(200 - (200 * local))}, 0)`;
 }
 
 function updateHeatmapMode() {
@@ -6950,6 +7053,11 @@ function drawFrame() {
     const i = Math.floor(pbState.currentIndex);
     const data = pbState.data;
     if (!data || !data.lat[i]) return;
+
+    const currentLap = currentPlaybackLapBounds();
+    if (pbState.renderedLapKey !== currentLap.lapKey) {
+        renderStaticMap();
+    }
 
     const ctx = pbState.ctx;
     ctx.clearRect(0, 0, pbState.width, pbState.height);
@@ -7749,12 +7857,16 @@ async function loadAdminUsers(page = 1, query = '', tier = '', approval = '') {
 
 async function loadAdminTrackData() {
     try {
-        const [tracksResult, reportsResult] = await Promise.all([
+        const [tracksResult, reportsResult, settingsResult] = await Promise.all([
             apiCall('/api/admin/tracks'),
-            apiCall('/api/admin/tracks/unmatched')
+            apiCall('/api/admin/tracks/unmatched'),
+            apiCall('/api/admin/settings')
         ]);
         adminTracksData = tracksResult.tracks || [];
         adminUnmatchedTracks = reportsResult.reports || [];
+        adminSettings = settingsResult || {};
+        const sectorInput = document.getElementById('adminDefaultSectorCount');
+        if (sectorInput) sectorInput.value = adminSettings.default_sector_count || '';
         renderAdminTracks();
         renderAdminUnmatchedTracks();
     } catch (error) {
@@ -7762,6 +7874,28 @@ async function loadAdminTrackData() {
         const reportsEl = document.getElementById('adminUnmatchedTracks');
         if (tracksEl) tracksEl.innerHTML = '<p class="help-text">Failed to load global tracks.</p>';
         if (reportsEl) reportsEl.innerHTML = '<p class="help-text">Failed to load unmatched-track queue.</p>';
+    }
+}
+
+async function saveAdminDefaultSectorCount() {
+    const input = document.getElementById('adminDefaultSectorCount');
+    const value = Number(input?.value);
+    if (!Number.isInteger(value) || value < 1 || value > 16) {
+        showToast('Default sector count must be an integer from 1 to 16', 'error');
+        return;
+    }
+
+    try {
+        const result = await apiCall('/api/admin/settings/default-sector-count', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ value })
+        });
+        adminSettings.default_sector_count = result.default_sector_count;
+        if (input) input.value = result.default_sector_count;
+        showToast('Default sector count updated', 'success');
+    } catch (error) {
+        showToast('Failed to update default sector count: ' + error.message, 'error');
     }
 }
 
@@ -7777,7 +7911,9 @@ function renderAdminTracks() {
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'");
 
-    container.innerHTML = adminTracksData.map(track => `
+    container.innerHTML = adminTracksData.map(track => {
+        const awaitingConfirm = pendingAdminTrackDeleteId === track.track_id;
+        return `
         <div class="track-card" style="cursor:default;">
             <img src="${API_BASE}/api/tracks/${track.track_id}/map" alt="${track.track_name}" class="track-map">
             <div class="track-info">
@@ -7791,13 +7927,22 @@ function renderAdminTracks() {
                     <span><i class="fas fa-link"></i> ${track.matched_sessions_count || 0} matched sessions</span>
                 </div>
                 <div class="track-actions">
-                    <button class="btn btn-danger btn-sm" onclick="deleteAdminTrack(${track.track_id}, '${escapeJsSingleQuoted(track.track_name)}')">
-                        <i class="fas fa-trash"></i> Delete
+                    ${awaitingConfirm
+            ? `<button class="btn btn-danger btn-sm" onclick="confirmDeleteAdminTrack(${track.track_id}, '${escapeJsSingleQuoted(track.track_name)}')">
+                        <i class="fas fa-exclamation-triangle"></i> Confirm Delete
                     </button>
+                    <button class="btn btn-sm" onclick="cancelDeleteAdminTrack()">
+                        Cancel
+                    </button>`
+            : `<button class="btn btn-danger btn-sm" onclick="requestDeleteAdminTrack(${track.track_id})">
+                        <i class="fas fa-trash"></i> Delete
+                    </button>`}
                 </div>
+                ${awaitingConfirm ? '<div class="help-text" style="margin-top:0.5rem; color: var(--warning);">Confirm deletion of this shared master track. Matched sessions will remain, but this master layout/package will be removed.</div>' : ''}
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function renderAdminUnmatchedTracks() {
@@ -7896,14 +8041,26 @@ async function ignoreUnmatchedTrack(reportId) {
     }
 }
 
-async function deleteAdminTrack(trackId, trackName) {
-    if (!confirm(`Delete shared track "${trackName}"? This only works when no matched sessions exist.`)) return;
+function requestDeleteAdminTrack(trackId) {
+    pendingAdminTrackDeleteId = trackId;
+    renderAdminTracks();
+}
+
+function cancelDeleteAdminTrack() {
+    pendingAdminTrackDeleteId = null;
+    renderAdminTracks();
+}
+
+async function confirmDeleteAdminTrack(trackId, trackName) {
     try {
         await apiCall(`/api/admin/tracks/${trackId}`, { method: 'DELETE' });
-        showToast('Shared track deleted', 'success');
+        pendingAdminTrackDeleteId = null;
+        showToast('Shared track deleted. Existing sessions remain.', 'success');
         loadAdminTrackData();
         loadTracks();
     } catch (error) {
+        pendingAdminTrackDeleteId = null;
+        renderAdminTracks();
         showToast('Delete failed: ' + error.message, 'error');
     }
 }

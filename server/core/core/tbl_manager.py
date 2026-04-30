@@ -1,6 +1,7 @@
 import json
 import os
 import datetime
+import re
 from typing import Dict, Optional
 import src.config as config
 from src.analysis.core.models import Session
@@ -18,7 +19,7 @@ class TBLManager:
     def _get_tbl_path(self, track_id: int) -> str:
         """Get TBL path using folder_name from registry."""
         from src.analysis.core.registry_manager import RegistryManager
-        registry = RegistryManager()
+        registry = RegistryManager(registry_path=self.tracks_dir)
         folder_name = registry.get_folder_name(track_id) or f"track_{track_id}"
         return os.path.join(self.tracks_dir, folder_name, "tbl.json")
 
@@ -42,6 +43,7 @@ class TBLManager:
         return {
             "track_id": track_id,
             "sectors": [], # List of {sector_index: int, best_time: float}
+            "sector_count": None,
             "total_best_time": None,
             "last_updated_session_id": None,
             "last_updated_time": None
@@ -80,8 +82,13 @@ class TBLManager:
         # Helper to normalize sector ID to index (e.g. "S1" -> 0)
         def get_sec_idx(sid):
             if isinstance(sid, int): return sid
-            if isinstance(sid, str) and sid.startswith("S") and sid[1:].isdigit():
-                return int(sid[1:]) - 1
+            if isinstance(sid, str):
+                label = sid.strip()
+                if label.startswith(("S", "s")) and label[1:].isdigit():
+                    return int(label[1:]) - 1
+                match = re.search(r"(\d+)", label)
+                if match:
+                    return int(match.group(1)) - 1
             return -1
 
         for lap in session.laps:
@@ -120,12 +127,12 @@ class TBLManager:
             ]
             tbl_data["sectors"] = new_sectors_list
             
-            # Recalculate total Theoretical Best
-            # Only valid if we have ALL sectors? Or sum of what we have? 
-            # Usually sum of what we have, but ideally we want complete lap.
-            # For now, simple sum of known bests.
-            total = sum(s["best_time"] for s in new_sectors_list)
-            tbl_data["total_best_time"] = total
+            # Only publish a total TBL when every sector has a best value.
+            expected_count = int(tbl_data.get("sector_count") or 0)
+            if expected_count > 0 and len(new_sectors_list) == expected_count:
+                tbl_data["total_best_time"] = sum(s["best_time"] for s in new_sectors_list)
+            else:
+                tbl_data["total_best_time"] = None
             
             # Metadata
             # Use filename as session ID if available, else timestamp

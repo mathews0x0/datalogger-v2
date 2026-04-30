@@ -12,6 +12,8 @@ const state = {
   telemetryPointsMeters: [],
   telemetryWorldPoints: [],
   anchors: [],
+  sectors: [],
+  selectedLapTrace: [],
   selectedAnchorIndex: -1,
   anchorHistory: [],
   layoutTransform: {
@@ -36,6 +38,8 @@ const state = {
     originX: 0,
     originY: 0,
   },
+  startFinishCaptureActive: false,
+  startFinishDraft: [],
 };
 
 const els = {
@@ -58,11 +62,18 @@ const els = {
   resetViewBtn: document.getElementById("resetViewBtn"),
   dragMode: document.getElementById("dragMode"),
   anchorMode: document.getElementById("anchorMode"),
+  createStartFinishBtn: document.getElementById("createStartFinishBtn"),
+  clearStartFinishBtn: document.getElementById("clearStartFinishBtn"),
   undoAnchorBtn: document.getElementById("undoAnchorBtn"),
   deleteAnchorBtn: document.getElementById("deleteAnchorBtn"),
   clearAnchorsBtn: document.getElementById("clearAnchorsBtn"),
   anchorLabel: document.getElementById("anchorLabel"),
   anchorType: document.getElementById("anchorType"),
+  sectorCount: document.getElementById("sectorCount"),
+  sectorRadius: document.getElementById("sectorRadius"),
+  autoAddSectorsBtn: document.getElementById("autoAddSectorsBtn"),
+  updateSectorRadiusBtn: document.getElementById("updateSectorRadiusBtn"),
+  sectorList: document.getElementById("sectorList"),
   exportJsonBtn: document.getElementById("exportJsonBtn"),
   exportSvgBtn: document.getElementById("exportSvgBtn"),
   exportPackageBtn: document.getElementById("exportPackageBtn"),
@@ -94,6 +105,11 @@ function cloneAnchors() {
   }));
 }
 
+function isStartFinishAnchor(anchor) {
+  const label = `${anchor.name || ""} ${anchor.type || ""}`.replace(/[_-]+/g, " ").toLowerCase();
+  return label.includes("start finish");
+}
+
 function pushAnchorHistory() {
   state.anchorHistory.push({
     anchors: cloneAnchors(),
@@ -109,6 +125,8 @@ function restoreAnchorSnapshot(snapshot) {
     ...anchor,
     layoutPoint: { ...anchor.layoutPoint },
   }));
+  state.startFinishCaptureActive = false;
+  state.startFinishDraft = [];
   state.selectedAnchorIndex = Math.min(snapshot.selectedAnchorIndex, state.anchors.length - 1);
   syncAnchorEditor();
   updateAnchorList();
@@ -162,6 +180,29 @@ function pointCentroid(points) {
   };
 }
 
+function samplePointsEvenly(points, maxCount) {
+  if (!points.length || points.length <= maxCount) return points.slice();
+  const step = Math.max(1, Math.ceil(points.length / maxCount));
+  const sampled = [];
+  for (let i = 0; i < points.length; i += step) {
+    sampled.push(points[i]);
+  }
+  if (sampled[sampled.length - 1] !== points[points.length - 1]) {
+    sampled.push(points[points.length - 1]);
+  }
+  return sampled;
+}
+
+function haversineMeters(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 function principalAngle(points) {
   const c = pointCentroid(points);
   let sxx = 0;
@@ -184,6 +225,113 @@ function bounds(points) {
     minY: Math.min(...points.map((p) => p.y)),
     maxY: Math.max(...points.map((p) => p.y)),
   };
+}
+
+function transformMetersPoint(point, transform) {
+  const theta = (transform.rotationDeg * Math.PI) / 180;
+  const ct = Math.cos(theta);
+  const st = Math.sin(theta);
+  return {
+    x: transform.translateX + transform.scale * (point.x * ct - point.y * st),
+    y: transform.translateY + transform.scale * (point.x * st + point.y * ct),
+  };
+}
+
+function nearestPoint(point, cloud) {
+  let best = cloud[0];
+  let bestDistSq = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < cloud.length; i += 1) {
+    const dx = point.x - cloud[i].x;
+    const dy = point.y - cloud[i].y;
+    const distSq = dx * dx + dy * dy;
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      best = cloud[i];
+    }
+  }
+  return { point: best, distance: Math.sqrt(bestDistSq) };
+}
+
+function solveSimilarityTransform(sourcePoints, targetPoints) {
+  if (!sourcePoints.length || sourcePoints.length !== targetPoints.length) return null;
+  const sourceCenter = pointCentroid(sourcePoints);
+  const targetCenter = pointCentroid(targetPoints);
+
+  let a = 0;
+  let b = 0;
+  let sourceNorm = 0;
+  for (let i = 0; i < sourcePoints.length; i += 1) {
+    const sx = sourcePoints[i].x - sourceCenter.x;
+    const sy = sourcePoints[i].y - sourceCenter.y;
+    const tx = targetPoints[i].x - targetCenter.x;
+    const ty = targetPoints[i].y - targetCenter.y;
+    a += sx * tx + sy * ty;
+    b += sx * ty - sy * tx;
+    sourceNorm += sx * sx + sy * sy;
+  }
+
+  if (!sourceNorm || !Number.isFinite(sourceNorm)) return null;
+  const scale = Math.sqrt(a * a + b * b) / sourceNorm;
+  const angleRad = Math.atan2(b, a);
+  const ct = Math.cos(angleRad);
+  const st = Math.sin(angleRad);
+  return {
+    scale,
+    rotationDeg: (angleRad * 180) / Math.PI,
+    translateX: targetCenter.x - scale * (sourceCenter.x * ct - sourceCenter.y * st),
+    translateY: targetCenter.y - scale * (sourceCenter.x * st + sourceCenter.y * ct),
+  };
+}
+
+function refineAutoAlign(initialTransform) {
+  const telemetrySample = samplePointsEvenly(state.telemetryPointsMeters, 700);
+  const layoutSample = samplePointsEvenly(state.layoutPixelPoints, 2600);
+  if (telemetrySample.length < 20 || layoutSample.length < 50) {
+    return { transform: initialTransform, meanError: null };
+  }
+
+  let current = { ...initialTransform };
+  let best = { ...initialTransform };
+  let bestError = Number.POSITIVE_INFINITY;
+
+  for (let iter = 0; iter < 7; iter += 1) {
+    const transformed = telemetrySample.map((point) => transformMetersPoint(point, current));
+    const targets = [];
+    let totalError = 0;
+
+    for (let i = 0; i < transformed.length; i += 1) {
+      const nearest = nearestPoint(transformed[i], layoutSample);
+      targets.push(nearest.point);
+      totalError += nearest.distance;
+    }
+
+    const meanError = totalError / transformed.length;
+    if (meanError < bestError) {
+      bestError = meanError;
+      best = { ...current };
+    }
+
+    const solved = solveSimilarityTransform(telemetrySample, targets);
+    if (!solved) break;
+
+    const rotationShift = Math.abs(solved.rotationDeg - current.rotationDeg);
+    const scaleShift = Math.abs(solved.scale - current.scale);
+    const translateShift = Math.hypot(solved.translateX - current.translateX, solved.translateY - current.translateY);
+    current = solved;
+
+    if (rotationShift < 0.02 && scaleShift < 0.0005 && translateShift < 0.2) {
+      const finalProjected = telemetrySample.map((point) => transformMetersPoint(point, current));
+      let finalError = 0;
+      for (let i = 0; i < finalProjected.length; i += 1) {
+        finalError += nearestPoint(finalProjected[i], layoutSample).distance;
+      }
+      bestError = finalError / finalProjected.length;
+      best = { ...current };
+      break;
+    }
+  }
+
+  return { transform: best, meanError: Number.isFinite(bestError) ? bestError : null };
 }
 
 function applyLayoutTransform(point, transform) {
@@ -341,6 +489,9 @@ async function loadTelemetry(file) {
   const telemetry = telemetryToMeters(rows, Number(els.minSpeed.value));
   state.telemetryGeoReference = telemetry.geoReference;
   state.telemetryPointsMeters = telemetry.points;
+  state.sectors = [];
+  state.selectedLapTrace = [];
+  updateSectorList();
   redraw();
   setStatus(`Loaded telemetry: ${file.name}\nFiltered GPS points: ${state.telemetryPointsMeters.length}`);
 }
@@ -365,17 +516,25 @@ function autoAlign() {
   const ct = Math.cos(theta);
   const st = Math.sin(theta);
 
-  state.telemetryAutoAlign = {
+  const initialTransform = {
     scale,
     rotationDeg,
     translateX: layoutCenter.x - scale * (telemetryCenter.x * ct - telemetryCenter.y * st),
     translateY: layoutCenter.y - scale * (telemetryCenter.x * st + telemetryCenter.y * ct),
   };
+  const refined = refineAutoAlign(initialTransform);
+  state.telemetryAutoAlign = refined.transform;
+  const refinedTheta = (state.telemetryAutoAlign.rotationDeg * Math.PI) / 180;
+  const refinedCt = Math.cos(refinedTheta);
+  const refinedSt = Math.sin(refinedTheta);
 
   state.telemetryWorldPoints = state.telemetryPointsMeters.map((p) => ({
-    x: state.telemetryAutoAlign.translateX + scale * (p.x * ct - p.y * st),
-    y: state.telemetryAutoAlign.translateY + scale * (p.x * st + p.y * ct),
+    x: state.telemetryAutoAlign.translateX + state.telemetryAutoAlign.scale * (p.x * refinedCt - p.y * refinedSt),
+    y: state.telemetryAutoAlign.translateY + state.telemetryAutoAlign.scale * (p.x * refinedSt + p.y * refinedCt),
   }));
+  state.sectors = [];
+  state.selectedLapTrace = [];
+  updateSectorList();
 
   state.layoutTransform.translateX = 0;
   state.layoutTransform.translateY = 0;
@@ -385,7 +544,7 @@ function autoAlign() {
   fitViewToContent();
   redraw();
   setStatus(
-    `Auto aligned\nTelemetry mapped into layout space\nRotation: ${rotationDeg.toFixed(2)} deg\nScale: ${scale.toFixed(4)}`
+    `Auto aligned\nTelemetry mapped into layout space\nRotation: ${state.telemetryAutoAlign.rotationDeg.toFixed(2)} deg\nScale: ${state.telemetryAutoAlign.scale.toFixed(4)}${refined.meanError != null ? `\nMean fit error: ${refined.meanError.toFixed(2)} px` : ""}`
   );
 }
 
@@ -464,6 +623,8 @@ function redraw() {
 
   drawPivot();
   drawAnchors();
+  drawStartFinishLine();
+  drawSectors();
 }
 
 function drawGrid() {
@@ -520,6 +681,53 @@ function drawAnchors() {
   ctx.restore();
 }
 
+function drawStartFinishLine() {
+  const anchors = findStartFinishAnchors();
+  const draftPoints = state.startFinishDraft || [];
+  const points = anchors.length >= 2
+    ? anchors.slice(0, 2).map((anchor) => worldToScreen(applyLayoutTransform(anchor.layoutPoint, state.layoutTransform)))
+    : draftPoints.map((point) => worldToScreen(applyLayoutTransform(point, state.layoutTransform)));
+
+  if (!points.length) return;
+
+  ctx.save();
+  ctx.strokeStyle = "#ff8f00";
+  ctx.fillStyle = "#ff8f00";
+  ctx.lineWidth = 3;
+  if (points.length === 2) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    ctx.lineTo(points[1].x, points[1].y);
+    ctx.stroke();
+  }
+  points.forEach((point) => {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawSectors() {
+  if (!state.sectors.length) return;
+  ctx.save();
+  ctx.fillStyle = "#146c43";
+  ctx.strokeStyle = "rgba(20, 108, 67, 0.28)";
+  ctx.lineWidth = 1.5;
+  ctx.font = "12px IBM Plex Sans";
+  for (const sector of state.sectors) {
+    const p = worldToScreen(sector.canonical);
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillText(sector.id, p.x + 8, p.y - 8);
+  }
+  ctx.restore();
+}
+
 function updateAnchorList() {
   els.anchorList.innerHTML = "";
   state.anchors.forEach((anchor, index) => {
@@ -539,6 +747,17 @@ function updateAnchorList() {
       redraw();
     });
     els.anchorList.appendChild(li);
+  });
+}
+
+function updateSectorList() {
+  if (!els.sectorList) return;
+  els.sectorList.innerHTML = "";
+  state.sectors.forEach((sector) => {
+    const li = document.createElement("li");
+    const pct = sector.progressRatio != null ? `${(sector.progressRatio * 100).toFixed(1)}%` : "n/a";
+    li.textContent = `${sector.id} ${pct} r=${sector.radius_m.toFixed(1)}m (${sector.lat.toFixed(6)}, ${sector.lon.toFixed(6)})`;
+    els.sectorList.appendChild(li);
   });
 }
 
@@ -594,11 +813,28 @@ function handleStageMouseDown(event) {
   const screenPoint = canvasPointFromEvent(event);
   const worldPoint = screenToWorld(screenPoint);
 
+  if (state.startFinishCaptureActive) {
+    pushAnchorHistory();
+    const layoutPoint = inverseLayoutTransform(worldPoint, state.layoutTransform);
+    state.startFinishDraft.push(layoutPoint);
+    if (state.startFinishDraft.length === 2) {
+      replaceStartFinishAnchors(state.startFinishDraft);
+      state.startFinishCaptureActive = false;
+      state.startFinishDraft = [];
+      redraw();
+      setStatus("Start/finish line created. You can now auto-generate sectors.");
+    } else {
+      redraw();
+      setStatus("Start/finish point 1 set. Click the second point.");
+    }
+    return;
+  }
+
   if (els.anchorMode.checked) {
     pushAnchorHistory();
     const layoutPoint = inverseLayoutTransform(worldPoint, state.layoutTransform);
     state.anchors.push({
-      id: `A${String(state.anchors.length + 1).padStart(2, "0")}`,
+      id: nextAnchorId(),
       name: "",
       type: "",
       layoutPoint,
@@ -691,6 +927,222 @@ function telemetryBoundsWorld() {
   return bounds(state.telemetryWorldPoints);
 }
 
+function findStartFinishAnchors() {
+  return state.anchors.filter(isStartFinishAnchor).slice(0, 2);
+}
+
+function nextAnchorId() {
+  return `A${String(state.anchors.length + 1).padStart(2, "0")}`;
+}
+
+function replaceStartFinishAnchors(points) {
+  state.anchors = state.anchors.filter((anchor) => !isStartFinishAnchor(anchor));
+  points.forEach((layoutPoint, idx) => {
+    state.anchors.push({
+      id: nextAnchorId(),
+      name: `Start Finish ${idx + 1}`,
+      type: "start_finish",
+      layoutPoint: { ...layoutPoint },
+    });
+  });
+  state.selectedAnchorIndex = state.anchors.length - 1;
+  syncAnchorEditor();
+  updateAnchorList();
+}
+
+function beginStartFinishCapture() {
+  state.startFinishCaptureActive = true;
+  state.startFinishDraft = [];
+  els.anchorMode.checked = false;
+  setStatus("Click two points to define the start/finish line.");
+}
+
+function clearStartFinishAnchors() {
+  const hadAny = findStartFinishAnchors().length > 0;
+  state.anchors = state.anchors.filter((anchor) => !isStartFinishAnchor(anchor));
+  state.sectors = [];
+  state.startFinishCaptureActive = false;
+  state.startFinishDraft = [];
+  if (hadAny) {
+    syncAnchorEditor();
+    updateAnchorList();
+    updateSectorList();
+    redraw();
+  }
+  setStatus("Cleared start/finish anchors.");
+}
+
+function canonicalToLocalMeters(point) {
+  if (!state.telemetryAutoAlign) return null;
+  const scale = Number(state.telemetryAutoAlign.scale || 0);
+  if (!scale) return null;
+  const theta = (Number(state.telemetryAutoAlign.rotationDeg || 0) * Math.PI) / 180;
+  const tx = Number(state.telemetryAutoAlign.translateX || 0);
+  const ty = Number(state.telemetryAutoAlign.translateY || 0);
+  const xScaled = (Number(point.x) - tx) / scale;
+  const yScaled = (Number(point.y) - ty) / scale;
+  const ct = Math.cos(theta);
+  const st = Math.sin(theta);
+  return {
+    x: xScaled * ct + yScaled * st,
+    y: -xScaled * st + yScaled * ct,
+  };
+}
+
+function localMetersToLatLon(localPoint) {
+  if (!state.telemetryGeoReference || !localPoint) return null;
+  return {
+    lat: state.telemetryGeoReference.lat0 - localPoint.y / state.telemetryGeoReference.metersPerDegLat,
+    lon: state.telemetryGeoReference.lon0 + localPoint.x / state.telemetryGeoReference.metersPerDegLon,
+  };
+}
+
+function fullTelemetryTrace() {
+  if (!state.telemetryPointsMeters.length || !state.telemetryWorldPoints.length) return [];
+  return state.telemetryPointsMeters.map((point, index) => ({
+    index,
+    lat: point.lat,
+    lon: point.lon,
+    localMeters: { x: point.x, y: point.y },
+    canonical: { x: state.telemetryWorldPoints[index].x, y: state.telemetryWorldPoints[index].y },
+  }));
+}
+
+function segmentCrossesLine(a1, a2, b1, b2) {
+  const orient = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const o1 = orient(a1, a2, b1);
+  const o2 = orient(a1, a2, b2);
+  const o3 = orient(b1, b2, a1);
+  const o4 = orient(b1, b2, a2);
+  return (o1 === 0 || o2 === 0 || Math.sign(o1) !== Math.sign(o2)) &&
+    (o3 === 0 || o4 === 0 || Math.sign(o3) !== Math.sign(o4));
+}
+
+function pointToSegmentDistance(point, segA, segB) {
+  const vx = segB.x - segA.x;
+  const vy = segB.y - segA.y;
+  const wx = point.x - segA.x;
+  const wy = point.y - segA.y;
+  const segLenSq = vx * vx + vy * vy;
+  if (segLenSq <= 1e-9) return Math.hypot(point.x - segA.x, point.y - segA.y);
+  let t = (wx * vx + wy * vy) / segLenSq;
+  t = Math.max(0, Math.min(1, t));
+  const projX = segA.x + t * vx;
+  const projY = segA.y + t * vy;
+  return Math.hypot(point.x - projX, point.y - projY);
+}
+
+function orderedTraceFromStart(tracePoints, startLineA, startLineB) {
+  if (!tracePoints.length || !startLineA || !startLineB) return tracePoints.slice();
+
+  let crossingIdx = -1;
+  for (let i = 0; i < tracePoints.length - 1; i += 1) {
+    const p1 = tracePoints[i].canonical;
+    const p2 = tracePoints[i + 1].canonical;
+    if (segmentCrossesLine(p1, p2, startLineA, startLineB)) {
+      crossingIdx = i + 1;
+      break;
+    }
+  }
+
+  if (crossingIdx < 0) {
+    const startCenter = {
+      x: (startLineA.x + startLineB.x) / 2,
+      y: (startLineA.y + startLineB.y) / 2,
+    };
+    crossingIdx = tracePoints.reduce((bestIdx, point, idx) => {
+      const best = tracePoints[bestIdx];
+      const bestDist = pointToSegmentDistance(best.canonical, startLineA, startLineB);
+      const dist = pointToSegmentDistance(point.canonical, startLineA, startLineB);
+      if (dist === bestDist) {
+        const bestCenterDist = Math.hypot(best.canonical.x - startCenter.x, best.canonical.y - startCenter.y);
+        const centerDist = Math.hypot(point.canonical.x - startCenter.x, point.canonical.y - startCenter.y);
+        return centerDist < bestCenterDist ? idx : bestIdx;
+      }
+      return dist < bestDist ? idx : bestIdx;
+    }, 0);
+  }
+
+  return tracePoints.slice(crossingIdx).concat(tracePoints.slice(0, crossingIdx));
+}
+
+function findStartLineCrossings(tracePoints, startLineA, startLineB) {
+  const raw = [];
+  for (let i = 0; i < tracePoints.length - 1; i += 1) {
+    if (segmentCrossesLine(tracePoints[i].canonical, tracePoints[i + 1].canonical, startLineA, startLineB)) {
+      raw.push(i + 1);
+    }
+  }
+  if (!raw.length) return [];
+
+  const minGap = Math.max(8, Math.floor(tracePoints.length * 0.015));
+  const deduped = [raw[0]];
+  for (let i = 1; i < raw.length; i += 1) {
+    if (raw[i] - deduped[deduped.length - 1] >= minGap) {
+      deduped.push(raw[i]);
+    }
+  }
+  return deduped;
+}
+
+function traceDistance(points) {
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += haversineMeters(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
+  }
+  return total;
+}
+
+function chooseLapTraceFromCrossings(tracePoints, crossingIndices) {
+  if (!tracePoints.length || crossingIndices.length < 2) return null;
+
+  const minSamples = Math.max(20, Math.floor(tracePoints.length * 0.08));
+
+  for (let i = 0; i < crossingIndices.length - 1; i += 1) {
+    const startIdx = crossingIndices[i];
+    const endIdx = crossingIndices[i + 1];
+    const lapPoints = tracePoints.slice(startIdx, endIdx + 1);
+    if (lapPoints.length < minSamples) continue;
+    return {
+      startIdx,
+      endIdx,
+      points: lapPoints,
+      distance: traceDistance(lapPoints),
+    };
+  }
+
+  return null;
+}
+
+function cumulativeTraceDistances(points) {
+  if (!points.length) return [];
+  const cumulative = [0];
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += haversineMeters(points[i - 1].lat, points[i - 1].lon, points[i].lat, points[i].lon);
+    cumulative.push(total);
+  }
+  return cumulative;
+}
+
+function interpolateTracePoint(start, end, ratio) {
+  const localMeters = {
+    x: start.localMeters.x + (end.localMeters.x - start.localMeters.x) * ratio,
+    y: start.localMeters.y + (end.localMeters.y - start.localMeters.y) * ratio,
+  };
+  const canonical = {
+    x: start.canonical.x + (end.canonical.x - start.canonical.x) * ratio,
+    y: start.canonical.y + (end.canonical.y - start.canonical.y) * ratio,
+  };
+  const geo = localMetersToLatLon(localMeters);
+  return {
+    lat: geo.lat,
+    lon: geo.lon,
+    localMeters,
+    canonical,
+  };
+}
+
 function deterministicSample(points, count) {
   if (points.length <= count) return points.slice();
   const keyed = points.map((point, index) => {
@@ -702,16 +1154,133 @@ function deterministicSample(points, count) {
   return keyed.slice(0, count).map((entry) => entry.point);
 }
 
+function exportTraceSource() {
+  return state.selectedLapTrace?.length ? state.selectedLapTrace : fullTelemetryTrace();
+}
+
 function sampledGpsReferences(sampleCount = 75) {
-  if (!state.telemetryPointsMeters.length || !state.telemetryWorldPoints.length) return [];
-  const merged = state.telemetryPointsMeters.map((point, index) => ({
-    index,
+  const merged = exportTraceSource();
+  if (!merged.length) return [];
+  return deterministicSample(merged, sampleCount);
+}
+
+function orderedGpsTrace(maxPoints = 400) {
+  const merged = exportTraceSource();
+  if (merged.length <= maxPoints) return merged;
+  const step = Math.max(1, Math.ceil(merged.length / maxPoints));
+  const sampled = [];
+  for (let i = 0; i < merged.length; i += step) sampled.push(merged[i]);
+  if (sampled[sampled.length - 1]?.index !== merged[merged.length - 1]?.index) {
+    sampled.push(merged[merged.length - 1]);
+  }
+  return sampled;
+}
+
+function autoGenerateSectors() {
+  if (!state.telemetryGeoReference || !state.telemetryAutoAlign || !state.telemetryPointsMeters.length) {
+    setStatus("Load telemetry and run Auto Align before generating sectors.");
+    return;
+  }
+  const startAnchors = findStartFinishAnchors();
+  if (startAnchors.length < 2) {
+    setStatus("Mark two anchors with a name or type containing 'start finish' before generating sectors.");
+    return;
+  }
+
+  const radiusM = Math.max(5, Number(els.sectorRadius.value) || 15);
+  const sectorCount = Math.max(2, Math.round(Number(els.sectorCount.value) || 7));
+  const startLineA = startAnchors[0].layoutPoint;
+  const startLineB = startAnchors[1].layoutPoint;
+  const startCenterCanonical = {
+    x: (startLineA.x + startLineB.x) / 2,
+    y: (startLineA.y + startLineB.y) / 2,
+  };
+  const fullTrace = fullTelemetryTrace();
+  if (fullTrace.length < 8) {
+    setStatus("Not enough sequential telemetry points to generate sectors.");
+    return;
+  }
+
+  const crossingIndices = findStartLineCrossings(fullTrace, startLineA, startLineB);
+
+  let lapTrace = [];
+  if (crossingIndices.length >= 2) {
+    const chosenLap = chooseLapTraceFromCrossings(fullTrace, crossingIndices);
+    lapTrace = chosenLap?.points || [];
+  } else {
+    lapTrace = orderedTraceFromStart(fullTrace, startLineA, startLineB);
+  }
+
+  if (lapTrace.length < 4) {
+    setStatus("Could not isolate a usable lap from the sequential telemetry trace.");
+    return;
+  }
+  state.selectedLapTrace = lapTrace.map((point) => ({
+    index: point.index,
     lat: point.lat,
     lon: point.lon,
-    localMeters: { x: point.x, y: point.y },
-    canonical: { x: state.telemetryWorldPoints[index].x, y: state.telemetryWorldPoints[index].y },
+    localMeters: { ...point.localMeters },
+    canonical: { ...point.canonical },
   }));
-  return deterministicSample(merged, sampleCount);
+
+  const closedTrace = lapTrace.concat([lapTrace[0]]);
+  const cumulative = cumulativeTraceDistances(closedTrace);
+  const lapLength = cumulative[cumulative.length - 1];
+  if (!lapLength || !Number.isFinite(lapLength)) {
+    setStatus("Unable to calculate lap length from telemetry.");
+    return;
+  }
+
+  state.sectors = [];
+  const step = lapLength / sectorCount;
+  for (let sectorIdx = 1; sectorIdx <= sectorCount; sectorIdx += 1) {
+    let point = closedTrace[0];
+    let progressM = step * sectorIdx;
+
+    if (sectorIdx === sectorCount) {
+      const localMeters = canonicalToLocalMeters(startCenterCanonical);
+      const geo = localMetersToLatLon(localMeters);
+      point = { lat: geo.lat, lon: geo.lon, localMeters, canonical: startCenterCanonical };
+      progressM = lapLength;
+    } else {
+      const segmentIdx = cumulative.findIndex((distance, index) => index > 0 && distance >= progressM);
+      const safeIdx = segmentIdx > 0 ? segmentIdx : closedTrace.length - 1;
+      const prevDistance = cumulative[safeIdx - 1];
+      const nextDistance = cumulative[safeIdx];
+      const ratio = nextDistance <= prevDistance ? 0 : (progressM - prevDistance) / (nextDistance - prevDistance);
+      point = interpolateTracePoint(closedTrace[safeIdx - 1], closedTrace[safeIdx], ratio);
+    }
+
+    state.sectors.push({
+      id: `S${sectorIdx}`,
+      sector_index: sectorIdx,
+      lat: point.lat,
+      lon: point.lon,
+      end_lat: point.lat,
+      end_lon: point.lon,
+      radius_m: radiusM,
+      progress_m: Number(progressM.toFixed(3)),
+      progressRatio: progressM / lapLength,
+      canonical: point.canonical,
+      localMeters: point.localMeters,
+    });
+  }
+
+  updateSectorList();
+  redraw();
+  setStatus(`Generated ${state.sectors.length} sectors from sequential GPS order.\nCrossings found: ${crossingIndices.length}\nRadius: ${radiusM.toFixed(1)} m`);
+}
+
+function updateSectorRadius() {
+  const radiusM = Math.max(5, Number(els.sectorRadius.value) || 15);
+  if (!state.sectors.length) {
+    setStatus("Generate sectors first.");
+    return;
+  }
+  state.sectors = state.sectors.map((sector) => ({ ...sector, radius_m: radiusM }));
+  updateSectorList();
+  redraw();
+  setStatus(`Updated sector radius to ${radiusM.toFixed(1)} m.`);
 }
 
 function buildCanonicalPayload(includeEmbeddedLayout = false) {
@@ -731,6 +1300,7 @@ function buildCanonicalPayload(includeEmbeddedLayout = false) {
       autoAlign: state.telemetryAutoAlign,
       geoReference: state.telemetryGeoReference,
       sampledGpsPoints: sampledGpsReferences(75),
+      orderedGpsPoints: orderedGpsTrace(400),
     },
     transform: { ...state.layoutTransform },
     anchors: state.anchors.map((anchor) => ({
@@ -739,6 +1309,20 @@ function buildCanonicalPayload(includeEmbeddedLayout = false) {
       type: anchor.type || "",
       x: anchor.layoutPoint.x,
       y: anchor.layoutPoint.y,
+    })),
+    sectorConfig: {
+      count: Math.max(2, Math.round(Number(els.sectorCount.value) || 7)),
+      radius_m: Math.max(5, Number(els.sectorRadius.value) || 15),
+      source: state.sectors.length ? "ordered_trace_auto" : null,
+    },
+    sectors: state.sectors.map((sector) => ({
+      id: sector.id,
+      sector_index: sector.sector_index,
+      end_lat: sector.end_lat,
+      end_lon: sector.end_lon,
+      radius_m: sector.radius_m,
+      progress_m: sector.progress_m,
+      progress_ratio: sector.progressRatio,
     })),
     telemetryBounds: telemetryBoundsWorld(),
     view: { ...state.view },
@@ -821,20 +1405,29 @@ els.centerPivotBtn.addEventListener("click", setPivotToCenter);
 els.resetTransformBtn.addEventListener("click", resetTransform);
 els.fitViewBtn.addEventListener("click", fitViewToContent);
 els.resetViewBtn.addEventListener("click", resetView);
+els.createStartFinishBtn.addEventListener("click", beginStartFinishCapture);
+els.clearStartFinishBtn.addEventListener("click", clearStartFinishAnchors);
 els.undoAnchorBtn.addEventListener("click", undoAnchorChange);
 els.deleteAnchorBtn.addEventListener("click", deleteSelectedAnchor);
 els.clearAnchorsBtn.addEventListener("click", () => {
   if (!state.anchors.length) return;
   pushAnchorHistory();
   state.anchors = [];
+  state.sectors = [];
+  state.selectedLapTrace = [];
+  state.startFinishCaptureActive = false;
+  state.startFinishDraft = [];
   state.selectedAnchorIndex = -1;
   syncAnchorEditor();
   updateAnchorList();
+  updateSectorList();
   redraw();
 });
 els.exportJsonBtn.addEventListener("click", exportJson);
 els.exportSvgBtn.addEventListener("click", exportSvg);
 els.exportPackageBtn.addEventListener("click", exportPackage);
+els.autoAddSectorsBtn.addEventListener("click", autoGenerateSectors);
+els.updateSectorRadiusBtn.addEventListener("click", updateSectorRadius);
 els.anchorLabel.addEventListener("input", updateSelectedAnchorFields);
 els.anchorType.addEventListener("input", updateSelectedAnchorFields);
 

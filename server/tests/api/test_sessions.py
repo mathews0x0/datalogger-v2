@@ -7,7 +7,7 @@ from flask_jwt_extended import create_access_token
 # Add server directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from api.models import db, User, SessionMeta
+from api.models import db, User, SessionMeta, TrackMeta
 import api.config as config
 
 @pytest.fixture
@@ -29,9 +29,11 @@ def client(app):
                 session_id='test-session-123',
                 user_id=user.id,
                 session_name='Test Track Day',
-                is_public=False
+                is_public=False,
+                track_id=101,
             )
             db.session.add(sm)
+            db.session.add(TrackMeta(track_id=101, user_id=user.id, track_name='Test Track', folder_name='test_track_101'))
             db.session.commit()
             
             # Create a dummy session file on disk
@@ -40,6 +42,10 @@ def client(app):
             sessions_dir.mkdir(parents=True, exist_ok=True)
             with open(sessions_dir / 'test-session-123.json', 'w') as f:
                 json.dump({'meta': {'session_name': 'Test Session'}}, f)
+            tracks_dir = config.get_user_tracks_dir(user.id) / 'test_track_101'
+            tracks_dir.mkdir(parents=True, exist_ok=True)
+            with open(tracks_dir / 'tbl.json', 'w') as f:
+                json.dump({'track_id': 101, 'total_best_time': 19.757}, f)
             
             # Set jwt
             token = create_access_token(identity=str(user.id))
@@ -98,3 +104,11 @@ def test_update_notes(client, app):
             data = json.load(f)
 
         assert data['mode']['notes'] == 'Sunny race'
+
+def test_delete_last_session_resets_tbl(client, app):
+    resp = client.delete('/api/sessions/test-session-123')
+    assert resp.status_code == 200
+
+    with app.app_context():
+        tracks_dir = config.get_user_tracks_dir(1) / 'test_track_101'
+        assert not (tracks_dir / 'tbl.json').exists()

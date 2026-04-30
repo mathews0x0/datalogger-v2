@@ -297,6 +297,15 @@ def _ordered_centerline_from_start(centerline, start_line):
 
 
 def _load_existing_centerline(track_dir, existing_track_json):
+    package_path = track_dir / "package.json"
+    if package_path.exists():
+        try:
+            centerline = _centerline_from_package(load_json_file(package_path))
+            if isinstance(centerline, list) and centerline:
+                return centerline
+        except Exception:
+            pass
+
     centerline = existing_track_json.get("centerline")
     if isinstance(centerline, list) and centerline:
         return centerline
@@ -315,7 +324,9 @@ def _load_existing_centerline(track_dir, existing_track_json):
 
 
 def _centerline_from_package(package):
-    sampled_points = package.get("telemetry", {}).get("sampledGpsPoints") or []
+    telemetry = package.get("telemetry", {}) or {}
+    sampled_points = telemetry.get("orderedGpsPoints") or telemetry.get("centerline") or telemetry.get("sampledGpsPoints") or []
+    sortable_points = []
     centerline = []
     for point in sampled_points:
         if not isinstance(point, dict):
@@ -328,8 +339,43 @@ def _centerline_from_package(package):
             lon = gps.get("lon")
         if lat is None or lon is None:
             continue
-        centerline.append({"lat": float(lat), "lon": float(lon)})
+        try:
+            order = int(point.get("index"))
+        except Exception:
+            order = None
+        sortable_points.append({
+            "order": order,
+            "lat": float(lat),
+            "lon": float(lon),
+        })
+
+    if sortable_points and all(point["order"] is not None for point in sortable_points):
+        sortable_points.sort(key=lambda point: point["order"])
+
+    for point in sortable_points:
+        centerline.append({"lat": point["lat"], "lon": point["lon"]})
     return centerline
+
+
+def _first_package_trace_point(package):
+    telemetry = package.get("telemetry", {}) or {}
+    for key in ("orderedGpsPoints", "centerline", "sampledGpsPoints"):
+        points = telemetry.get(key) or []
+        if not isinstance(points, list):
+            continue
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            lat = point.get("lat")
+            lon = point.get("lon")
+            if lat is None or lon is None:
+                gps = point.get("gps") or {}
+                lat = gps.get("lat")
+                lon = gps.get("lon")
+            if lat is None or lon is None:
+                continue
+            return {"lat": float(lat), "lon": float(lon)}
+    return None
 
 
 def _project_line_distance(lat, lon, line):
@@ -341,6 +387,19 @@ def _interpolate_point(start, end, ratio):
         "lat": float(start["lat"]) + (float(end["lat"]) - float(start["lat"])) * ratio,
         "lon": float(start["lon"]) + (float(end["lon"]) - float(start["lon"])) * ratio,
     }
+
+
+def _cumulative_centerline_distances(points):
+    if not points:
+        return []
+    distances = [0.0]
+    total = 0.0
+    for idx in range(1, len(points)):
+        prev = points[idx - 1]
+        curr = points[idx]
+        total += haversine_distance(prev["lat"], prev["lon"], curr["lat"], curr["lon"]) * 1000.0
+        distances.append(total)
+    return distances
 
 
 def _anchor_sector_index(anchor_name):
@@ -439,14 +498,39 @@ def _extract_explicit_sector_gates(package):
         if idx not in deduped:
             deduped[idx] = gate
     ordered = [deduped[idx] for idx in sorted(deduped.keys())]
-    if len(ordered) != config.SECTOR_COUNT:
+    if not ordered:
         return []
+
+    start_line = _normalize_start_line(_extract_start_finish_line(package))
+    centerline = _ordered_centerline_from_start(_centerline_from_package(package), start_line)
+    progress_map = {}
+    if len(centerline) >= 2:
+        cumulative = _cumulative_centerline_distances(centerline)
+
+        def gate_position(gate):
+            closest_idx = min(
+                range(len(centerline)),
+                key=lambda idx: haversine_distance(
+                    centerline[idx]["lat"],
+                    centerline[idx]["lon"],
+                    gate["end_lat"],
+                    gate["end_lon"],
+                )
+            )
+            progress_map[id(gate)] = cumulative[closest_idx]
+            return cumulative[closest_idx]
+
+        for gate in ordered:
+            gate_position(gate)
+
     return [
         {
-            "id": gate["id"],
+            "id": gate.get("id") or f"S{gate['sector_index']}",
+            "sector_index": gate["sector_index"],
             "end_lat": gate["end_lat"],
             "end_lon": gate["end_lon"],
             "radius_m": gate["radius_m"],
+            "progress_m": progress_map.get(id(gate)),
         }
         for gate in ordered
     ]
@@ -492,9 +576,11 @@ def _generate_sectors_from_centerline(centerline, start_line, sector_count):
                 point = _interpolate_point(ordered[segment_idx - 1], ordered[segment_idx], ratio)
         sectors.append({
             "id": f"S{sector_idx}",
+            "sector_index": sector_idx,
             "end_lat": point["lat"],
             "end_lon": point["lon"],
             "radius_m": round(dynamic_radius, 1),
+            "progress_m": round(target_dist, 3),
         })
     return sectors
 
@@ -563,6 +649,7 @@ def _build_device_layout(track_data, max_points=96):
             continue
         marker = to_layout_point(sector["end_lat"], sector["end_lon"])
         marker["id"] = sector.get("id") or f"S{idx + 1}"
+        marker["sector_index"] = sector.get("sector_index")
         layout["sector_markers"].append(marker)
     return layout
 
@@ -570,11 +657,23 @@ def _build_device_layout(track_data, max_points=96):
 def build_device_track_payload(track_data):
     if not isinstance(track_data, dict):
         return track_data
-    payload = dict(track_data)
+    payload = {}
+    for key in (
+        "track_id",
+        "track_name",
+        "name",
+        "track_scope",
+        "track_source",
+        "package_version",
+        "has_canonical_layout",
+        "start_line",
+        "tbl",
+    ):
+        if key in track_data:
+            payload[key] = track_data.get(key)
     payload["sectors"] = list(track_data.get("sectors") or [])
     payload["sector_count"] = len(payload["sectors"])
-    if not payload.get("device_layout"):
-        payload["device_layout"] = _build_device_layout(payload)
+    payload["device_layout"] = _build_device_layout(track_data)
     return payload
 
 
@@ -661,11 +760,42 @@ def track_file_path(resolved_track, filename):
     return Path(resolved_track["base_dir"]) / resolved_track["folder_name"] / filename
 
 
+def _load_centerline_from_geometry(resolved_track):
+    path = track_file_path(resolved_track, "geometry.json")
+    if not path.exists():
+        return None
+    try:
+        data = load_json_file(path)
+    except Exception:
+        return None
+
+    coordinates = data.get("coordinates")
+    if not isinstance(coordinates, list):
+        return None
+
+    centerline = []
+    for point in coordinates:
+        if not isinstance(point, (list, tuple)) or len(point) < 2:
+            continue
+        try:
+            centerline.append({
+                "lat": float(point[0]),
+                "lon": float(point[1]),
+            })
+        except (TypeError, ValueError):
+            continue
+    return centerline or None
+
+
 def load_track_json(resolved_track):
     path = track_file_path(resolved_track, "track.json")
     if not path.exists():
         return None
     data = load_json_file(path)
+    if not data.get("centerline"):
+        centerline = _load_centerline_from_geometry(resolved_track)
+        if centerline:
+            data["centerline"] = centerline
     data["track_scope"] = resolved_track["track_scope"]
     data["track_source"] = resolved_track["track_source"]
     data["package_version"] = resolved_track["package_version"]
@@ -723,7 +853,9 @@ def upsert_global_track_package(track_name, package, slug=None, track_id=None):
 
     start_line = _extract_start_finish_line(package) or existing_track_json.get("start_line")
     if not start_line:
-        start_anchor = package["telemetry"]["sampledGpsPoints"][0]
+        start_anchor = _first_package_trace_point(package)
+        if not start_anchor:
+            raise TrackPackageError("Package must include at least one usable telemetry point for start-line fallback")
         start_line = {
             "lat": float(start_anchor["lat"]),
             "lon": float(start_anchor["lon"]),
@@ -731,12 +863,12 @@ def upsert_global_track_package(track_name, package, slug=None, track_id=None):
         }
     start_line = _normalize_start_line(start_line)
 
-    centerline = _load_existing_centerline(track_dir, existing_track_json)
+    centerline = _centerline_from_package(package)
     if not centerline:
-        centerline = _centerline_from_package(package)
+        centerline = _load_existing_centerline(track_dir, existing_track_json)
     sectors = _extract_explicit_sector_gates(package)
     if not sectors:
-        sectors = _generate_sectors_from_centerline(centerline, start_line, config.SECTOR_COUNT)
+        sectors = _generate_sectors_from_centerline(centerline, start_line, config.get_default_sector_count())
     if not sectors:
         sectors = existing_track_json.get("sectors", [])
 
