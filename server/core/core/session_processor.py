@@ -277,8 +277,12 @@ class SessionProcessor:
             
             try:
                 imu_proc = AdvancedIMUProcessor()
+                calibration_profile = getattr(session, "mount_profile", None)
+                runtime_validation = getattr(session, "runtime_validation", None)
                 imu_results = imu_proc.process(timestamps, ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, 
-                                             speeds=speeds, lats=lats, lons=lons)
+                                             speeds=speeds, lats=lats, lons=lons,
+                                             calibration_profile=calibration_profile,
+                                             runtime_validation=runtime_validation)
                 
                 # Map results to session signals
                 # Results: lean_angle, pitch_angle, ax_cg, ay_cg, etc.
@@ -304,6 +308,9 @@ class SessionProcessor:
                     "calibrated": True, 
                     "confidence": imu_results.get("mount_confidence", "LOW"),
                     "method": imu_results.get("mount_method", "AdvancedIMUProcessor"),
+                    "source_mode": (runtime_validation or {}).get("source_mode", "imu_trusted" if calibration_profile else "gps_assisted"),
+                    "profile": calibration_profile,
+                    "runtime_validation": runtime_validation,
                     "selected_algorithm": imu_results.get("diagnostics", {}).get("selected_algorithm"),
                     "rotation_matrix": imu_results.get("rotation_matrix"),
                     "gyro_bias": imu_results.get("gyro_bias"),

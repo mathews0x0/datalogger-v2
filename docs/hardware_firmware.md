@@ -89,6 +89,7 @@ Operationally, that means:
     *   **Button pressed** during Home → **SYNC MODE**.
     *   **TFT touch `SYNC`** during Home → **SYNC MODE**.
     *   **TFT gear button** during Home → Settings (`WIFI`, `TRACK`, `CALIB`, `BACK`, Auto Log toggle).
+    *   **Mount profile flow**: Settings now also exposes mount-profile selection / recalibration for `tank`, `tail`, `stem`, and `generic`.
     *   **TFT touch `LOG`** during Home and GPS OK → **LOGGING MODE**.
     *   **Exit condition**: 10s passed AND GPS OK AND Auto Log enabled → **LOGGING MODE**.
     *   If Auto Log is disabled in `/data/metadata/device.json`, the rider must tap `LOG`.
@@ -105,6 +106,11 @@ Operationally, that means:
 *   **Single-switch shutdown path**: The firmware monitors **IO8** as the protected power-button sense input. If the same power button is held for roughly 3 seconds, the logger can display `SHUTDOWN`, flush storage, and release `IO41` for a controlled power-off.
 *   **Single-switch user model**: There is no separate external power-off control in V4.2. The rider-facing contract is one short press to power on and one deliberate long press to power off safely.
 *   **Display baseline**: Boot, Home, Sync, Settings, calibration, and logging UI are all routed through the TFT stack. There is no active OLED runtime path in the current firmware baseline.
+*   **Persistent IMU profile baseline**: The device now expects a saved mount calibration profile when high-confidence arbitrary mounting is required.
+*   **Logging start validation**: The first ~5 seconds of logging show an IMU validation screen instead of the normal live logging screen.
+    *   Left side (`TOP VIEW`) shows the saved calibrated mount yaw relative to bike forward.
+    *   Right side (`MOUNT ANGLE`) shows static `FRONT` (roll/cant) and `SIDE` (pitch/nose-up) indicators from the saved mount geometry.
+    *   This screen validates mount interpretation, not dynamic lean.
 *   **Runtime diagnostics**: The firmware tracks queue depth, dropped rows, heap low watermark, loop overruns, GPS parser health, LED thread health, and battery voltage for post-mortem diagnosis.
 *   No uploader, no captive portal, no WiFi threads.
 
@@ -126,6 +132,7 @@ Operationally, that means:
     *   Home landing page showing GPS / IMU / SD status icons plus active track name
     *   Home `SYNC` / gear / `LOG` touch targets
     *   settings screen with `WIFI`, `CALIB`, `BACK`, and Auto Log ON/OFF
+    *   mount-profile screen for `tank`, `tail`, `stem`, and `generic`
     *   pairing and WiFi screens showing saved SSID or setup AP name where applicable
     *   WiFi search animation with SSID at the bottom and `EXIT` back to Home
     *   heartbeat screen shown as rider-facing red/green heart status
@@ -133,6 +140,7 @@ Operationally, that means:
     *   upload screen shows one overall progress bar, large percentage, ETA with h/m/s units, current file, file index, and chunk count
     *   per-file archive messages are suppressed on TFT; archive remains background behavior
     *   logging screens avoid showing session filenames; technical logs stay on serial output
+    *   first-5-seconds IMU validation view with top-view mount direction plus static front/side mount-angle indicators
     *   boot and Home screens deliberately avoid verbose diagnostic/log noise
     *   Home/settings touch paths are optimized for no-IRQ wiring with 110 ms debounce, touch-before-redraw ordering, and state-based redraw skipping
     *   cached top bar and partial content redraws are used to reduce visible screen-turn latency
@@ -143,6 +151,11 @@ Operationally, that means:
     *   Calibration is per-device and should be preserved with other metadata.
     *   Display preset selection is also per-device and is stored in `/data/metadata/display.json`.
     *   If `drivers/xpt2046.py` is missing after a partial sync, TFT display initialization continues but touch/calibration are disabled until the driver is restored.
+*   **IMU mount profile calibration**:
+    *   Stored under device metadata and intended to persist across normal firmware sync.
+    *   Current flow captures `STATIC`, `ENGINE`, `LEAN LEFT`, `LEAN RIGHT`, and `PUSH`.
+    *   Produces a saved `rotation_matrix`, `gyro_bias`, `gravity_vector`, vibration metrics, and mount-angle summary.
+    *   Profiles are selected once at the device level and then reused for logging until changed or recalibrated.
 
 ---
 
@@ -203,13 +216,14 @@ Header: `tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,spe
 |----------|------|-----------------|
 | `I` (IMU) | 100 Hz | `tick_ms`, accel, gyro |
 | `G` (GPS) | 10 Hz | `tick_ms`, accel, gyro, lat, lon, alt, speed, sats, vbat |
-| `M` (Marker) | Sparse / event-driven | session integrity + operational marker data |
+| `M` (Marker) | Sparse / event-driven | session integrity + operational marker data, including IMU profile / validation metadata |
 
 **`tick_ms`**: ESP32 monotonic clock (milliseconds). Used as the master timestamp for sensor fusion alignment.
 **`vbat`**: Battery voltage (Volts). Calibrated via `read_uv()` with a 2.0x software multiplier for the 100k/100k divider.
 **Write queueing**: ~20 rows accumulated before a buffer swap and SD write+flush.
 **Queue protection**: The logger tracks queue overflow and dropped-row counts so SD bottlenecks can be measured.
 **Checkpointing**: Marker rows provide recovery breadcrumbs when a file is interrupted before clean completion.
+**Profile propagation**: Marker rows now also carry `IMU_PROFILE` and `IMU_VALIDATION` payloads so backend session processing can consume the selected mount profile directly.
 
 ---
 
@@ -256,4 +270,4 @@ Pass criteria:
 ## ⚠️ Hardware Precautions
 *   **GPS Antenna**: Ensure a clear sky view. The Neo-M8N performance degrades significantly under carbon fiber or metal.
 *   **SD Card**: Always use **Class 10** or faster cards. Slow cards can cause Core 0 to hang during long sessions.
-*   **IMU Orientation**: The BMI323 must be mounted flat. The auto-calibration routine (`CALIBRATING` state) expects the bike to be perfectly upright. Note that BMI323 uses word-based I2C communication and a different register map (0x20/0x21 for conf) compared to the legacy BMI270.
+*   **IMU Orientation**: Flat mounting is no longer a hard product requirement. The current firmware direction is arbitrary mounting with a saved per-profile calibration. The important rule is that the rider must calibrate the actual mount orientation being used. Note that BMI323 uses word-based I2C communication and a different register map (0x20/0x21 for conf) compared to the legacy BMI270.

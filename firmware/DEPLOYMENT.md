@@ -47,6 +47,7 @@ Your ESP32-S3 should have the following structure:
 │   └── metadata/
 │       ├── device.json # (Auto-generated) WiFi & API credentials
 │       ├── display.json # Per-device TFT panel preset/config
+│       ├── imu_profiles.json # Per-device IMU mount calibration profiles
 │       ├── track.json  # Active track metadata
 │       └── touch.json  # Per-device TFT touch calibration
 ├── drivers/
@@ -62,6 +63,7 @@ Your ESP32-S3 should have the following structure:
     ├── track_engine.py # Lap/Sector logic
     ├── uploader.py      # background IoT Heartbeat & Upload thread
     ├── tft_ui.py        # ILI9341/XPT2046 rider-facing TFT UI
+    ├── imu_calibration.py # persistent IMU mount-profile calibration store/solver
     ├── tft_wordmark.raw # raw RGB565 RaceSense boot wordmark asset
     ├── tft_fonts/       # generated TFT font package
     │   ├── renderer.py
@@ -74,6 +76,7 @@ Normal firmware sync preserves `/data/metadata/`.
 
 - Delete only `/data/metadata/display.json` if you want to force the first-boot TFT preset selection flow to run again.
 - Delete only `/data/metadata/touch.json` if you want to force the second-boot TFT 5-point calibration to run again.
+- Delete only `/data/metadata/imu_profiles.json` if you want to clear saved IMU mount profiles and force re-calibration.
 
 Clean sync must copy nested `lib` packages and raw assets. The current `flashtool.sh` and `push_to_device.sh` copy:
 
@@ -83,6 +86,8 @@ Clean sync must copy nested `lib` packages and raw assets. The current `flashtoo
 - `drivers/*.py`
 
 This is required for the TFT custom fonts, `tft_wordmark.raw`, display driver, touch driver, and SD driver. If `drivers/xpt2046.py` is missing, the TFT display now still initializes, but touch is disabled until a complete firmware sync restores the file.
+
+The same sync behavior now automatically carries new library modules such as `lib/imu_calibration.py`; no separate flashtool allowlist entry is required because the sync tooling already copies the full `lib/*.py` set plus nested `lib/*/*.py`.
 
 The TFT boot path depends on `/lib/tft_wordmark.raw`: `boot.py` streams this full-screen RGB565 asset before `main.py` starts when `/data/metadata/display.json` already exists. If the display has not been selected yet on a fresh unit, `boot.py` skips the branded splash and `main.py` enters the TFT preset-selection flow instead.
 
@@ -112,6 +117,39 @@ Racesense V2 utilizes both cores of the ESP32-S3:
 - **Logging Mode**: Runs with WiFi disabled and writes telemetry locally.
 
 This ensures that network activity does not cause "gaps" in your high-frequency telemetry data.
+
+---
+
+## 🧭 **Current IMU Calibration / Logging Contract**
+
+- The active product direction is now **persistent mount-profile calibration**, not one-off session-only inference.
+- Riders can calibrate and save mount profiles such as `tank`, `tail`, `stem`, or `generic`.
+- Profiles are stored in `/data/metadata/imu_profiles.json`.
+- The calibration flow currently captures:
+  - `STATIC`
+  - `ENGINE`
+  - `LEAN LEFT`
+  - `LEAN RIGHT`
+  - `PUSH`
+- Saved profile content includes:
+  - `rotation_matrix`
+  - `gyro_bias`
+  - `gravity_vector`
+  - vibration metrics
+  - mount-angle summary
+  - quality score
+
+At logging start:
+
+- the selected mount profile is trusted immediately
+- the first ~5 seconds show an IMU validation screen on the TFT
+- the left side shows top-view mount direction relative to bike forward
+- the right side shows static `FRONT` and `SIDE` mount-angle indicators
+
+During logging:
+
+- sparse marker rows now carry IMU metadata alongside normal integrity markers
+- backend session processing can consume `IMU_PROFILE` and `IMU_VALIDATION` from the CSV upload path
 
 ---
 

@@ -55,7 +55,8 @@ class SessionExporter:
                 "end_time": et_iso,
                 "duration_sec": round(dur, 2),
                 "logger_version": "v3.6",
-                "schema_version": "1.0"
+                "schema_version": "1.1",
+                "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
             },
             "environment": {
                  # Placeholder: In future, get from EnvSample stats
@@ -176,7 +177,8 @@ class SessionExporter:
             "time": times,
             "lat": lats,
             "lon": lons,
-            "speed": speeds
+            "speed": speeds,
+            "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
         }
         
         # 7.3 Raw IMU Data (Always export for client-side viz)

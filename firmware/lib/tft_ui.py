@@ -1,4 +1,5 @@
 import time
+import math
 import framebuf
 import machine
 import ujson
@@ -1373,9 +1374,9 @@ class TFTBootUI:
             self.show_startup_logo()
         return True
 
-    def show_home(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False, auto_log_enabled=True, track_name=""):
+    def show_home(self, sd_ok, imu_ok, gps_ok, gps_sentences=0, countdown_ms=None, paused=False, auto_log_enabled=True, track_name="", mount_label=""):
         self._touch_mode = "home"
-        key = ("home", bool(sd_ok), bool(imu_ok), bool(gps_ok), str(track_name))
+        key = ("home", bool(sd_ok), bool(imu_ok), bool(gps_ok), str(track_name), str(mount_label))
         if self._skip_same_render(key):
             self.refresh_topbar("RaceSense")
             return True
@@ -1386,7 +1387,11 @@ class TFTBootUI:
         self._status_line(216, 64, "SD", sd_ok)
         self._draw_panel(18, 116, 284, 42, border=self._c_panel_alt, fill=self._c_panel)
         self._text(30, 126, "TRACK", self._c_text_muted, bg=self._c_panel)
-        name = self._fit_text_px(track_name or "No track", 190, "ui")
+        if mount_label:
+            mount_text = "  [%s]" % str(mount_label).upper()
+        else:
+            mount_text = ""
+        name = self._fit_text_px((track_name or "No track") + mount_text, 190, "ui")
         self._text(98, 126, name, self._c_text if track_name else self._c_text_dim, bg=self._c_panel)
         self._button(10, 176, 96, 50, "SYNC", self._c_accent, self._c_bg)
         self._icon_button(112, 176, 96, 50, "gear", self._c_panel_alt, self._c_text)
@@ -1403,7 +1408,7 @@ class TFTBootUI:
 
     def show_settings(self, ssid="", auto_log_enabled=True, pending_count=0, scroll_index=0):
         self._touch_mode = "settings"
-        total_items = 5
+        total_items = 6
         max_scroll = max(0, total_items - 3)
         scroll_index = max(0, min(max_scroll, int(scroll_index or 0)))
         self._settings_scroll_index = scroll_index
@@ -1418,6 +1423,7 @@ class TFTBootUI:
         items = (
             ("wifi", "wifi", self._fit_text_px(ssid or "Not configured", 170, "ui"), self._c_text if ssid else self._c_bad),
             ("track", "track", "view selected layout", self._c_text_dim),
+            ("imu_profiles", "mount profile", "select or recalibrate", self._c_text_dim),
             ("calibrate", "calibration", "touch and display setup", self._c_text_dim),
             ("toggle_auto_log", "auto log", "on" if auto_log_enabled else "off", self._c_text if auto_log_enabled else self._c_bad),
             ("archive", "archive all", "%d file%s pending" % (int(pending_count or 0), "" if int(pending_count or 0) == 1 else "s"), self._c_warn if pending_count else self._c_text_dim),
@@ -1439,6 +1445,102 @@ class TFTBootUI:
         self._arrow_button(278, 104, 28, 40, "up", enabled=can_up)
         self._arrow_button(278, 168, 28, 40, "down", enabled=can_down)
         self._show_region(0, 40, 320, 200)
+        return True
+
+    def show_imu_profiles(self, profiles, selected_id=""):
+        self._touch_mode = "imu_profiles"
+        key = ("imu_profiles", str(selected_id), tuple(sorted(str((p or {}).get("id") or "") for p in (profiles or []))))
+        if self._skip_same_render(key):
+            self.refresh_topbar("RaceSense")
+            return True
+        self._start_content_screen()
+        self.refresh_topbar("RaceSense", force=True)
+        self._button(10, 46, 96, 38, "BACK", self._c_panel_alt, self._c_text)
+        self._text(114, 58, "MOUNT SETUP", self._c_text)
+        labels = ("tank", "tail", "stem", "generic")
+        profile_map = {}
+        for profile in profiles or []:
+            profile_map[str(profile.get("label") or "").lower()] = profile
+        row_y = 92
+        for label in labels:
+            profile = profile_map.get(label)
+            is_selected = bool(profile and str(profile.get("id") or "") == str(selected_id or ""))
+            fill = self._c_panel_alt if is_selected else self._c_panel
+            border = self._c_accent if is_selected else self._c_panel_alt
+            self._draw_panel(22, row_y, 276, 30, border=border, fill=fill)
+            self._text(34, row_y + 8, label.upper(), self._c_text, bg=fill)
+            detail = "saved - tap to use" if profile else "not saved - tap to calibrate"
+            if is_selected:
+                detail = "selected - tap to recalibrate"
+            self._text(112, row_y + 9, self._fit_text_px(detail, 168, "ui"), self._c_text_dim, bg=fill)
+            row_y += 34
+        self._centered_scaled(228, "Tap a saved profile to use it", scale=1, color=self._c_text_muted)
+        self._centered_scaled(212, "Tap selected/new profile to calibrate", scale=1, color=self._c_text_muted)
+        self._show_region(0, 40, 320, 200)
+        return True
+
+    def show_imu_calibration_prompt(self, title, body, footer="Tap bottom band to continue"):
+        self._touch_mode = "imu_prompt"
+        self._fb.fill(self._c_bg)
+        self._header(title)
+        lines = [line for line in str(body).split("\n") if line]
+        y = 58
+        for line in lines[:6]:
+            self._centered_scaled(y, self._truncate_text(line, 22), scale=2 if y < 90 else 1, color=self._c_text)
+            y += 26 if y < 90 else 18
+        self._button(28, 182, 264, 40, "CAPTURE", self._c_accent, self._c_bg)
+        if footer:
+            self._centered_scaled(162, self._truncate_text(footer, 32), scale=1, color=self._c_text_muted)
+        self.show()
+        return True
+
+    def _draw_heading_arrow(self, cx, cy, radius, angle_deg, color):
+        angle = math.radians(angle_deg)
+        tip_x = int(cx + (math.sin(angle) * radius))
+        tip_y = int(cy - (math.cos(angle) * radius))
+        left_angle = angle - 2.55
+        right_angle = angle + 2.55
+        left_x = int(tip_x + (math.sin(left_angle) * 16))
+        left_y = int(tip_y - (math.cos(left_angle) * 16))
+        right_x = int(tip_x + (math.sin(right_angle) * 16))
+        right_y = int(tip_y - (math.cos(right_angle) * 16))
+        self._fb.line(cx, cy, tip_x, tip_y, color)
+        self._fb.line(tip_x, tip_y, left_x, left_y, color)
+        self._fb.line(tip_x, tip_y, right_x, right_y, color)
+        self._fb.rect(cx - radius - 4, cy - radius - 4, (radius * 2) + 8, (radius * 2) + 8, self._c_panel_alt)
+
+    def _draw_tilt_indicator(self, x, y, w, h, angle_deg, label):
+        cx = x + (w // 2)
+        cy = y + (h // 2)
+        self._draw_panel(x, y, w, h, border=self._c_panel_alt, fill=self._c_bg)
+        self._text(x + 8, y + 6, label, self._c_text_muted, bg=self._c_bg)
+        line_half = max(18, min(34, (w // 2) - 16))
+        angle = math.radians(max(-60.0, min(60.0, angle_deg)))
+        dx = int(math.sin(angle) * line_half)
+        dy = int(math.cos(angle) * line_half)
+        self._fb.line(cx - dx, cy + dy, cx + dx, cy - dy, self._c_accent_soft)
+        self._fb.fill_rect(cx - 2, cy - 2, 5, 5, self._c_text)
+        self._centered_scaled(y + h - 14, "%+d deg" % int(round(angle_deg)), scale=1, color=self._c_text)
+
+    def show_logging_validation(self, profile_name, heading_deg, pitch_deg, roll_deg, status_text):
+        self._touch_mode = None
+        key = ("imu_validate", str(profile_name), int(heading_deg), int(pitch_deg), int(roll_deg), str(status_text))
+        if self._skip_render(key, min_interval_ms=120):
+            return True
+        self._fb.fill(self._c_bg)
+        self.refresh_topbar("IMU CHECK", color=self._c_accent, force=True)
+        self._draw_panel(8, 38, 148, 192, border=self._c_panel_alt, fill=self._c_panel)
+        self._draw_panel(164, 38, 148, 192, border=self._c_panel_alt, fill=self._c_panel)
+        self._centered_scaled(28, self._fit_text_px(str(profile_name or "PROFILE").upper(), 210, "ui"), scale=1, color=self._c_text)
+        self._text(30, 52, "TOP VIEW", self._c_text_muted, bg=self._c_panel)
+        self._draw_heading_arrow(82, 130, 44, heading_deg, self._c_accent_soft)
+        self._centered_scaled(170, self._fit_text_px("%+d deg to bike fwd" % int(round(heading_deg)), 118, "ui"), scale=1, color=self._c_text)
+        self._text(186, 52, "MOUNT ANGLE", self._c_text_muted, bg=self._c_panel)
+        self._draw_tilt_indicator(176, 74, 124, 62, roll_deg, "FRONT")
+        self._draw_tilt_indicator(176, 146, 124, 62, pitch_deg, "SIDE")
+        status_color = self._c_good if "OK" in str(status_text) else self._c_warn if "CHECK" in str(status_text) else self._c_bad
+        self._centered_scaled(218, self._fit_text_px(str(status_text or "IMU CHECK"), 180, "ui"), scale=1, color=status_color)
+        self._show_region(0, 20, 320, 220)
         return True
 
     def show_archive_confirm(self, pending_count=0):
@@ -2007,7 +2109,30 @@ class TFTBootUI:
                 self._last_touch_ms = now
                 return "track_prev"
             return None
-        max_scroll = 2
+        if self._touch_mode == "imu_profiles":
+            if 0 <= x <= 116 and 40 <= y <= 92:
+                self._last_touch_ms = now
+                return "back"
+            rows = (
+                (92, 122, "tank"),
+                (126, 156, "tail"),
+                (160, 190, "stem"),
+                (194, 224, "generic"),
+            )
+            for y0, y1, label in rows:
+                if 22 <= x <= 298 and y0 <= y <= y1:
+                    self._last_touch_ms = now
+                    return "imu_profile_" + label
+            return None
+        if self._touch_mode == "imu_prompt":
+            if 0 <= x <= 116 and 40 <= y <= 92:
+                self._last_touch_ms = now
+                return "back"
+            if 28 <= x <= 292 and 180 <= y <= 239:
+                self._last_touch_ms = now
+                return "capture"
+            return None
+        max_scroll = 3
         if 0 <= x <= 116 and 40 <= y <= 92:
             self._last_touch_ms = now
             return "back"
@@ -2018,7 +2143,7 @@ class TFTBootUI:
             self._last_touch_ms = now
             return "settings_down"
         if 22 <= x <= 270:
-            action_map = ("wifi", "track", "calibrate", "toggle_auto_log", "archive")
+            action_map = ("wifi", "track", "imu_profiles", "calibrate", "toggle_auto_log", "archive")
             rows = (
                 (96, 132),
                 (138, 174),

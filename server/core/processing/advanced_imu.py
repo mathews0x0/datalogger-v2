@@ -404,6 +404,8 @@ class AdvancedIMUProcessor:
         speeds: Optional[List[float]] = None,
         lats: Optional[List[float]] = None,
         lons: Optional[List[float]] = None,
+        calibration_profile: Optional[Dict[str, Any]] = None,
+        runtime_validation: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         if not timestamps:
             return self._empty_result()
@@ -416,6 +418,37 @@ class AdvancedIMUProcessor:
         self.config.sample_rate_est = 1.0 / dt if dt > 0 else 100.0
 
         gps_features = self._build_gps_features(timestamps, speeds, lats, lons)
+        if calibration_profile and calibration_profile.get("rotation_matrix"):
+            calibrated = self._compute_calibrated_profile_outputs(
+                timestamps=timestamps,
+                ax_raw=ax_raw,
+                ay_raw=ay_raw,
+                az_raw=az_raw,
+                gx_raw=gx_raw,
+                gy_raw=gy_raw,
+                gz_raw=gz_raw,
+                gps_features=gps_features,
+                calibration_profile=calibration_profile,
+                runtime_validation=runtime_validation,
+            )
+            calibrated["validation"] = self._validation.validate(
+                lean_angle=calibrated["lean_angle"],
+                acceleration_g=calibrated["acceleration_g"],
+                braking_g=calibrated["braking_g"],
+                lateral_g=calibrated["lateral_g"],
+                vertical_g=calibrated["az_cg"],
+                speeds=speeds,
+                straight_mask=gps_features["straight_mask"],
+                gps_longitudinal_g=gps_features["gps_accel_g"],
+                yaw_rate_deg_s=gps_features["yaw_rate_deg_s"],
+                mount_confidence=calibrated.get("mount_confidence", "HIGH"),
+            )
+            calibrated["diagnostics"] = {
+                "selected_algorithm": "calibrated_profile",
+                "candidate_scores": {"calibrated_profile": calibrated["validation"]["score"]},
+                "candidate_pass": {"calibrated_profile": calibrated["validation"]["passed"]},
+            }
+            return calibrated
         mount = self._resolve_mount(
             timestamps=timestamps,
             ax_raw=ax_raw,
@@ -1283,6 +1316,108 @@ class AdvancedIMUProcessor:
             "acceleration_g": acceleration_g,
             "braking_g": braking_g,
             "lateral_g": [round(math.tan(math.radians(_clamp(v, -60.0, 60.0))), 3) for v in lean_angle],
+        }
+
+    def _compute_calibrated_profile_outputs(
+        self,
+        timestamps: List[float],
+        ax_raw: List[float],
+        ay_raw: List[float],
+        az_raw: List[float],
+        gx_raw: List[float],
+        gy_raw: List[float],
+        gz_raw: List[float],
+        gps_features: Dict[str, List[float]],
+        calibration_profile: Dict[str, Any],
+        runtime_validation: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        rotation = calibration_profile.get("rotation_matrix") or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        gyro_bias = calibration_profile.get("gyro_bias") or [0.0, 0.0, 0.0]
+        accel_bias = calibration_profile.get("accel_bias") or [0.0, 0.0, 0.0]
+        self.rot_X = list(rotation[0])
+        self.rot_Y = list(rotation[1])
+        self.rot_Z = list(rotation[2])
+        self.gx_bias = float(gyro_bias[0]) if len(gyro_bias) > 0 else 0.0
+        self.gy_bias = float(gyro_bias[1]) if len(gyro_bias) > 1 else 0.0
+        self.gz_bias = float(gyro_bias[2]) if len(gyro_bias) > 2 else 0.0
+
+        ax_clean = _despike_series([a - float(accel_bias[0] if len(accel_bias) > 0 else 0.0) for a in ax_raw], self.config.imu_despike_window, self.config.imu_accel_despike_threshold)
+        ay_clean = _despike_series([a - float(accel_bias[1] if len(accel_bias) > 1 else 0.0) for a in ay_raw], self.config.imu_despike_window, self.config.imu_accel_despike_threshold)
+        az_clean = _despike_series([a - float(accel_bias[2] if len(accel_bias) > 2 else 0.0) for a in az_raw], self.config.imu_despike_window, self.config.imu_accel_despike_threshold)
+        gx_clean = _despike_series(gx_raw, self.config.imu_despike_window, self.config.imu_gyro_despike_threshold)
+        gy_clean = _despike_series(gy_raw, self.config.imu_despike_window, self.config.imu_gyro_despike_threshold)
+        gz_clean = _despike_series(gz_raw, self.config.imu_despike_window, self.config.imu_gyro_despike_threshold)
+
+        dt = max(0.005, min(0.05, _median_dt_seconds(timestamps)))
+        roll_est = 0.0
+        pitch_est = 0.0
+        validation_mode = (runtime_validation or {}).get("source_mode", "imu_trusted")
+        trust_scale = 1.0 if validation_mode == "imu_trusted" else 0.7 if validation_mode == "imu_warn" else 0.45
+
+        lean_angle: List[float] = []
+        pitch_angle: List[float] = []
+        yaw_angle: List[float] = []
+        ax_cg: List[float] = []
+        ay_cg: List[float] = []
+        az_cg: List[float] = []
+        acceleration_g: List[float] = []
+        braking_g: List[float] = []
+
+        for i in range(len(timestamps)):
+            accel_vec = [ax_clean[i], ay_clean[i], az_clean[i]]
+            gyro_vec = [
+                gx_clean[i] - self.gx_bias,
+                gy_clean[i] - self.gy_bias,
+                gz_clean[i] - self.gz_bias,
+            ]
+            a_long = _dot(accel_vec, self.rot_X)
+            a_lat = _dot(accel_vec, self.rot_Y)
+            a_up = _dot(accel_vec, self.rot_Z)
+            g_roll = _dot(gyro_vec, self.rot_X)
+            g_pitch = _dot(gyro_vec, self.rot_Y)
+            g_yaw = _dot(gyro_vec, self.rot_Z)
+
+            accel_roll = math.degrees(math.atan2(-a_lat, max(0.15, a_up)))
+            accel_pitch = math.degrees(math.atan2(a_long, max(0.15, a_up)))
+            roll_est = (0.985 * (roll_est + (g_roll * dt))) + (0.015 * accel_roll)
+            pitch_est = (0.985 * (pitch_est + (g_pitch * dt))) + (0.015 * accel_pitch)
+
+            lean = _clamp(roll_est * trust_scale, -60.0, 60.0)
+            longitudinal = _clamp(a_long * trust_scale, -1.5, 1.2)
+            lean_angle.append(round(lean, 1))
+            pitch_angle.append(round(pitch_est, 2))
+            yaw_angle.append(round(g_yaw, 2))
+            ax_cg.append(round(longitudinal, 3))
+            ay_cg.append(round(a_lat, 3))
+            az_cg.append(round(a_up, 3))
+            acceleration_g.append(round(max(longitudinal, 0.0), 3))
+            braking_g.append(round(abs(min(longitudinal, 0.0)), 3))
+
+        mount_confidence = "HIGH" if validation_mode == "imu_trusted" else "MEDIUM" if validation_mode == "imu_warn" else "LOW"
+        return {
+            "lean_angle": lean_angle,
+            "pitch_angle": pitch_angle,
+            "yaw_angle": yaw_angle,
+            "ax_cg": ax_cg,
+            "ay_cg": ay_cg,
+            "az_cg": az_cg,
+            "acceleration_g": acceleration_g,
+            "braking_g": braking_g,
+            "lateral_g": [round(math.tan(math.radians(_clamp(v, -60.0, 60.0))), 3) for v in lean_angle],
+            "mount_confidence": mount_confidence,
+            "mount_method": "stored_profile",
+            "rotation_matrix": rotation,
+            "gyro_bias": [self.gx_bias, self.gy_bias, self.gz_bias],
+            "gravity_vector": calibration_profile.get("gravity_vector", [0.0, 0.0, 1.0]),
+            "evidence_summary": {
+                "source": "stored_profile",
+                "profile_id": calibration_profile.get("id"),
+                "profile_label": calibration_profile.get("label"),
+                "profile_quality": calibration_profile.get("quality_score"),
+                "runtime_validation": runtime_validation or {},
+                "gps_heading_quality": round(gps_features.get("heading_quality", 0.0), 3),
+            },
+            "confidence": 0.95 if validation_mode == "imu_trusted" else 0.7 if validation_mode == "imu_warn" else 0.4,
         }
 
     def _compute_gps_fallback(self, gps_features: Dict[str, List[float]]) -> Dict[str, Any]:

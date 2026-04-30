@@ -1,6 +1,7 @@
 import os
 import csv
 import io
+import json
 from typing import TextIO, Union
 from src.analysis.core.models import Session, Sample, GPSSample, IMUSample, EnvSample
 
@@ -98,6 +99,7 @@ class CSVLoader:
         """
         imu_rows = []  # (tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z)
         gps_rows = []  # (tick_ms, lat, lon, alt, speed, sats, vbat)
+        markers = {}
         
         first_tick_ms = None
         gps_epoch_anchor = None
@@ -137,7 +139,12 @@ class CSVLoader:
                     gps_rows.append((tick_ms, lat, lon, alt, speed, sats, vbat))
                     # Also add to IMU list (G rows contain IMU data too)
                     imu_rows.append((tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z))
-                    
+                elif row_type == 'M':
+                    marker_name = (row.get("lon") or "").strip()
+                    marker_value = row.get("speed") or ""
+                    if marker_name:
+                        markers[marker_name] = marker_value
+
             except (ValueError, TypeError):
                 continue
         
@@ -208,6 +215,21 @@ class CSVLoader:
             env_sample = EnvSample(temp=0.0, pressure=vbat)
             
             session.add_sample(Sample(ts, gps_sample, imu_sample, env_sample))
+
+        session.device_metadata = {}
+        if markers.get("IMU_PROFILE") and markers.get("IMU_PROFILE") != "none":
+            try:
+                session.device_metadata["imu_profile"] = json.loads(markers["IMU_PROFILE"])
+            except Exception:
+                session.device_metadata["imu_profile_error"] = markers.get("IMU_PROFILE")
+        if markers.get("IMU_VALIDATION"):
+            try:
+                session.device_metadata["imu_validation"] = json.loads(markers["IMU_VALIDATION"])
+            except Exception:
+                session.device_metadata["imu_validation_error"] = markers.get("IMU_VALIDATION")
+        if session.device_metadata.get("imu_profile"):
+            session.mount_profile = session.device_metadata["imu_profile"]
+        if session.device_metadata.get("imu_validation"):
+            session.runtime_validation = session.device_metadata["imu_validation"]
         
         return session
-

@@ -167,6 +167,48 @@ class TestAdvancedIMUProcessor(unittest.TestCase):
         self.assertTrue(startup["method"].startswith("startup_"))
         self.assertGreaterEqual(startup["rollout_seconds"], 0.5)
 
+    def test_processor_uses_calibration_profile_when_provided(self):
+        processor = AdvancedIMUProcessor()
+        timestamps = [i * 0.01 for i in range(300)]
+        ax = [0.05] * 300
+        ay = [0.0] * 300
+        az = [1.0] * 300
+        gx = [0.0] * 300
+        gy = [0.0] * 300
+        gz = [0.0] * 300
+        speeds = [40.0] * 300
+        lats = [12.0] * 300
+        lons = [77.0 + (i * 0.00001) for i in range(300)]
+        profile = {
+            "id": "tank",
+            "label": "tank",
+            "rotation_matrix": [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            "gyro_bias": [0.0, 0.0, 0.0],
+            "accel_bias": [0.0, 0.0, 0.0],
+            "gravity_vector": [0.0, 0.0, 1.0],
+            "quality_score": 0.9,
+        }
+        validation = {"source_mode": "imu_trusted", "status_text": "ORIENTATION OK"}
+
+        result = processor.process(
+            timestamps=timestamps,
+            ax_raw=ax,
+            ay_raw=ay,
+            az_raw=az,
+            gx_raw=gx,
+            gy_raw=gy,
+            gz_raw=gz,
+            speeds=speeds,
+            lats=lats,
+            lons=lons,
+            calibration_profile=profile,
+            runtime_validation=validation,
+        )
+
+        self.assertEqual(result["mount_method"], "stored_profile")
+        self.assertEqual(result["diagnostics"]["selected_algorithm"], "calibrated_profile")
+        self.assertEqual(len(result["lean_angle"]), len(timestamps))
+
 
 if __name__ == "__main__":
     unittest.main()

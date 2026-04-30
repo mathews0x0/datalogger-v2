@@ -474,6 +474,210 @@ def load_active_track_data():
     except Exception:
         return None
 
+
+def _csv_escape(value):
+    if value is None:
+        return ""
+    text = str(value)
+    if '"' in text:
+        text = text.replace('"', '""')
+    if "," in text or "\n" in text or "\r" in text or '"' in text:
+        return '"' + text + '"'
+    return text
+
+
+def _format_csv_row(values):
+    return ",".join(_csv_escape(value) for value in values) + "\n"
+
+
+def _sample_imu_window(imu, duration_ms=1800, step_ms=10, wdt=None):
+    samples = []
+    if not imu:
+        return samples
+    buf = [0, 0, 0, 0, 0, 0]
+    end_ms = time.ticks_add(time.ticks_ms(), int(duration_ms))
+    while time.ticks_diff(end_ms, time.ticks_ms()) > 0:
+        if wdt:
+            try:
+                wdt.feed()
+            except Exception:
+                pass
+        try:
+            imu.get_values_into(buf)
+            samples.append({
+                "acc": [
+                    buf[0] / imu.ACC_SENSITIVITY,
+                    buf[1] / imu.ACC_SENSITIVITY,
+                    buf[2] / imu.ACC_SENSITIVITY,
+                ],
+                "gyro": [
+                    buf[3] / imu.GYR_SENSITIVITY,
+                    buf[4] / imu.GYR_SENSITIVITY,
+                    buf[5] / imu.GYR_SENSITIVITY,
+                ],
+            })
+        except Exception:
+            pass
+        time.sleep_ms(step_ms)
+    return samples
+
+
+def _wait_imu_prompt_capture(tft, wdt, title, body, footer="Tap capture"):
+    if not tft:
+        return True
+    tft.invalidate()
+    tft.show_imu_calibration_prompt(title, body, footer)
+    while True:
+        if wdt:
+            wdt.feed()
+        action = tft.settings_touch()
+        if action == "capture":
+            return True
+        if action == "back":
+            return False
+        time.sleep_ms(30)
+
+
+def _run_imu_profile_calibration(tft, imu, label, wdt):
+    from lib.imu_calibration import build_capture_summary, solve_profile, upsert_profile
+
+    if not imu:
+        if tft:
+            tft.show_message("IMU", "Sensor missing", "Cannot calibrate")
+        return None
+
+    steps = (
+        ("STATIC", "Hold bike still\nEngine OFF", "Captures gyro bias and gravity"),
+        ("ENGINE", "Hold bike still\nEngine ON", "Captures vibration baseline"),
+        ("LEAN LEFT", "Lean bike left\nthen tap capture", "Keep device mounted"),
+        ("LEAN RIGHT", "Lean bike right\nthen tap capture", "Keep device mounted"),
+        ("PUSH", "Push bike forward\nsmoothly for 2 sec", "Tap then perform motion"),
+    )
+    captures = []
+    for title, body, footer in steps:
+        if not _wait_imu_prompt_capture(tft, wdt, title, body, footer):
+            if tft:
+                tft.show_message("IMU", "Cancelled", "Calibration not saved")
+            return None
+        if tft:
+            tft.show_message(title, "Capturing...", "Hold steady")
+        duration_ms = 2200 if title == "PUSH" else 1800
+        samples = _sample_imu_window(imu, duration_ms=duration_ms, wdt=wdt)
+        if len(samples) < 40:
+            if tft:
+                tft.show_message("IMU", "Capture failed", "Try again")
+            return None
+        captures.append(build_capture_summary(samples))
+        time.sleep_ms(250)
+
+    profile = solve_profile(label, captures[0], captures[1], captures[2], captures[3], captures[4])
+    if float(profile.get("quality_score") or 0.0) < 0.45:
+        if tft:
+            tft.show_message("IMU", "Low quality", "Re-run calibration")
+        return None
+    if not upsert_profile(profile):
+        if tft:
+            tft.show_message("IMU", "Save failed", "Check storage")
+        return None
+    if tft:
+        tft.show_message("IMU", "Saved %s" % str(label).upper(), "Quality %.2f" % float(profile.get("quality_score") or 0.0))
+    return profile
+
+
+def _rollout_validation_status(profile, gps_samples, imu_samples):
+    status = "ORIENTATION OK"
+    source_mode = "imu_trusted"
+    reason = ""
+    confidence = 0.9
+    if not profile:
+        return {"status_text": "LOW CONFIDENCE", "source_mode": "gps_assisted", "reason": "no_profile", "confidence": 0.2}
+
+    rotation = profile.get("rotation_matrix") or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    gyro_bias = profile.get("gyro_bias") or [0.0, 0.0, 0.0]
+    vibration = (((profile.get("vibration") or {}).get("delta_acc_rms")) or [0.0, 0.0, 0.0])
+    forward = rotation[0]
+    up = rotation[2]
+
+    speed_gain = 0.0
+    prev_speed = None
+    for item in gps_samples:
+        speed = item.get("speed")
+        if speed is None:
+            continue
+        if prev_speed is not None and speed > prev_speed:
+            speed_gain += (speed - prev_speed)
+        prev_speed = speed
+
+    longitudinal_sum = 0.0
+    up_error_sum = 0.0
+    yaw_energy = 0.0
+    count = 0
+    for sample in imu_samples:
+        acc = sample.get("acc") or [0.0, 0.0, 0.0]
+        gyro = sample.get("gyro") or [0.0, 0.0, 0.0]
+        longitudinal_sum += (acc[0] * forward[0]) + (acc[1] * forward[1]) + (acc[2] * forward[2])
+        up_mag = abs((acc[0] * up[0]) + (acc[1] * up[1]) + (acc[2] * up[2]))
+        up_error_sum += abs(1.0 - up_mag)
+        yaw_energy += abs(gyro[0] - gyro_bias[0]) + abs(gyro[1] - gyro_bias[1]) + abs(gyro[2] - gyro_bias[2])
+        count += 1
+    mean_longitudinal = longitudinal_sum / count if count else 0.0
+    mean_up_error = up_error_sum / count if count else 1.0
+    mean_yaw = yaw_energy / count if count else 0.0
+    vib_strength = math.sqrt((vibration[0] * vibration[0]) + (vibration[1] * vibration[1]) + (vibration[2] * vibration[2]))
+
+    if speed_gain > 4.0 and mean_longitudinal < -0.03:
+        status = "LOW CONFIDENCE"
+        source_mode = "gps_assisted"
+        reason = "forward_sign_conflict"
+        confidence = 0.25
+    elif mean_up_error > 0.28 or vib_strength > 0.65:
+        status = "CHECK MOUNT"
+        source_mode = "imu_warn"
+        reason = "tilt_or_vibration_mismatch"
+        confidence = 0.55
+    elif mean_yaw > 20.0 and speed_gain < 1.0:
+        status = "CHECK MOUNT"
+        source_mode = "imu_warn"
+        reason = "gyro_mismatch"
+        confidence = 0.6
+
+    return {
+        "status_text": status,
+        "source_mode": source_mode,
+        "reason": reason,
+        "confidence": confidence,
+        "mean_longitudinal": round(mean_longitudinal, 4),
+        "mean_up_error": round(mean_up_error, 4),
+        "mean_yaw": round(mean_yaw, 4),
+        "speed_gain": round(speed_gain, 2),
+    }
+
+
+def _profile_heading_deg(profile):
+    if not profile:
+        return 0.0
+    rotation = profile.get("rotation_matrix") or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    forward = rotation[0]
+    forward_flat = [float(forward[0]), float(forward[1]), 0.0]
+    mag = math.sqrt((forward_flat[0] * forward_flat[0]) + (forward_flat[1] * forward_flat[1]))
+    if mag <= 1e-6:
+        return 0.0
+    display_up = [0.0, 1.0, 0.0]
+    display_right = [1.0, 0.0, 0.0]
+    up_component = ((forward_flat[0] * display_up[0]) + (forward_flat[1] * display_up[1])) / mag
+    right_component = ((forward_flat[0] * display_right[0]) + (forward_flat[1] * display_right[1])) / mag
+    return math.degrees(math.atan2(right_component, up_component if abs(up_component) > 1e-6 else 1e-6))
+
+
+def _profile_mount_angles(profile):
+    if not profile:
+        return 0.0, 0.0
+    rotation = profile.get("rotation_matrix") or [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    sensor_z_bike = [rotation[0][2], rotation[1][2], rotation[2][2]]
+    pitch_deg = math.degrees(math.atan2(sensor_z_bike[0], max(0.1, sensor_z_bike[2])))
+    roll_deg = math.degrees(math.atan2(-sensor_z_bike[1], max(0.1, sensor_z_bike[2])))
+    return pitch_deg, roll_deg
+
 def setup():
     print("\n--- ESP32-S3 RACESENSE V2 DATALOGGER ---")
     diag.record_phase("BOOT_SETUP_START")
@@ -675,12 +879,15 @@ def setup():
 
     return led, gps, imu, sm, track_eng, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
 
-def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold):
+def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold):
     from lib.wifi_manager import load_device_config
+    from lib.imu_calibration import list_profiles, get_selected_profile, set_selected_profile
     config = load_device_config()
     auto_log_enabled = bool(config.get("auto_log_enabled", True))
     active_track_data = load_active_track_data()
     home_track_name = (active_track_data or {}).get("track_name") or (active_track_data or {}).get("name") or ""
+    selected_profile = get_selected_profile()
+    selected_mount_label = str((selected_profile or {}).get("label") or "")
     if not config.get('ssid'):
         print("\n[System] No WiFi configured — staying on Home. Use SYNC or Settings > WIFI to configure.")
         auto_log_enabled = False
@@ -724,6 +931,7 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 paused=paused,
                 auto_log_enabled=auto_log_enabled,
                 track_name=home_track_name,
+                mount_label=selected_mount_label,
             )
             home_rendered_once = True
             print("[TFT] Home shown")
@@ -741,6 +949,8 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                     tft.show_track_view(active_track_data, page=1)
                 elif settings_page == "archive_confirm":
                     tft.show_archive_confirm(pending_count=pending_summary.get("count", 0))
+                elif settings_page == "imu_profiles":
+                    tft.show_imu_profiles(list_profiles(), selected_id=(selected_profile or {}).get("id", ""))
                 else:
                     tft.show_settings(
                         config.get('ssid', ''),
@@ -758,7 +968,7 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 tft.invalidate()
                 continue
             if settings_action == "settings_down":
-                settings_scroll_index = min(2, settings_scroll_index + 1)
+                settings_scroll_index = min(3, settings_scroll_index + 1)
                 settings_rendered = False
                 tft.invalidate()
                 continue
@@ -769,6 +979,11 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 continue
             if settings_action == "track":
                 settings_page = "track_layout"
+                settings_rendered = False
+                tft.invalidate()
+                continue
+            if settings_action == "imu_profiles":
+                settings_page = "imu_profiles"
                 settings_rendered = False
                 tft.invalidate()
                 continue
@@ -796,6 +1011,29 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 tft.invalidate()
                 settings_page = "settings"
                 settings_rendered = False
+                continue
+            if settings_action and settings_action.startswith("imu_profile_"):
+                label = settings_action.replace("imu_profile_", "")
+                existing = None
+                for profile in list_profiles():
+                    if str(profile.get("label") or "").lower() == label:
+                        existing = profile
+                        break
+                should_calibrate = existing is None or str((selected_profile or {}).get("id") or "") == str((existing or {}).get("id") or "")
+                if should_calibrate:
+                    print("[System] IMU calibration requested for profile:", label)
+                    new_profile = _run_imu_profile_calibration(tft, imu, label, wdt)
+                    if new_profile:
+                        selected_profile = new_profile
+                        selected_mount_label = str(new_profile.get("label") or "")
+                else:
+                    if set_selected_profile(existing.get("id")):
+                        selected_profile = existing
+                        selected_mount_label = str(existing.get("label") or "")
+                        tft.show_message("IMU", "Selected %s" % label.upper(), "Ready to log")
+                settings_page = "imu_profiles"
+                settings_rendered = False
+                tft.invalidate()
                 continue
             if settings_action == "archive":
                 settings_page = "archive_confirm"
@@ -870,6 +1108,8 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                     tft.show_track_view(active_track_data, page=1)
                 elif settings_page == "archive_confirm":
                     tft.show_archive_confirm(pending_count=pending_summary.get("count", 0))
+                elif settings_page == "imu_profiles":
+                    tft.show_imu_profiles(list_profiles(), selected_id=(selected_profile or {}).get("id", ""))
                 else:
                     tft.show_settings(
                         config.get('ssid', ''),
@@ -941,6 +1181,7 @@ def run_home_window(led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok
                 paused=paused,
                 auto_log_enabled=auto_log_enabled,
                 track_name=home_track_name,
+                mount_label=selected_mount_label,
             )
         
         # Exit condition: 10s passed AND GPS is okay
@@ -977,7 +1218,7 @@ def main():
 
     while True:
         action, force_pairing_requested = run_home_window(
-            led, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold
+            led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold
         )
         if action == "sync":
             print("\n[System] ==> SYNC MODE")
@@ -1766,6 +2007,12 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
     diag.mark_boot_completed("logging_loop_running")
     prepare_shared_spi_bus()
     log_file = sm.get_log_file()
+    try:
+        from lib.imu_calibration import get_selected_profile
+        selected_profile = get_selected_profile()
+    except Exception:
+        selected_profile = None
+    selected_profile_name = str((selected_profile or {}).get("name") or (selected_profile or {}).get("label") or "")
     print(f"[System] Session file: {log_file}")
     if tft:
         track_status = track_eng.get_status()
@@ -1795,6 +2042,15 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
     dropped_rows = 0
     max_queue_depth = 0
     min_heap = -1
+    rollout_imu_samples = []
+    rollout_gps_samples = []
+    rollout_validation = {
+        "status_text": "LOW CONFIDENCE" if not selected_profile else "ORIENTATION OK",
+        "source_mode": "gps_assisted" if not selected_profile else "imu_trusted",
+        "reason": "no_profile" if not selected_profile else "",
+        "confidence": 0.2 if not selected_profile else 0.9,
+    }
+    last_validation_render_tick = -100
     
     # Cached values
     vbat = get_battery_voltage(vbat_adc, force=True)
@@ -1911,9 +2167,19 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
             '',
             f"{vbat:.2f}",
         ]
-        queue_row(','.join(row) + '\n')
+        queue_row(_format_csv_row(row))
+
+    def append_json_marker(marker_name, payload):
+        try:
+            append_marker(marker_name, ujson.dumps(payload))
+        except Exception as e:
+            append_marker(marker_name, "json_error:%s" % e)
 
     append_marker("LOG_OPEN", log_file.split('/')[-1])
+    if selected_profile:
+        append_json_marker("IMU_PROFILE", selected_profile)
+    else:
+        append_marker("IMU_PROFILE", "none")
     
     while True:
         tick_start = time.ticks_ms()
@@ -1956,6 +2222,11 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
         # Write IMU row (row_type = I, GPS fields empty, including gps_epoch)
         if f and not stop_logging:
             queue_row(f"{tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,\n")
+            if loop_count <= 500:
+                rollout_imu_samples.append({
+                    "acc": [acc_x, acc_y, acc_z],
+                    "gyro": [gyr_x, gyr_y, gyr_z],
+                })
         
         # ── 2. GPS READ (every 10th tick = 10 Hz) ──
         if loop_count % 10 == 0:
@@ -1990,6 +2261,12 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                 epoch_val = fix.get('gps_epoch', 0)
                 queue_row(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f}," +
                           f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f},{epoch_val}\n")
+                if loop_count <= 500:
+                    rollout_gps_samples.append({
+                        "speed": float(fix.get("speed_kmh") or 0.0),
+                        "lat": fix.get("lat"),
+                        "lon": fix.get("lon"),
+                    })
                 
                 # Track Engine (only on GPS rows)
                 try:
@@ -2049,7 +2326,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
             ram_used_mb, ram_total_mb = get_ram_usage_mb(force=True)
             track_status = track_eng.get_status()
             update_display_context(tft, sm, vbat_adc, ram_used_mb=ram_used_mb, ram_total_mb=ram_total_mb)
-            if tft:
+            if tft and loop_count > 500:
                 tft.show_logging_live(
                     log_file,
                     sats=fix.get('satellites', 0),
@@ -2058,6 +2335,39 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                     elapsed_minutes=elapsed_minutes,
                     track_data=track_eng.track,
                 )
+        if tft and loop_count <= 500 and (loop_count - last_validation_render_tick) >= 10:
+            last_validation_render_tick = loop_count
+            pitch_deg, roll_deg = _profile_mount_angles(selected_profile)
+            tft.show_logging_validation(
+                selected_profile_name or "UNSET",
+                _profile_heading_deg(selected_profile),
+                pitch_deg,
+                roll_deg,
+                rollout_validation.get("status_text"),
+            )
+        if loop_count == 500:
+            rollout_validation = _rollout_validation_status(selected_profile, rollout_gps_samples, rollout_imu_samples)
+            append_json_marker("IMU_VALIDATION", rollout_validation)
+            if tft:
+                pitch_deg, roll_deg = _profile_mount_angles(selected_profile)
+                tft.show_logging_validation(
+                    selected_profile_name or "UNSET",
+                    _profile_heading_deg(selected_profile),
+                    pitch_deg,
+                    roll_deg,
+                    rollout_validation.get("status_text"),
+                )
+        if loop_count == 501 and tft:
+            track_status = track_eng.get_status()
+            tft.invalidate()
+            tft.show_logging_live(
+                log_file,
+                sats=fix.get('satellites', 0),
+                gps_ok=fix.get('valid', False),
+                track_name=track_status.get("track_name"),
+                elapsed_minutes=0,
+                track_data=track_eng.track,
+            )
         if loop_count % 1000 == 0:
             ram_used_mb_storage, ram_total_mb_storage = get_ram_usage_mb()
             try:

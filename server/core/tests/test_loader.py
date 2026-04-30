@@ -111,6 +111,15 @@ class TestCSVLoader(unittest.TestCase):
         self.assertAlmostEqual(session.samples[0].gps.lat, 0.0)
         self.assertAlmostEqual(session.samples[0].gps.lon, 0.0)
 
+    def test_dual_rate_marker_metadata(self):
+        csv_data = """tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch
+1000,M,,,,,,,MARKER,IMU_PROFILE,1,"{""id"": ""tank"", ""label"": ""tank"", ""rotation_matrix"": [[1,0,0],[0,1,0],[0,0,1]]}",,3.80,
+1010,I,0.11,0.21,1.01,1.1,2.1,3.1,,,,,,,
+1020,M,,,,,,,MARKER,IMU_VALIDATION,2,"{""source_mode"": ""imu_trusted"", ""status_text"": ""ORIENTATION OK""}",,3.80,
+"""
+        session = CSVLoader().load(io.StringIO(csv_data))
+        self.assertEqual(getattr(session, "mount_profile", {}).get("id"), "tank")
+        self.assertEqual(getattr(session, "runtime_validation", {}).get("source_mode"), "imu_trusted")
+
 if __name__ == '__main__':
     unittest.main()
-

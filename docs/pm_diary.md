@@ -4363,3 +4363,218 @@ The device wording now uses lowercase:
 - destructive maintenance is easier to reach but still guarded
 - settings is now organized as a scrollable, touch-friendly menu with larger targets
 - submenu navigation is more consistent, especially for returning back into settings
+
+## 2026-05-01 - Arbitrary-Mount IMU Profiles, Logging Validation Screen, and Calibrated Session Processing
+
+### Objective
+
+PM redirected the IMU roadmap away from the previous front-facing mount assumption and toward a more realistic production model:
+
+- the device may be mounted on the tank, tail, or handlebar stem
+- the device may be rotated arbitrarily relative to bike forward
+- the bike will produce harsh vibration in actual race conditions
+- the rider can now use the TFT touchscreen, so mount calibration no longer needs to be inferred purely from ride data
+
+The core product decision was:
+
+> the system should stop guessing mount orientation from telemetry alone and instead establish a persistent per-mount calibration profile on-device, then carry that profile through logging and backend session processing.
+
+### Context
+
+The previous server IMU pipeline had become stronger, but it still contained a fundamental compromise:
+
+- it tried to derive a trustworthy bike frame from ride data
+- it still leaned on GPS as a stabilizing baseline for absolute lean and longitudinal behavior
+- it implicitly assumed a constrained forward-facing install model
+
+That was no longer sufficient for the actual product direction.
+
+Once a rider-facing touchscreen existed on the device, the product no longer needed to accept that compromise. PM explicitly chose to spend user interaction budget on calibration so the system could support:
+
+- arbitrary sensor yaw
+- non-flat install angle
+- different physical mount positions
+- persistent per-mount reuse instead of one-off session inference
+
+### Product Decision
+
+The calibration model was changed from session-time inference to profile-based persistent calibration.
+
+From this point forward:
+
+- a rider can create a named mount profile such as `tank`, `tail`, `stem`, or `generic`
+- calibration is done once per mount profile unless the rider chooses to recalibrate
+- the selected profile is trusted at logging start
+- the first seconds of logging are used only for passive validation and rider confirmation, not for blocking the session
+
+This was a meaningful product contract change:
+
+- the old idea of "the backend figures out how the unit was mounted this time" is no longer the primary path
+- the new primary path is "the device already knows how it is mounted because the rider calibrated that mount profile"
+
+### Firmware Calibration Flow Added
+
+The device firmware gained a dedicated IMU profile calibration path from the TFT settings flow.
+
+The implemented calibration sequence now captures:
+
+1. `STATIC`
+   - bike still
+   - engine off
+   - used to estimate gravity vector and gyro bias
+
+2. `ENGINE`
+   - bike still
+   - engine on
+   - used to characterize vibration baseline
+
+3. `LEAN LEFT`
+   - rider deliberately leans the bike left
+   - used to help resolve lateral sign
+
+4. `LEAN RIGHT`
+   - rider deliberately leans the bike right
+   - used to confirm lateral directionality
+
+5. `PUSH`
+   - rider pushes the bike forward smoothly
+   - used to resolve forward direction in the bike frame
+
+From those captures, firmware now computes and persists a mount profile containing:
+
+- `rotation_matrix`
+- `gyro_bias`
+- `accel_bias` placeholder
+- `gravity_vector`
+- `mount_tilt`
+- vibration metrics
+- profile quality score
+- raw capture summaries for traceability
+
+The profile store lives on-device under protected metadata and is not part of normal code wipe behavior.
+
+### TFT Settings / Mount Profile UX
+
+The settings model was expanded so the rider can manage mount profiles directly on-device.
+
+The device now exposes:
+
+- a dedicated `mount profile` item in settings
+- profile selection for `tank`, `tail`, `stem`, and `generic`
+- reuse of a saved profile without forcing a per-session recalibration
+- recalibration of the currently selected profile from the same screen
+
+This was a deliberate friction reduction choice:
+
+- calibration remains available and important
+- but repeated session startup should not force a rider back through a full ritual if the physical setup has not changed
+
+### Logging Start Validation Screen
+
+PM also required a rider-facing confirmation screen at logging start so the mount interpretation is visible immediately.
+
+During the first ~5 seconds of logging, the TFT now shows an IMU validation screen instead of the normal logging screen.
+
+The first implemented version used live-derived tilt and a directly projected heading. Field feedback showed two real UX problems:
+
+- the left arrow could appear to point left even when the bike-forward assumption was correct
+- the right tilt view could invert left/right relative to the rider's expectation
+
+This feedback led to a more precise product definition:
+
+- the left panel should represent the device's **stored calibrated orientation relative to bike forward**
+- the right side should represent the device's **stored mount angles**, not dynamic riding lean
+
+The corrected validation screen now does this:
+
+- **Left panel (`TOP VIEW`)**
+  - shows a mount arrow derived from the saved calibration transform
+  - the arrow is displayed as a yaw offset relative to rider-readable bike forward
+  - if the device is mounted rotated 45 degrees on the bike, that 45-degree relationship is what the rider sees
+
+- **Right side (`MOUNT ANGLE`)**
+  - split into two static indicators
+  - `FRONT` shows roll / cant when viewed from the front of the bike
+  - `SIDE` shows pitch / nose-up angle when viewed from the side
+  - a flat mount should show approximately `0 / 0`
+  - a nose-up mount should show positive pitch on the `SIDE` indicator
+
+This was an important product clarification:
+
+- the screen is not trying to show dynamic IMU motion during those first seconds
+- it is trying to show whether the saved mount geometry matches reality
+
+### Logging Metadata Contract Changed
+
+To make the calibration visible to the backend without inventing a separate sync path, the logging CSV contract was extended through marker rows.
+
+The firmware now writes sparse `M` rows for IMU metadata such as:
+
+- `IMU_PROFILE`
+- `IMU_VALIDATION`
+
+That means each uploaded session can carry:
+
+- the selected mount profile
+- the stored transform / bias metadata
+- the passive rollout validation result
+
+without requiring a second upload format.
+
+### Backend Session Processing Changed
+
+The server ingestion and processing path was updated so calibrated sessions no longer have to depend on ride-time mount discovery as the primary orientation source.
+
+The key processing change is:
+
+- if a valid calibration profile exists in the session metadata, backend processing now consumes that profile directly
+- the stored `rotation_matrix` and `gyro_bias` become the primary orientation input
+- runtime validation status influences confidence tier, but does not redefine the mount transform
+
+This changes the backend posture materially:
+
+- it is no longer "derive mount first, then maybe trust it"
+- it is now "use the stored mount profile first, then validate the session around it"
+
+### Confidence / Source Semantics
+
+The pipeline now formalizes three result tiers:
+
+- `imu_trusted`
+- `imu_warn`
+- `gps_assisted`
+
+These source modes now propagate through calibration/session metadata so the product can distinguish:
+
+- sessions with a trusted calibration path
+- sessions where the mount interpretation is plausible but not fully clean
+- sessions that should be treated as degraded and GPS-assisted
+
+This matters because the product should not silently fall back while still implying that the IMU result is fully authoritative.
+
+### Documentation / Architecture Meaning
+
+This work changes the architectural truth of the product:
+
+- arbitrary mounting is now an explicit target, not a side effect
+- persistent mount profiles are now part of the firmware state model
+- marker-row metadata now carries mount/profile state into the backend
+- the TFT is not just a status display; it is now an active calibration instrument
+
+It also retires an older assumption that remained in active documentation:
+
+- the BMI323 no longer needs to be mounted flat as a product requirement
+- the system now expects that mounting angle and orientation may vary and should be captured explicitly through calibration
+
+### Outcome
+
+- on-device persistent IMU mount profiles now exist
+- riders can select and reuse mount profiles without forced per-session recalibration
+- TFT settings now includes mount-profile management
+- logging start now shows rider-facing mount validation for the selected profile
+- the validation UI now reflects saved mount geometry rather than unstable dynamic interpretation
+- session CSVs now carry IMU profile and validation metadata through marker rows
+- backend session processing now consumes stored calibration profiles directly when available
+- calibrated sessions can now follow an IMU-primary processing path with explicit confidence semantics
+
+This is the first point where the product begins to treat arbitrary mounting as a real supported use case rather than an analysis-time approximation.
