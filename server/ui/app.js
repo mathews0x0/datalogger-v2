@@ -26,6 +26,7 @@ function setCustomApiUrl() {
 // initialization
 let tracks = [];
 let sessions = [];
+let pendingSessionTrackFilter = null;
 let activeTrackId = null;  // Track identified by ESP32 status
 let lastSyncedTrackId = null; // Track we last pushed to ESP32
 let isDeviceConnected = false; // True only when device is confirmed reachable
@@ -2822,17 +2823,31 @@ async function viewTrack(trackId) {
 }
 
 function viewTrackSessions(trackId) {
-    saveUiState('ui:sessionTrackFilter', String(trackId));
+    pendingSessionTrackFilter = trackId != null ? String(trackId) : null;
     currentSessionTab = 'sessions';
     saveUiState('ui:sessionTab', 'sessions');
     showView('sessions');
     switchSessionTab('sessions');
-    loadSessions(trackId);
 }
 
 // ============================================================================
 // SESSIONS VIEW
 // ============================================================================
+
+function sessionTrackFilterLabel(track) {
+    const baseName = track?.track_name || 'Unknown Track';
+    const scopeLabel = track?.track_scope === 'global' ? 'Canonical' : 'Fallback';
+    return `${baseName} (${scopeLabel})`;
+}
+
+function populateSessionTrackFilterOptions(filterSelect, trackItems, selectedTrackId = '') {
+    if (!filterSelect) return;
+    filterSelect.innerHTML = '<option value="">All Tracks</option>' +
+        (trackItems || []).map(track =>
+            `<option value="${track.track_id}">${sessionTrackFilterLabel(track)}</option>`
+        ).join('');
+    filterSelect.value = selectedTrackId ? String(selectedTrackId) : '';
+}
 
 async function loadSessions(filterTrackId = null) {
     const container = document.getElementById('sessionsList');
@@ -2843,25 +2858,19 @@ async function loadSessions(filterTrackId = null) {
     container.innerHTML = renderSkeletonCards(3, 'session');
 
     try {
-        // Load sessions
         const endpoint = filterTrackId ? `/api/sessions?track_id=${filterTrackId}` : '/api/sessions';
-        sessions = await apiCall(endpoint);
+        const [tracksData, sessionsData] = await Promise.all([
+            apiCall('/api/tracks'),
+            apiCall(endpoint),
+        ]);
 
-        // Populate filter dropdown
-        if (!filterTrackId) {
-            const tracksData = await apiCall('/api/tracks');
-            filterSelect.innerHTML = '<option value="">All Tracks</option>' +
-                tracksData.tracks.map(t => `<option value="${t.track_id}">${t.track_name}</option>`).join('');
+        populateSessionTrackFilterOptions(filterSelect, tracksData?.tracks || [], filterTrackId || '');
+        filterSelect.onchange = (e) => {
+            const trackId = e.target.value ? parseInt(e.target.value, 10) : null;
+            loadSessions(trackId);
+        };
 
-            const savedTrackId = readUiState('ui:sessionTrackFilter', '');
-            if (savedTrackId) filterSelect.value = savedTrackId;
-
-            filterSelect.onchange = (e) => {
-                const trackId = e.target.value ? parseInt(e.target.value) : null;
-                saveUiState('ui:sessionTrackFilter', e.target.value || '');
-                loadSessions(trackId);
-            };
-        }
+        sessions = sessionsData || [];
         renderSessionsList(sessions);
 
     } catch (error) {
@@ -3143,8 +3152,9 @@ function switchSessionTab(tab) {
     if (tab === 'trackdays') {
         loadTrackdays();
     } else {
-        const savedTrackId = readUiState('ui:sessionTrackFilter', '');
-        loadSessions(savedTrackId ? parseInt(savedTrackId, 10) : null);
+        const explicitTrackId = pendingSessionTrackFilter;
+        pendingSessionTrackFilter = null;
+        loadSessions(explicitTrackId ? parseInt(explicitTrackId, 10) : null);
     }
 }
 

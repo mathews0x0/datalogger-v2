@@ -2001,6 +2001,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
     loop_count = 0
     FLUSH_INTERVAL = 20  # rows before flushing to SD
     LOGGING_UI_INTERVAL_TICKS = 6000  # 60s at 100Hz
+    IMU_VALIDATION_DURATION_MS = 5000
     
     print("\n[System] Logging Active — 100Hz IMU / 10Hz GPS — All radios OFF")
     diag.record_phase("LOGGING_START")
@@ -2051,6 +2052,9 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
         "confidence": 0.2 if not selected_profile else 0.9,
     }
     last_validation_render_tick = -100
+    validation_start_ms = time.ticks_ms()
+    validation_complete = False
+    validation_live_shown = False
     
     # Cached values
     vbat = get_battery_voltage(vbat_adc, force=True)
@@ -2335,7 +2339,8 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                     elapsed_minutes=elapsed_minutes,
                     track_data=track_eng.track,
                 )
-        if tft and loop_count <= 500 and (loop_count - last_validation_render_tick) >= 10:
+        validation_active = not validation_complete and time.ticks_diff(tick_ms, validation_start_ms) < IMU_VALIDATION_DURATION_MS
+        if tft and validation_active and (loop_count - last_validation_render_tick) >= 10:
             last_validation_render_tick = loop_count
             pitch_deg, roll_deg = _profile_mount_angles(selected_profile)
             tft.show_logging_validation(
@@ -2345,7 +2350,8 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                 roll_deg,
                 rollout_validation.get("status_text"),
             )
-        if loop_count == 500:
+        if not validation_complete and time.ticks_diff(tick_ms, validation_start_ms) >= IMU_VALIDATION_DURATION_MS:
+            validation_complete = True
             rollout_validation = _rollout_validation_status(selected_profile, rollout_gps_samples, rollout_imu_samples)
             append_json_marker("IMU_VALIDATION", rollout_validation)
             if tft:
@@ -2357,7 +2363,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                     roll_deg,
                     rollout_validation.get("status_text"),
                 )
-        if loop_count == 501 and tft:
+        if validation_complete and not validation_live_shown and tft:
             track_status = track_eng.get_status()
             tft.invalidate()
             tft.show_logging_live(
@@ -2368,6 +2374,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                 elapsed_minutes=0,
                 track_data=track_eng.track,
             )
+            validation_live_shown = True
         if loop_count % 1000 == 0:
             ram_used_mb_storage, ram_total_mb_storage = get_ram_usage_mb()
             try:

@@ -125,6 +125,9 @@ class TFTBootUI:
         self._logging_status_text = "READY"
         self._logging_status_color = self._c_warn
         self._logging_status_mode = "status"
+        self._logging_last_lap_text = "--.---"
+        self._logging_last_lap_color = self._c_text_dim
+        self._logging_has_lap = False
         self._logging_layout_cache = None
         self._logging_layout_key = None
         self._logging_screen_active = False
@@ -446,31 +449,53 @@ class TFTBootUI:
     def _draw_logging_background(self, track_data):
         self._fb.fill(self._c_bg)
         self._header("LOGGING", color=self._c_good if self._logging_gps_ok else self._c_bad)
-        self._draw_panel(18, 54, 284, 108, border=self._c_panel_alt, fill=self._c_panel)
+        self._text(16, 54, "LAST LAP", self._c_text_muted, bg=self._c_bg)
+        self._draw_logging_lap_time_panel()
 
-        layout = self._prepare_logging_layout(track_data)
-        if layout:
-            points = layout["polyline"]
-            for idx in range(1, len(points)):
-                x0, y0 = points[idx - 1]
-                x1, y1 = points[idx]
-                self._fb.line(x0, y0, x1, y1, self._c_accent_soft)
-            for marker in layout["sector_markers"]:
-                self._fb.fill_rect(marker["x"] - 2, marker["y"] - 2, 5, 5, self._c_warn)
-            if layout["start_marker"]:
-                marker = layout["start_marker"]
-                self._fb.fill_rect(marker[0] - 3, marker[1] - 3, 7, 7, self._c_good)
-        else:
-            self._centered_scaled(92, "Recording", scale=2, color=self._c_text)
-
-        self._draw_panel(18, 166, 284, 22, border=self._c_panel_alt, fill=self._c_panel)
-        self._text(28, 172, "TRACK", self._c_text_muted, bg=self._c_panel)
-        track_label = self._fit_text_px(self._logging_track_name or "No track", 160, "ui")
-        self._text(82, 172, track_label, self._c_text if self._logging_track_name else self._c_text_dim, bg=self._c_panel)
+        self._draw_panel(12, 198, 296, 30, border=self._c_panel_alt, fill=self._c_bg)
+        self._text(22, 207, "TRACK", self._c_text_muted, bg=self._c_bg)
+        track_label = self._fit_text_px(self._logging_track_name or "No track", 150, "ui")
+        self._text(74, 207, track_label, self._c_text if self._logging_track_name else self._c_text_dim, bg=self._c_bg)
         elapsed = "T+%dm" % max(0, int(self._logging_elapsed_minutes))
-        self._text(294 - self._text_width(elapsed, "ui"), 172, elapsed, self._c_text, bg=self._c_panel)
-        self._draw_logging_status_band()
+        elapsed_x = 300 - self._text_width(elapsed, "ui")
+        self._text(elapsed_x, 207, elapsed, self._c_text, bg=self._c_bg)
         self._logging_screen_active = True
+
+    def _draw_thick_data_text(self, x, y, text, color, bg):
+        offsets = (
+            (-2, 0),
+            (-1, 0),
+            (0, 0),
+            (1, 0),
+            (2, 0),
+            (0, -1),
+            (0, 1),
+        )
+        for dx, dy in offsets:
+            self._text_data(x + dx, y + dy, text, color, bg=bg)
+
+    def _draw_logging_lap_time_panel(self):
+        panel_x = 10
+        panel_y = 68
+        panel_w = 300
+        panel_h = 118
+        self._fb.fill_rect(panel_x, panel_y, panel_w, panel_h, self._c_bg)
+        self._fb.rect(panel_x, panel_y, panel_w, panel_h, self._c_panel_alt)
+
+        if self._logging_has_lap:
+            lap_text = str(self._logging_last_lap_text or "--.---")
+            lap_color = self._logging_last_lap_color or self._c_text
+        else:
+            lap_text = "--.---"
+            lap_color = self._c_text
+
+        text_w = self._text_width(lap_text, "data")
+        text_x = max(panel_x + 12, (self.width - text_w) // 2)
+        text_y = panel_y + 32
+        self._draw_thick_data_text(text_x, text_y, lap_text, lap_color, self._c_bg)
+
+        footer = "LED handles sector feedback" if self._logging_has_lap else "Waiting for first lap"
+        self._centered_scaled(panel_y + 94, footer, scale=1, color=self._c_text_muted)
 
     def _draw_logging_status_band(self):
         band_x = 10
@@ -500,16 +525,16 @@ class TFTBootUI:
 
     def _apply_logging_event(self, event):
         if not isinstance(event, dict):
-            self._logging_status_mode = "status"
-            self._logging_status_text = str(event or "READY")
-            self._logging_status_color = "orange"
             return
         event_type = str(event.get("type") or "")
-        if event_type not in ("sector_complete", "lap_complete"):
+        if event_type != "lap_complete":
             return
         self._logging_status_mode = event_type
         self._logging_status_text = str(event.get("display_text") or "READY")
         self._logging_status_color = event.get("display_color") or "orange"
+        self._logging_last_lap_text = str(event.get("display_text") or "--.---")
+        self._logging_last_lap_color = self._c_text
+        self._logging_has_lap = True
 
     def _start_region_screen(self):
         self._fb.fill(self._c_bg)
@@ -1978,6 +2003,9 @@ class TFTBootUI:
         self._logging_status_mode = "status"
         self._logging_status_text = "READY"
         self._logging_status_color = "orange"
+        self._logging_last_lap_text = "--.---"
+        self._logging_last_lap_color = self._c_text
+        self._logging_has_lap = False
         self._draw_logging_background(track_data)
         self.show()
         return True
@@ -2000,8 +2028,9 @@ class TFTBootUI:
         self._apply_logging_event(event)
         if self._logging_screen_active:
             self.refresh_topbar("LOGGING", color=self._c_good if self._logging_gps_ok else self._c_bad)
-            self._draw_logging_status_band()
-            self._show_region(10, 192, 300, 40)
+            if str((event or {}).get("type") or "") == "lap_complete":
+                self._draw_logging_lap_time_panel()
+                self._show_region(10, 68, 300, 118)
             return True
         self._draw_logging_background(track_data)
         self.show()

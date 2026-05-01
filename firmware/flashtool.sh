@@ -655,6 +655,91 @@ except: pass
     fi
 }
 
+make_numbered_backup_dir() {
+    local backup_root="$1"
+    local date_prefix
+    local next_num
+    local candidate
+
+    mkdir -p "$backup_root"
+    date_prefix=$(date +"%Y-%m-%d")
+    next_num=1
+
+    while :; do
+        candidate=$(printf "%s/%s_%03d" "$backup_root" "$date_prefix" "$next_num")
+        if [ ! -e "$candidate" ]; then
+            mkdir -p "$candidate"
+            echo "$candidate"
+            return 0
+        fi
+        next_num=$((next_num + 1))
+    done
+}
+
+list_pending_device_session_paths() {
+    $MPREMOTE_CMD connect "$PORT" exec "import os
+dirs = ('/sd/sessions', '/data/learning', '/sessions')
+seen = []
+for directory in dirs:
+    try:
+        names = os.listdir(directory)
+    except Exception:
+        continue
+    for name in names:
+        if not name.endswith('.csv'):
+            continue
+        path = directory.rstrip('/') + '/' + name
+        duplicate = False
+        for existing in seen:
+            if existing == path:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        seen.append(path)
+        print(path)" 2>/dev/null | tr -d '\r'
+}
+
+do_copy_to_backup_sessions() {
+    local backup_root="/Users/mj/Documents/backupsessions"
+    local backup_dir
+    local copied_count=0
+    local failed_count=0
+    local copied_any=0
+
+    backup_dir=$(make_numbered_backup_dir "$backup_root") || {
+        echo -e "${RED}Failed to create backup directory under $backup_root${NC}"
+        return 1
+    }
+
+    echo -e "${YELLOW}Copying pending device session files from SD + flash to $backup_dir...${NC}"
+
+    while IFS= read -r remote_path; do
+        [ -n "$remote_path" ] || continue
+        local_name=${remote_path##*/}
+        echo -e "${CYAN}Copying $remote_path...${NC}"
+        if $MPREMOTE_CMD connect "$PORT" cp ":${remote_path#/}" "$backup_dir/$local_name"; then
+            copied_count=$((copied_count + 1))
+            copied_any=1
+        else
+            echo -e "${RED}Failed to copy $remote_path${NC}"
+            failed_count=$((failed_count + 1))
+        fi
+    done < <(list_pending_device_session_paths)
+
+    if [ "$copied_any" -eq 0 ] && [ "$failed_count" -eq 0 ]; then
+        rmdir "$backup_dir" 2>/dev/null || true
+        echo -e "${YELLOW}No non-archived device session files found. Nothing copied.${NC}"
+        return 0
+    fi
+
+    if [ "$failed_count" -eq 0 ]; then
+        echo -e "${GREEN}Copied $copied_count file(s) to $backup_dir${NC}"
+    else
+        echo -e "${YELLOW}Copy finished with issues: $copied_count copied, $failed_count failed. Files on device were not modified.${NC}"
+    fi
+}
+
 do_view_boot_history() {
     echo -e "${CYAN}Current Boot State:${NC}"
     $MPREMOTE_CMD connect "$PORT" exec "
@@ -708,12 +793,13 @@ show_menu() {
     echo "3) Simple Sync (Replace only changed firmware files)"
     echo "4) Nuke Sync (Full Wipe + Install OS + Sync latest)"
     echo "5) Backup & Purge Device Data (Internal flash only)"
-    echo "6) View Boot Diagnostics"
-    echo "7) Reset Display Calibration"
-    echo "8) Run PSRAM Probe"
-    echo "9) Exit"
+    echo "6) Copy to backupSessions (Non-archived SD + flash files)"
+    echo "7) View Boot Diagnostics"
+    echo "8) Reset Display Calibration"
+    echo "9) Run PSRAM Probe"
+    echo "10) Exit"
     echo -e "${GREEN}==========================================${NC}"
-    echo -ne "Select an option [1-9]: "
+    echo -ne "Select an option [1-10]: "
 }
 
 main() {
@@ -721,7 +807,7 @@ main() {
     read choice
     
     # We need a port for all menu actions except exit
-    if [[ "$choice" != "9" ]]; then
+    if [[ "$choice" != "10" ]]; then
         echo ""
         detect_port
         free_port
@@ -759,15 +845,18 @@ main() {
             do_backup
             ;;
         6)
+            do_copy_to_backup_sessions
+            ;;
+        7)
             do_view_boot_history
             ;;
         8)
-            do_psram_probe
-            ;;
-        7)
             do_reset_display_calibration
             ;;
         9)
+            do_psram_probe
+            ;;
+        10)
             echo "Exiting."
             exit 0
             ;;
