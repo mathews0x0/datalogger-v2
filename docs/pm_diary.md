@@ -2,7 +2,7 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2026-04-28
+**Last Updated:** 2026-05-08
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
@@ -4578,3 +4578,114 @@ It also retires an older assumption that remained in active documentation:
 - calibrated sessions can now follow an IMU-primary processing path with explicit confidence semantics
 
 This is the first point where the product begins to treat arbitrary mounting as a real supported use case rather than an analysis-time approximation.
+
+## 2026-05-08 - CalibratedV2 Lean Algorithm Finding and Replay Lab Update
+
+### Field Problem Observed
+
+May 2 / May 3 track session files were reviewed after generated lean reports showed large disagreement between IMU-derived lean and GPS curvature-derived lean.
+
+The sessions reviewed included:
+
+- `may3 Cra/jinoop/sess_008.csv`
+- `may3 Cra/jinoop/sess_009.csv`
+- `May2 Cra/Jinoop/sess_004.csv`
+- `may3 Cra/mathews/sess_001.csv`
+
+The original IMU lean approach was not credible as a dynamic motorcycle lean signal. It produced constant or weakly changing lean values even on known start/finish straights, and its point-by-point shape did not match the GPS-derived cornering profile.
+
+The important PM finding is:
+
+> Accelerometer tilt is not motorcycle lean during dynamic riding.
+
+During cornering, braking, acceleration, bumps, and vibration, the accelerometer measures specific force, not pure gravity. A simple accel-angle formula can look stable, but it is measuring a mixture of gravity, lateral acceleration, longitudinal acceleration, suspension motion, and vibration. That explains why the old IMU lean could be numerically smooth while still being physically wrong.
+
+### Data Quality Findings
+
+The field files also exposed sensor/logging quality issues that affect any fusion algorithm:
+
+- Actual IMU cadence in the reviewed sessions was closer to roughly 53-58 Hz, not the product target of 70-100 Hz / firmware target of 100 Hz.
+- Actual GPS cadence varied by file and was not consistently 10 Hz; `jinoop/sess_008` was the cleanest reviewed file at roughly 7.3 Hz GPS.
+- `jinoop/sess_009` contained a corrupt block around lines 14885-14920 and had lower GPS cadence near 4 Hz.
+- `mathews/sess_001` had poor accelerometer magnitude behavior, with a low mean magnitude near 0.79 g and many samples where the inferred vertical component was not trustworthy.
+- BMI323 gyro scale appeared inflated in the reviewed logs by approximately 16x under the detected configuration, so raw gyro values could not be consumed as already-correct physical rates.
+
+This means the problem was not a single bad formula. The root cause was a combination of:
+
+- invalid use of accelerometer-only lean for dynamic riding
+- gyro scale/config mismatch
+- inconsistent field sample rates
+- file-specific corruption or degraded IMU quality
+- uncertain mounted-axis interpretation
+
+### New Algorithm Discovery: CalibratedV2
+
+A new research algorithm, `calibratedV2`, was created and validated first on `jinoop/sess_008.csv` because it was the cleanest available session.
+
+The new estimator changes the posture from accel-primary to gyro-primary:
+
+- It consumes both `I` and `G` rows as IMU samples because `G` rows also carry accel/gyro values.
+- It repairs the suspected BMI323 gyro scale mismatch when field data matches the observed signature: IMU rate around 45-60 Hz and gyro p99 above the plausible physical range.
+- It subtracts the stationary/calibration gyro bias before integration.
+- It evaluates candidate gyro axes and signs against the GPS curvature lean profile, then selects the axis/sign that best matches the session.
+- It integrates the selected gyro rate over time to form attitude lean.
+- It applies only gated accelerometer drift correction, and only when accel magnitude and vertical/up conditions are plausible.
+- It reports final values at GPS points so the CSV/report shape remains `lat, lon, speed, lean, gps_lean`.
+
+The GPS lean remains independently calculated from heading/path change:
+
+- GPS points are smoothed.
+- Local curvature is estimated from neighboring GPS points.
+- Lean is calculated from `atan(v^2 * curvature / g)`.
+- Straights and very low-speed points are suppressed to avoid false lean from GPS jitter.
+
+For `jinoop/sess_008.csv`, the calibratedV2 replay result selected `raw_z` as the effective gyro axis and produced:
+
+- GPS frames: 3342
+- selected axis correlation versus GPS lean: approximately `0.876`
+- gyro repair scale: `0.0625`
+- detected IMU rate: approximately `50 Hz`
+- attitude/GPS median absolute difference: approximately `3.0 deg`
+- attitude/GPS mean absolute difference: approximately `5.8 deg`
+
+This was the first IMU-based result that matched the shape of the GPS lean curve closely enough to be useful for algorithm development.
+
+### Important Caveat
+
+`calibratedV2` is not yet a fully independent production IMU estimator.
+
+It currently uses GPS curvature lean to choose the best gyro axis/sign for the session. After that choice, the time-varying lean is produced by gyro integration with gated accelerometer correction, but the axis selection itself is GPS-assisted.
+
+PM interpretation:
+
+- acceptable for replay lab analysis
+- acceptable for finding the correct physical signal path
+- not acceptable yet as a final claim of independent IMU-only lean
+
+The production path should eventually remove this GPS-assisted axis selection by fixing mount/profile interpretation and gyro scaling at the firmware/calibration layer.
+
+### Replay Lab Product Change
+
+The `imu-replay` tool now includes a new `Calibrated V2` algorithm option.
+
+When selected:
+
+- all optional UI filters are off by default
+- smoothing and correction parameters are set to the same defaults used during the successful `sess_008` analysis
+- replay frames are emitted at GPS cadence
+- map arrow playback advances correctly through GPS-cadence frames
+- the visualization overlays IMU attitude lean and GPS curvature lean on the same graph
+
+This gives the project a repeatable way to compare:
+
+- GPS path-derived lean
+- calibrated attitude-estimator lean
+- bad accel-only behavior from previous algorithms
+
+### PM Decisions
+
+- Retire accelerometer-only lean as a candidate for dynamic motorcycle lean.
+- Treat GPS curvature lean as the current external reference for cornering-shape validation, not as a replacement for IMU.
+- Keep `calibratedV2` as a research/replay algorithm until firmware emits correctly scaled gyro data at the intended rates.
+- Do not claim production IMU lean accuracy until axis/sign selection is solved from calibration metadata rather than GPS comparison.
+- Prioritize firmware validation for actual logged sample rate and BMI323 gyro scale before further product-facing lean claims.

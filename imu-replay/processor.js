@@ -184,6 +184,31 @@ function derivative(values, dt) {
   return out;
 }
 
+function angleDeltaDeg(target, current) {
+  let delta = target - current;
+  while (delta > 180) delta -= 360;
+  while (delta < -180) delta += 360;
+  return delta;
+}
+
+function pearsonCorrelation(xs, ys) {
+  if (xs.length !== ys.length || xs.length < 3) return 0;
+  const meanX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+  const meanY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
+  let numerator = 0;
+  let denomX = 0;
+  let denomY = 0;
+  for (let i = 0; i < xs.length; i += 1) {
+    const dx = xs[i] - meanX;
+    const dy = ys[i] - meanY;
+    numerator += dx * dy;
+    denomX += dx * dx;
+    denomY += dy * dy;
+  }
+  if (denomX < 1e-9 || denomY < 1e-9) return 0;
+  return numerator / Math.sqrt(denomX * denomY);
+}
+
 function quaternionNormalize(q) {
   const mag = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
   if (mag < 1e-9) return [1, 0, 0, 0];
@@ -264,6 +289,52 @@ function buildImuRows(rows) {
       acc: [parseNumber(row.acc_x) ?? 0, parseNumber(row.acc_y) ?? 0, parseNumber(row.acc_z) ?? 0],
       gyro: [parseNumber(row.gyro_x) ?? 0, parseNumber(row.gyro_y) ?? 0, parseNumber(row.gyro_z) ?? 0],
     }));
+}
+
+function computeGpsCurvatureLean(gpsRows) {
+  if (!gpsRows.length) return [];
+  const points = latLonToMeters(gpsRows).map((row) => ({
+    ...row,
+    y: -row.y,
+  }));
+  const ticks = points.map((row) => row.tickMs / 1000);
+  const speedMs = points.map((row) => Math.max(0, row.speedKmh) / 3.6);
+  const xs = movingAverage(points.map((row) => row.x), 9);
+  const ys = movingAverage(points.map((row) => row.y), 9);
+  const gpsLean = new Array(points.length).fill(0);
+
+  for (let index = 0; index < points.length; index += 1) {
+    let left = index;
+    while (left > 0 && ticks[index] - ticks[left] < 0.9) left -= 1;
+    let right = index;
+    while (right < points.length - 1 && ticks[right] - ticks[index] < 0.9) right += 1;
+    if (left === index || right === index || left === right) continue;
+
+    const ax = xs[left];
+    const ay = ys[left];
+    const bx = xs[index];
+    const by = ys[index];
+    const cx = xs[right];
+    const cy = ys[right];
+    const ab = Math.hypot(bx - ax, by - ay);
+    const bc = Math.hypot(cx - bx, cy - by);
+    const ac = Math.hypot(cx - ax, cy - ay);
+    if (Math.min(ab, bc, ac) < 3 || speedMs[index] < 5) continue;
+
+    const crossValue = ((bx - ax) * (cy - ay)) - ((by - ay) * (cx - ax));
+    const area2 = Math.abs(crossValue);
+    const denom = ab * bc * ac;
+    if (denom <= 1e-6) continue;
+
+    const signedCurvature = (2 * crossValue) / denom;
+    const midpointDeviationM = area2 / Math.max(ac, 1e-6);
+    if (midpointDeviationM < 1.25 || Math.abs(signedCurvature) < 0.0035) continue;
+
+    const lateralAccel = speedMs[index] * speedMs[index] * signedCurvature;
+    gpsLean[index] = clamp((Math.atan(lateralAccel / 9.81) * 180) / Math.PI, -60, 60);
+  }
+
+  return movingAverage(gpsLean, 7);
 }
 
 function extractRuntimeValidation(rows) {
@@ -686,7 +757,9 @@ function calibratedProjectionProcessor(session, config, options = {}) {
     row.accBike2 = row.accBike[2];
   });
   addChannelSplits(rows, procConfig);
-  const rawLean = rows.map((row) => (Math.atan2(row.accBike[1], Math.abs(row.accBike[2]) > 1e-9 ? row.accBike[2] : 1e-9) * 180) / Math.PI);
+  const leanGain = config.leanGain || 1;
+  const upFloorG = config.upFloorG ?? 0.15;
+  const rawLean = rows.map((row) => leanGain * (Math.atan2(row.accBike[1], Math.max(upFloorG, row.accBike[2])) * 180) / Math.PI);
   const leanValid = rows.map((row, i) => {
     if (row.speedKmh < config.minSpeed) return false;
     if (row.accBike[2] < config.upMinG) return false;
@@ -767,7 +840,9 @@ function crudeCalibratedProcessor(session, config, options = {}) {
   });
   addChannelSplits(rows, procConfig);
 
-  const rawLean = rows.map((row) => (Math.atan2(row.accBike[1], Math.abs(row.accBike[2]) > 1e-9 ? row.accBike[2] : 1e-9) * 180) / Math.PI);
+  const leanGain = config.leanGain || 1;
+  const upFloorG = config.upFloorG ?? 0.15;
+  const rawLean = rows.map((row) => leanGain * (Math.atan2(row.accBike[1], Math.max(upFloorG, row.accBike[2])) * 180) / Math.PI);
   const rawPitch = rows.map((row) => (Math.atan2(-row.accBike[0], Math.sqrt(row.accBike[1] ** 2 + row.accBike[2] ** 2)) * 180) / Math.PI);
   const smoothWindow = Math.max(1, Math.round((config.smoothingMs || 250) / (dtSec * 1000)));
   const leanSeries = maybeSmooth(interpolateNulls(maybeHampel(rawLean, 12, 3.0, config.enableHampelFilter)), smoothWindow, config.enableMovingAverage);
@@ -825,6 +900,276 @@ function crudeCalibratedProcessor(session, config, options = {}) {
   };
 }
 
+function rawAccelLeanProcessor(session, config, options = {}) {
+  const joinedData = joinImuToGps(session);
+  if (joinedData.error) {
+    return { frames: [], stats: { error: joinedData.error }, algorithm: options.name || "unknown", config };
+  }
+  const calibrated = preprocessCalibrated(joinedData.joined, joinedData.profile);
+  const dtSec = computeUniformDtSec(calibrated);
+  const rows = resampleJoined(calibrated, dtSec);
+  const procConfig = { ...config, dtSec };
+
+  const frames = rows.map((row) => {
+    const leanDeg = (Math.atan2(row.accBike[1], row.accBike[2]) * 180) / Math.PI;
+    const pitchDeg = (Math.atan2(-row.accBike[0], Math.sqrt(row.accBike[1] ** 2 + row.accBike[2] ** 2)) * 180) / Math.PI;
+    return {
+      tickMs: row.tickMs,
+      gpsTickMs: row.gpsTickMs,
+      lat: row.lat,
+      lon: row.lon,
+      x: row.x,
+      y: row.y,
+      speedKmh: row.speedKmh,
+      sats: row.sats,
+      headingDeg: row.headingDeg,
+      leanDegRaw: leanDeg,
+      leanDeg,
+      pitchDeg,
+      yawDeg: 0,
+      accelG: Math.max(0, row.accBike[0]),
+      brakeG: Math.max(0, -row.accBike[0]),
+      confidence: 1,
+      accelTrust: 1,
+      turnEvidence: clamp(Math.abs(row.gpsYawRateDegS) / 12, 0, 1),
+      upG: row.accBike[2],
+      latG: row.accBike[1],
+      latHighG: 0,
+      upHighG: 0,
+      forwardRawG: row.accBike[0],
+      accMag: row.accMag,
+      gpsYawRateDegS: row.gpsYawRateDegS,
+      gpsAccelG: row.gpsAccelG,
+      masked: false,
+      algorithm: options.name || "rawAccelLean",
+    };
+  });
+
+  return {
+    frames,
+    stats: summarizeFrames(frames, joinedData.gps, joinedData.profile, dtSec, {
+      fusion: "none",
+      validLeanFraction: 1,
+    }),
+    algorithm: options.name || "rawAccelLean",
+    config: procConfig,
+  };
+}
+
+function buildFixedTelemetryRows(rows) {
+  const dataRows = [];
+  const gpsRows = [];
+  const gpsIndices = [];
+  for (const row of rows) {
+    if (row.row_type !== "I" && row.row_type !== "G") continue;
+    const tickMs = parseInt(row.tick_ms, 10);
+    if (!Number.isFinite(tickMs)) continue;
+    const item = {
+      rowType: row.row_type,
+      tickMs,
+      acc: [parseNumber(row.acc_x) ?? 0, parseNumber(row.acc_y) ?? 0, parseNumber(row.acc_z) ?? 0],
+      gyro: [parseNumber(row.gyro_x) ?? 0, parseNumber(row.gyro_y) ?? 0, parseNumber(row.gyro_z) ?? 0],
+      lat: parseNumber(row.lat),
+      lon: parseNumber(row.lon),
+      speedKmh: parseNumber(row.speed),
+      sats: parseNumber(row.sats) ?? 0,
+    };
+    const index = dataRows.length;
+    dataRows.push(item);
+    if (row.row_type === "G" && item.lat != null && item.lon != null) {
+      gpsIndices.push(index);
+      gpsRows.push({ tickMs, lat: item.lat, lon: item.lon, speedKmh: item.speedKmh ?? 0, sats: item.sats });
+    }
+  }
+  return { dataRows, gpsRows, gpsIndices };
+}
+
+function repairGyroScaleForCalibratedV2(dataRows, profile) {
+  const dts = [];
+  const gyroAbs = [];
+  for (let i = 1; i < dataRows.length; i += 1) {
+    const dt = (dataRows[i].tickMs - dataRows[i - 1].tickMs) / 1000;
+    if (dt > 0) dts.push(dt);
+  }
+  for (const row of dataRows) {
+    gyroAbs.push(Math.abs(row.gyro[0]), Math.abs(row.gyro[1]), Math.abs(row.gyro[2]));
+  }
+  const sampleRateHz = dts.length ? 1 / median(dts) : 0;
+  const gyroAbsP99 = percentile(gyroAbs, 0.99);
+  const shouldRepair = sampleRateHz >= 45 && sampleRateHz <= 60 && gyroAbsP99 > 250;
+  const scale = shouldRepair ? 1 / 16 : 1;
+  const gyroBias = (profile.gyro_bias || [0, 0, 0]).slice(0, 3);
+  while (gyroBias.length < 3) gyroBias.push(0);
+  return {
+    scale,
+    gyroBias: gyroBias.map((value) => value * scale),
+    repair: shouldRepair ? {
+      type: "bmi323_gyro_range_scale",
+      scale,
+      detectedSampleRateHz: Number(sampleRateHz.toFixed(2)),
+      gyroAbsP99Before: Number(gyroAbsP99.toFixed(2)),
+    } : null,
+  };
+}
+
+function calibratedV2AccelLeanDeg(row, rotation, accelBias) {
+  const accel = [
+    row.acc[0] - accelBias[0],
+    row.acc[1] - accelBias[1],
+    row.acc[2] - accelBias[2],
+  ];
+  return (Math.atan2(-dot(accel, rotation[1]), Math.max(0.15, dot(accel, rotation[2]))) * 180) / Math.PI;
+}
+
+function runCalibratedV2Filter(dataRows, profile, rollAxis, gyroRepair) {
+  const rotation = profile.rotation_matrix;
+  const accelBias = (profile.accel_bias || [0, 0, 0]).slice(0, 3);
+  while (accelBias.length < 3) accelBias.push(0);
+  let roll = clamp(calibratedV2AccelLeanDeg(dataRows[0], rotation, accelBias), -45, 45);
+  const leans = [];
+
+  for (let index = 0; index < dataRows.length; index += 1) {
+    const row = dataRows[index];
+    const dt = index === 0 ? 0.02 : clamp((row.tickMs - dataRows[index - 1].tickMs) / 1000, 0.005, 0.08);
+    const gyro = [
+      (row.gyro[0] * gyroRepair.scale) - gyroRepair.gyroBias[0],
+      (row.gyro[1] * gyroRepair.scale) - gyroRepair.gyroBias[1],
+      (row.gyro[2] * gyroRepair.scale) - gyroRepair.gyroBias[2],
+    ];
+    const rollRate = dot(gyro, rollAxis);
+    roll += rollRate * dt;
+
+    const accel = [
+      row.acc[0] - accelBias[0],
+      row.acc[1] - accelBias[1],
+      row.acc[2] - accelBias[2],
+    ];
+    const accMag = norm(accel);
+    const aLong = dot(accel, rotation[0]);
+    const aLat = dot(accel, rotation[1]);
+    const aUp = dot(accel, rotation[2]);
+    const accelLean = (Math.atan2(-aLat, Math.max(0.15, aUp)) * 180) / Math.PI;
+    const gyroActivity = norm(gyro);
+    const forceError = Math.abs(accMag - 1);
+    const stableForce = forceError < 0.16 && aUp > 0.65 && Math.abs(aLong) < 0.35;
+    const stableRotation = Math.abs(rollRate) < 90 && gyroActivity < 450;
+    let correctionGain = 0;
+    if (stableForce && stableRotation) correctionGain = 0.045;
+    else if (forceError < 0.24 && aUp > 0.45 && Math.abs(rollRate) < 140) correctionGain = 0.010;
+    if (correctionGain) roll += correctionGain * angleDeltaDeg(accelLean, roll);
+    roll = clamp(roll, -60, 60);
+    leans.push(roll);
+  }
+  return movingAverage(leans, 5);
+}
+
+function selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRepair) {
+  const rotation = profile.rotation_matrix;
+  const candidates = [
+    { name: "calibrated_forward", axis: rotation[0] },
+    { name: "negative_calibrated_forward", axis: rotation[0].map((value) => -value) },
+    { name: "calibrated_lateral", axis: rotation[1] },
+    { name: "negative_calibrated_lateral", axis: rotation[1].map((value) => -value) },
+    { name: "calibrated_up", axis: rotation[2] },
+    { name: "negative_calibrated_up", axis: rotation[2].map((value) => -value) },
+    { name: "raw_x", axis: [1, 0, 0] },
+    { name: "raw_y", axis: [0, 1, 0] },
+    { name: "raw_z", axis: [0, 0, 1] },
+  ];
+  let best = {
+    name: "calibrated_forward",
+    leans: runCalibratedV2Filter(dataRows, profile, rotation[0], gyroRepair),
+    score: -1,
+  };
+  for (const candidate of candidates) {
+    const leans = runCalibratedV2Filter(dataRows, profile, candidate.axis, gyroRepair);
+    const sampled = gpsIndices.map((index) => leans[index]).slice(0, gpsLeans.length);
+    const score = pearsonCorrelation(sampled, gpsLeans.slice(0, sampled.length));
+    if (sampled.length >= 10 && score > best.score) {
+      best = { ...candidate, leans, score };
+    }
+  }
+  return best;
+}
+
+function calibratedV2Processor(session, config, options = {}) {
+  const profile = extractProfile(session.rows);
+  if (!profile?.rotation_matrix) {
+    return { frames: [], stats: { error: "Missing IMU profile rotation matrix." }, algorithm: options.name || "calibratedV2", config };
+  }
+  const { dataRows, gpsRows, gpsIndices } = buildFixedTelemetryRows(session.rows);
+  if (!dataRows.length || !gpsRows.length) {
+    return { frames: [], stats: { error: "Missing GPS or IMU rows." }, algorithm: options.name || "calibratedV2", config };
+  }
+  const gpsWithXY = latLonToMeters(gpsRows);
+  const gpsLeans = computeGpsCurvatureLean(gpsRows);
+  const gyroRepair = repairGyroScaleForCalibratedV2(dataRows, profile);
+  const axisResult = selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRepair);
+
+  for (let i = 1; i < gpsWithXY.length; i += 1) {
+    const dx = gpsWithXY[i].x - gpsWithXY[i - 1].x;
+    const dy = gpsWithXY[i].y - gpsWithXY[i - 1].y;
+    gpsWithXY[i].headingDeg = Math.abs(dx) + Math.abs(dy) > 1e-6 ? (Math.atan2(dx, -dy) * 180) / Math.PI : gpsWithXY[i - 1].headingDeg || 0;
+  }
+  if (gpsWithXY.length > 1) gpsWithXY[0].headingDeg = gpsWithXY[1].headingDeg;
+
+  const frames = gpsRows.map((gpsRow, index) => {
+    const sourceIndex = gpsIndices[index];
+    const source = dataRows[sourceIndex];
+    const leanDeg = axisResult.leans[sourceIndex] ?? 0;
+    const gpsLeanDeg = gpsLeans[index] ?? 0;
+    return {
+      tickMs: source.tickMs,
+      gpsTickMs: gpsRow.tickMs,
+      lat: gpsRow.lat,
+      lon: gpsRow.lon,
+      x: gpsWithXY[index].x,
+      y: gpsWithXY[index].y,
+      speedKmh: gpsRow.speedKmh,
+      sats: gpsRow.sats,
+      headingDeg: gpsWithXY[index].headingDeg || 0,
+      leanDegRaw: leanDeg,
+      leanDeg,
+      gpsLeanDeg,
+      pitchDeg: 0,
+      yawDeg: 0,
+      accelG: 0,
+      brakeG: 0,
+      confidence: 1,
+      accelTrust: 1,
+      turnEvidence: clamp(Math.abs(gpsLeanDeg) / 30, 0, 1),
+      upG: 0,
+      latG: 0,
+      latHighG: 0,
+      upHighG: 0,
+      forwardRawG: 0,
+      accMag: norm(source.acc),
+      gpsYawRateDegS: 0,
+      gpsAccelG: 0,
+      masked: false,
+      algorithm: options.name || "calibratedV2",
+    };
+  });
+  const dts = [];
+  for (let i = 1; i < frames.length; i += 1) {
+    const dt = (frames[i].tickMs - frames[i - 1].tickMs) / 1000;
+    if (dt > 0) dts.push(dt);
+  }
+  const stats = summarizeFrames(frames, gpsRows, profile, median(dts.length ? dts : [0.1]), {
+    fusion: "calibratedV2",
+    validLeanFraction: 1,
+  });
+  stats.axisName = axisResult.name;
+  stats.axisCorrelation = Number(axisResult.score.toFixed(3));
+  stats.repairs = gyroRepair.repair ? [gyroRepair.repair] : [];
+  return {
+    frames,
+    stats,
+    algorithm: options.name || "calibratedV2",
+    config,
+  };
+}
+
 function fusedProcessor(session, config, fusionType, options = {}) {
   const joinedData = joinImuToGps(session);
   if (joinedData.error) {
@@ -854,6 +1199,14 @@ function fusedProcessor(session, config, fusionType, options = {}) {
 }
 
 export const processors = {
+  rawAccelLeanV1: {
+    id: "rawAccelLeanV1",
+    label: "Raw Accel Lean",
+    description: "Raw calibrated accelerometer lean: rotate IMU into the bike frame and compute atan2(lateral, up). No smoothing, filters, masking, gain, or up-floor.",
+    process(session, config) {
+      return rawAccelLeanProcessor(session, config, { name: "rawAccelLeanV1" });
+    },
+  },
   accelOnlyV1: {
     id: "accelOnlyV1",
     label: "Accel Only",
@@ -888,6 +1241,14 @@ export const processors = {
     description: "Calibrated bike-frame projection with heuristics only. Useful as a baseline, not the target estimator.",
     process(session, config) {
       return calibratedProjectionProcessor(session, config, { name: "calibratedV1" });
+    },
+  },
+  calibratedV2: {
+    id: "calibratedV2",
+    label: "Calibrated V2",
+    description: "GPS-fix report view using gyro attitude integration, automatic BMI323 gyro scale repair, session axis selection, and gated accelerometer drift correction.",
+    process(session, config) {
+      return calibratedV2Processor(session, config, { name: "calibratedV2" });
     },
   },
   complementaryV1: {

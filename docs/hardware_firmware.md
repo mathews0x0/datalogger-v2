@@ -97,6 +97,8 @@ Operationally, that means:
 ### **LOGGING MODE (Default — No Radio)**
 *   All WiFi radios are killed immediately.
 *   **Core 0 runs exclusive 100Hz telemetry loop**: IMU every tick (100Hz), GPS every 10th tick (10Hz).
+*   **Field validation note (May 2026)**: Reviewed track logs did not consistently meet this target. Effective IMU cadence was closer to roughly 53-58Hz, and GPS cadence varied from roughly 4Hz to 7.3Hz in the inspected sessions. Treat the 100Hz/10Hz values above as the intended firmware contract until the logger timing path is revalidated on-device.
+*   **BMI323 gyro scale watch item**: May 2026 field logs showed a likely gyro scale/config mismatch of approximately 16x. Replay tooling can repair this signature for analysis, but firmware should emit correctly scaled gyro values so downstream estimators do not depend on heuristic repair.
 *   **Bounded double-buffer writes**: Rows are queued into an active memory buffer, swapped into a flush buffer around ~20 rows, and written out separately to reduce SD latency impact on the sampling path.
 *   **Method-Driven UI Signaling**: Core 0 never touches NeoPixel hardware directly. It calls semantic methods (e.g., `led.play_logging()`) which set internal flags for the background worker.
 *   **Track Engine** provides lap/sector crossing events which are overlaid via `led.trigger_event()`.
@@ -224,6 +226,8 @@ Header: `tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,spe
 **Queue protection**: The logger tracks queue overflow and dropped-row counts so SD bottlenecks can be measured.
 **Checkpointing**: Marker rows provide recovery breadcrumbs when a file is interrupted before clean completion.
 **Profile propagation**: Marker rows now also carry `IMU_PROFILE` and `IMU_VALIDATION` payloads so backend session processing can consume the selected mount profile directly.
+**Fusion input rule**: `G` rows also contain accel/gyro values and should be treated as valid IMU samples by analysis tools unless a session-quality check rejects them.
+**Lean estimation caution**: Accelerometer-only tilt should not be used as dynamic motorcycle lean during riding. Cornering, braking, acceleration, bumps, and vibration change the measured specific force. Current replay research uses gyro-primary attitude integration with gated accel drift correction and GPS curvature lean as an external comparison signal.
 
 ---
 

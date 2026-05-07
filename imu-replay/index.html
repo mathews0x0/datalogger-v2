@@ -30,7 +30,7 @@
             </label>
             <label class="field">
               <span>Smoothing Ms</span>
-              <input id="smoothingMs" type="number" step="25" value="250" />
+              <input id="smoothingMs" type="number" step="25" value="750" />
             </label>
           </div>
           <div class="inline-grid">
@@ -41,6 +41,16 @@
             <label class="field">
               <span>Up Min G</span>
               <input id="upMinG" type="number" step="0.05" value="0.72" />
+            </label>
+          </div>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Lean Gain</span>
+              <input id="leanGain" type="number" step="0.1" value="2.5" />
+            </label>
+            <label class="field">
+              <span>Up Floor G</span>
+              <input id="upFloorG" type="number" step="0.05" value="0.15" />
             </label>
           </div>
           <div class="inline-grid">
@@ -99,7 +109,7 @@
               <span>Mask vertical vibration</span>
             </label>
             <label class="check-row">
-              <input id="holdMaskedLean" type="checkbox" checked />
+              <input id="holdMaskedLean" type="checkbox" />
               <span>Hold lean through mask</span>
             </label>
           </div>

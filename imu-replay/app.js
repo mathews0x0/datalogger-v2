@@ -8,6 +8,8 @@ const el = {
   smoothingMs: document.getElementById("smoothingMs"),
   leanRateLimit: document.getElementById("leanRateLimit"),
   upMinG: document.getElementById("upMinG"),
+  leanGain: document.getElementById("leanGain"),
+  upFloorG: document.getElementById("upFloorG"),
   accMagTol: document.getElementById("accMagTol"),
   playbackRate: document.getElementById("playbackRate"),
   enableHampelFilter: document.getElementById("enableHampelFilter"),
@@ -47,6 +49,7 @@ const state = {
   frameIndex: 0,
   playing: false,
   lastTick: 0,
+  playbackTickMs: 0,
   animationId: 0,
   bounds: null,
 };
@@ -58,15 +61,38 @@ function initAlgorithms() {
     option.textContent = processor.label;
     el.algorithmSelect.appendChild(option);
   });
-  el.algorithmSelect.value = "calibratedV1";
+  el.algorithmSelect.value = "accelOnlyV1";
+}
+
+function applyAlgorithmDefaults() {
+  if (el.algorithmSelect.value !== "calibratedV2") return;
+  el.minSpeed.value = "0";
+  el.smoothingMs.value = "100";
+  el.leanRateLimit.value = "90";
+  el.upMinG.value = "0.65";
+  el.leanGain.value = "1";
+  el.upFloorG.value = "0.15";
+  el.accMagTol.value = "0.16";
+  el.enableHampelFilter.checked = false;
+  el.enableMovingAverage.checked = false;
+  el.maskLowSpeed.checked = false;
+  el.maskAccelMagnitude.checked = false;
+  el.maskPitch.checked = false;
+  el.maskLongitudinalAccel.checked = false;
+  el.maskWeakTurnEvidence.checked = false;
+  el.maskLateralVibration.checked = false;
+  el.maskVerticalVibration.checked = false;
+  el.holdMaskedLean.checked = false;
 }
 
 function currentConfig() {
   return {
     minSpeed: Number(el.minSpeed.value) || 0,
-    smoothingMs: Number(el.smoothingMs.value) || 250,
+    smoothingMs: Number(el.smoothingMs.value) || 750,
     leanRateLimit: Number(el.leanRateLimit.value) || 120,
     upMinG: Number(el.upMinG.value) || 0.72,
+    leanGain: Number(el.leanGain.value) || 1,
+    upFloorG: Number(el.upFloorG.value) || 0.15,
     accMagTol: Number(el.accMagTol.value) || 0.35,
     lowSpeedKmh: 15,
     turnSpeedKmh: 45,
@@ -185,6 +211,7 @@ function formatStats(result) {
   ];
   const repairs = formatRepairs(result.stats.repairs);
   if (repairs) lines.push(`Repairs: ${repairs}`);
+  if (result.stats.axisName) lines.push(`Axis: ${result.stats.axisName} (${result.stats.axisCorrelation})`);
   return lines.join("\n");
 }
 
@@ -332,6 +359,7 @@ function applyLapSelection(selection) {
     state.viewFrames = lap ? allFrames.slice(lap.start, lap.end + 1) : allFrames;
   }
   state.frameIndex = 0;
+  state.playbackTickMs = currentFrames()[0]?.tickMs || 0;
   el.timeline.min = 0;
   el.timeline.max = Math.max(0, currentFrames().length - 1);
   el.timeline.value = "0";
@@ -348,6 +376,7 @@ function render() {
   }
   drawTrack();
   drawHud(frameAt(state.frameIndex));
+  drawLeanComparisonGraph();
 }
 
 function resizeCanvasIfNeeded() {
@@ -460,7 +489,8 @@ function drawHud(frame) {
   el.leanValue.textContent = `${frame.leanDeg.toFixed(1)} deg`;
   el.speedValue.textContent = `${frame.speedKmh.toFixed(1)} km/h`;
   const lapLabel = state.selectedLap === "all" ? "Full Session" : (state.laps.find((lap) => lap.id === state.selectedLap)?.label || "Lap");
-  el.frameMeta.textContent = `${lapLabel} | Tick ${frame.tickMs} | GPS ${frame.lat.toFixed(6)}, ${frame.lon.toFixed(6)} | Heading ${frame.headingDeg.toFixed(1)} deg | Confidence ${(frame.confidence * 100).toFixed(0)}%`;
+  const gpsLeanText = frame.gpsLeanDeg == null ? "" : ` | GPS lean ${frame.gpsLeanDeg.toFixed(1)} deg`;
+  el.frameMeta.textContent = `${lapLabel} | Tick ${frame.tickMs} | GPS ${frame.lat.toFixed(6)}, ${frame.lon.toFixed(6)} | Heading ${frame.headingDeg.toFixed(1)} deg | Confidence ${(frame.confidence * 100).toFixed(0)}%${gpsLeanText}`;
 
   const pad = 30 * window.devicePixelRatio;
   const panelW = 320 * window.devicePixelRatio;
@@ -475,7 +505,8 @@ function drawHud(frame) {
   ctx.fillText("Replay HUD", x + 18 * window.devicePixelRatio, y + 28 * window.devicePixelRatio);
   ctx.font = `${14 * window.devicePixelRatio}px sans-serif`;
   ctx.fillText(`Lean ${frame.leanDeg.toFixed(1)} deg`, x + 18 * window.devicePixelRatio, y + 56 * window.devicePixelRatio);
-  ctx.fillText(`Speed ${frame.speedKmh.toFixed(1)} km/h`, x + 18 * window.devicePixelRatio, y + 80 * window.devicePixelRatio);
+  const gpsLean = frame.gpsLeanDeg == null ? "" : ` | GPS ${frame.gpsLeanDeg.toFixed(1)} deg`;
+  ctx.fillText(`Speed ${frame.speedKmh.toFixed(1)} km/h${gpsLean}`, x + 18 * window.devicePixelRatio, y + 80 * window.devicePixelRatio);
 
   const gaugeX = x + 205 * window.devicePixelRatio;
   const gaugeY = y + 68 * window.devicePixelRatio;
@@ -491,6 +522,70 @@ function drawHud(frame) {
   ctx.beginPath();
   ctx.arc(gaugeX, gaugeY, gaugeR, Math.PI * 1.5, Math.PI * (1.5 + leanNorm * 0.7));
   ctx.stroke();
+}
+
+function drawLeanComparisonGraph() {
+  const frames = currentFrames();
+  if (!frames.length || frames[0].gpsLeanDeg == null) return;
+  const dpr = window.devicePixelRatio;
+  const x = 28 * dpr;
+  const y = el.stage.height - 168 * dpr;
+  const w = el.stage.width - 56 * dpr;
+  const h = 128 * dpr;
+  const pad = 16 * dpr;
+  const left = x + pad;
+  const right = x + w - pad;
+  const top = y + pad;
+  const bottom = y + h - pad;
+  const chartW = Math.max(1, right - left);
+  const chartH = Math.max(1, bottom - top);
+  const maxAbs = Math.max(20, ...frames.flatMap((frame) => [Math.abs(frame.leanDeg), Math.abs(frame.gpsLeanDeg || 0)]));
+  const xFor = (index) => left + (index / Math.max(1, frames.length - 1)) * chartW;
+  const yFor = (value) => top + ((maxAbs - value) / (maxAbs * 2)) * chartH;
+
+  ctx.fillStyle = "rgba(255, 250, 240, 0.92)";
+  roundRect(ctx, x, y, w, h, 12 * dpr, true);
+  ctx.strokeStyle = "rgba(41, 37, 31, 0.16)";
+  ctx.lineWidth = 1 * dpr;
+  ctx.strokeRect(x, y, w, h);
+
+  ctx.strokeStyle = "rgba(41, 37, 31, 0.25)";
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(left, yFor(0));
+  ctx.lineTo(right, yFor(0));
+  ctx.stroke();
+
+  const drawSeries = (getter, color, lineWidth) => {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth * dpr;
+    ctx.beginPath();
+    frames.forEach((frame, index) => {
+      const px = xFor(index);
+      const py = yFor(getter(frame));
+      if (index === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.stroke();
+  };
+  drawSeries((frame) => frame.gpsLeanDeg || 0, "#0b5cad", 1.7);
+  drawSeries((frame) => frame.leanDeg, "#d13f2f", 1.5);
+
+  const markerX = xFor(state.frameIndex);
+  ctx.strokeStyle = "rgba(20, 20, 20, 0.55)";
+  ctx.lineWidth = 1 * dpr;
+  ctx.beginPath();
+  ctx.moveTo(markerX, top);
+  ctx.lineTo(markerX, bottom);
+  ctx.stroke();
+
+  ctx.fillStyle = "#29251f";
+  ctx.font = `${12 * dpr}px sans-serif`;
+  ctx.fillText("Lean overlay", x + 12 * dpr, y + 18 * dpr);
+  ctx.fillStyle = "#0b5cad";
+  ctx.fillText("GPS", x + 112 * dpr, y + 18 * dpr);
+  ctx.fillStyle = "#d13f2f";
+  ctx.fillText("Attitude", x + 154 * dpr, y + 18 * dpr);
 }
 
 function drawEmptyState() {
@@ -518,8 +613,9 @@ function stepPlayback(ts) {
   state.lastTick = ts;
   const advanceMs = delta * (Number(el.playbackRate.value) || 1);
   let nextIndex = state.frameIndex;
-  const targetTick = frames[state.frameIndex].tickMs + advanceMs;
-  while (nextIndex + 1 < frames.length && frames[nextIndex + 1].tickMs <= targetTick) {
+  if (!state.playbackTickMs) state.playbackTickMs = frames[state.frameIndex].tickMs;
+  state.playbackTickMs += advanceMs;
+  while (nextIndex + 1 < frames.length && frames[nextIndex + 1].tickMs <= state.playbackTickMs) {
     nextIndex += 1;
   }
   state.frameIndex = nextIndex;
@@ -536,6 +632,7 @@ function stepPlayback(ts) {
 function play() {
   if (!currentFrames().length) return;
   state.playing = true;
+  state.playbackTickMs = currentFrames()[state.frameIndex]?.tickMs || 0;
   state.lastTick = 0;
   cancelAnimationFrame(state.animationId);
   state.animationId = requestAnimationFrame(stepPlayback);
@@ -550,6 +647,7 @@ function pause() {
 function reset() {
   pause();
   state.frameIndex = 0;
+  state.playbackTickMs = currentFrames()[0]?.tickMs || 0;
   el.timeline.value = "0";
   render();
 }
@@ -563,6 +661,7 @@ el.loadDemoBtn.addEventListener("click", () => {
   loadDemo().catch((err) => setStatus(`Demo load failed: ${err.message}`));
 });
 el.processBtn.addEventListener("click", processSession);
+el.algorithmSelect.addEventListener("change", applyAlgorithmDefaults);
 el.lapSelect.addEventListener("change", () => {
   applyLapSelection(el.lapSelect.value);
   render();
@@ -572,6 +671,7 @@ el.pauseBtn.addEventListener("click", pause);
 el.resetBtn.addEventListener("click", reset);
 el.timeline.addEventListener("input", () => {
   state.frameIndex = Number(el.timeline.value) || 0;
+  state.playbackTickMs = currentFrames()[state.frameIndex]?.tickMs || 0;
   render();
 });
 window.addEventListener("resize", render);
