@@ -155,7 +155,7 @@ class SessionExporter:
 
     def _export_telemetry(self, session: Session, main_path: str):
         """
-        Saves 10Hz telemetry to <session>_telemetry.json
+        Saves session telemetry to <session>_telemetry.json.
         Structure of Arrays (Columnar) for compactness.
         """
         if not session.samples: return

@@ -29,6 +29,7 @@ class Sample:
     gps: GPSSample
     imu: IMUSample
     env: EnvSample
+    gps_is_fix: bool = True
 
 class Session:
     """
@@ -87,4 +88,3 @@ class Lap(Session):
         )
         self.lap_number = number
         self.sector_times = {} # {'s1': 23.4, 's2': 45.1}
-

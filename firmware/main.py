@@ -879,7 +879,7 @@ def setup():
 
     return led, gps, imu, sm, track_eng, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received
 
-def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold):
+def run_home_window(led, gps, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold):
     from lib.wifi_manager import load_device_config
     from lib.imu_calibration import list_profiles, get_selected_profile, set_selected_profile
     config = load_device_config()
@@ -908,6 +908,7 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
     paused_accum_ms = 0
     settings_rendered = False
     home_rendered_once = False
+    home_satellites = 0
     
     while True:
         now_ms = time.ticks_ms()
@@ -918,6 +919,15 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
         if poll_shutdown_button(now_ms):
             perform_soft_shutdown(sm=sm, tft=tft, power_hold=power_hold, reason="button_long_press_home")
 
+        if gps:
+            try:
+                fix = gps.update(max_lines=2)
+                home_satellites = int(fix.get('satellites', 0) or 0)
+                if not gps_ok and fix.get('valid'):
+                    gps_ok = True
+            except Exception:
+                pass
+
         if tft and not home_rendered_once:
             ram_used_mb, ram_total_mb = get_ram_usage_mb()
             update_display_context(tft, sm, vbat_adc, ram_used_mb=ram_used_mb, ram_total_mb=ram_total_mb)
@@ -926,7 +936,7 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
                 sd_mounted,
                 imu_ok,
                 gps_ok,
-                gps_sentences=sentences_received,
+                gps_sentences=home_satellites,
                 countdown_ms=10000,
                 paused=paused,
                 auto_log_enabled=auto_log_enabled,
@@ -965,12 +975,10 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
             if settings_action == "settings_up":
                 settings_scroll_index = max(0, settings_scroll_index - 1)
                 settings_rendered = False
-                tft.invalidate()
                 continue
             if settings_action == "settings_down":
                 settings_scroll_index = min(3, settings_scroll_index + 1)
                 settings_rendered = False
-                tft.invalidate()
                 continue
             if settings_action == "wifi":
                 settings_page = "wifi_options"
@@ -1118,8 +1126,8 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
                         scroll_index=settings_scroll_index,
                     )
                 settings_rendered = True
-            time.sleep_ms(30)
-            continue
+                time.sleep_ms(16)
+                continue
         
         # Dynamic GPS check if not already OK
         if not gps_ok:
@@ -1176,7 +1184,7 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
                 sd_mounted,
                 imu_ok,
                 gps_ok,
-                gps_sentences=sentences_received,
+                gps_sentences=home_satellites,
                 countdown_ms=remaining_ms,
                 paused=paused,
                 auto_log_enabled=auto_log_enabled,
@@ -1192,7 +1200,7 @@ def run_home_window(led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, g
         # Optional: Re-check GPS if it was previously failed? 
         # For now, we stick to the initial check as per requirement ("stays on Home if problem with GPS")
         
-        time.sleep_ms(30)
+            time.sleep_ms(16)
 
     wdt.feed()
     
@@ -1218,7 +1226,7 @@ def main():
 
     while True:
         action, force_pairing_requested = run_home_window(
-            led, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold
+            led, gps, imu, sm, tft, i2c, vbat_adc, wdt, sd_mounted, imu_ok, gps_ok, gps_uart, sentences_received, sync_btn, power_hold
         )
         if action == "sync":
             print("\n[System] ==> SYNC MODE")
@@ -1992,18 +2000,18 @@ def run_sync_mode(led, sm, tft, sync_btn, wdt, vbat_adc, power_hold, force_pairi
 
 def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
     """
-    Dual-rate logging loop:
-      - IMU sampled at 100 Hz (every tick)
-      - GPS sampled at  10 Hz (every 10th tick)
-      - Buffered writes flushed every 20 rows (~200ms)
+    Fixed 100Hz telemetry logging loop.
+    IMU rows are written every tick; GPS fix rows carry the latest IMU sample
+    when the GPS module reports a fresh valid fix.
     """
     
     loop_count = 0
     FLUSH_INTERVAL = 20  # rows before flushing to SD
     LOGGING_UI_INTERVAL_TICKS = 6000  # 60s at 100Hz
+    IMU_VALIDATION_DELAY_MS = 60000
     IMU_VALIDATION_DURATION_MS = 5000
     
-    print("\n[System] Logging Active — 100Hz IMU / 10Hz GPS — All radios OFF")
+    print("\n[System] Logging Active — fixed 100Hz telemetry — All radios OFF")
     diag.record_phase("LOGGING_START")
     diag.mark_boot_completed("logging_loop_running")
     prepare_shared_spi_bus()
@@ -2039,6 +2047,9 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
     hard_stop_reason = ""
     max_loop_ms = 0
     overrun_count = 0
+    imu_skip_count = 0
+    imu_frame_count = 0
+    imu_max_gap_ms = 0
     marker_seq = 0
     dropped_rows = 0
     max_queue_depth = 0
@@ -2052,20 +2063,26 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
         "confidence": 0.2 if not selected_profile else 0.9,
     }
     last_validation_render_tick = -100
-    validation_start_ms = time.ticks_ms()
+    logging_start_ms = time.ticks_ms()
     validation_complete = False
+    validation_started = False
     validation_live_shown = False
     
     # Cached values
     vbat = get_battery_voltage(vbat_adc, force=True)
     imu_buf = [0, 0, 0, 0, 0, 0]
+    imu_last_scaled = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    imu_sensor_anchor_ticks = None
+    imu_host_anchor_ms = None
+    imu_last_tick_ms = None
+    imu_last_sensor_us = 0
     fix = {'valid': False, 'lat': None, 'lon': None, 'altitude': 0.0,
            'speed_kmh': 0.0, 'satellites': 0, 'timestamp': None, 'date': None}
     base_state = "SEARCHING"
     
     try:
         f = open(log_file, 'w')
-        f.write("tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch\n")
+        f.write("tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch,imu_sensor_us\n")
         f.flush()
         print(f"[System] Log file opened: {log_file}")
     except Exception as e:
@@ -2144,6 +2161,8 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                     hard_stop_reason,
                     '',
                     f"{vbat:.2f}",
+                    '',
+                    '',
                 ]
                 flush_buf.append(','.join(row) + '\n')
             except:
@@ -2170,6 +2189,8 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
             marker_value,
             '',
             f"{vbat:.2f}",
+            '',
+            '',
         ]
         queue_row(_format_csv_row(row))
 
@@ -2189,6 +2210,17 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
         tick_start = time.ticks_ms()
         tick_ms = tick_start
         loop_count += 1
+        validation_elapsed_ms = time.ticks_diff(tick_ms, logging_start_ms)
+        validation_window_started = validation_elapsed_ms >= IMU_VALIDATION_DELAY_MS
+        if validation_window_started and not validation_started:
+            validation_started = True
+            rollout_imu_samples = []
+            rollout_gps_samples = []
+        validation_window_active = (
+            validation_started
+            and not validation_complete
+            and validation_elapsed_ms < (IMU_VALIDATION_DELAY_MS + IMU_VALIDATION_DURATION_MS)
+        )
         
         # Feed watchdog every tick
         wdt.feed()
@@ -2208,31 +2240,49 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
             close_log_file()
             perform_soft_shutdown(sm=sm, tft=tft, power_hold=power_hold, reason="button_long_press_logging")
 
-        # ── 1. IMU READ (every tick = 100 Hz) ──
-        acc_x, acc_y, acc_z = 0.0, 0.0, 0.0
-        gyr_x, gyr_y, gyr_z = 0.0, 0.0, 0.0
+        # ── 1. IMU READ (every tick = 100Hz) ──
+        acc_x, acc_y, acc_z = imu_last_scaled[0], imu_last_scaled[1], imu_last_scaled[2]
+        gyr_x, gyr_y, gyr_z = imu_last_scaled[3], imu_last_scaled[4], imu_last_scaled[5]
+        imu_fresh = False
         if imu:
             try:
-                imu.get_values_into(imu_buf)
-                acc_x = imu_buf[0] / imu.ACC_SENSITIVITY
-                acc_y = imu_buf[1] / imu.ACC_SENSITIVITY
-                acc_z = imu_buf[2] / imu.ACC_SENSITIVITY
-                gyr_x = imu_buf[3] / imu.GYR_SENSITIVITY
-                gyr_y = imu_buf[4] / imu.GYR_SENSITIVITY
-                gyr_z = imu_buf[5] / imu.GYR_SENSITIVITY
+                fifo_frames = imu.read_fifo_frames(max_frames=32)
+                if fifo_frames:
+                    imu_fresh = True
+                    for frame in fifo_frames:
+                        sample = frame["sample"]
+                        sensor_ticks = frame["sensor_ticks"]
+                        imu_last_sensor_us = frame["sensor_us"]
+                        if imu_sensor_anchor_ticks is None:
+                            imu_sensor_anchor_ticks = sensor_ticks
+                            imu_host_anchor_ms = tick_ms
+                        imu_sample_tick_ms = imu_host_anchor_ms + int(round(((sensor_ticks - imu_sensor_anchor_ticks) * imu.SENSOR_TIME_LSB_US) / 1000.0))
+                        if imu_last_tick_ms is not None:
+                            gap_ms = imu_sample_tick_ms - imu_last_tick_ms
+                            if gap_ms > imu_max_gap_ms:
+                                imu_max_gap_ms = gap_ms
+                        imu_last_tick_ms = imu_sample_tick_ms
+                        acc_x = sample[0] / imu.ACC_SENSITIVITY
+                        acc_y = sample[1] / imu.ACC_SENSITIVITY
+                        acc_z = sample[2] / imu.ACC_SENSITIVITY
+                        gyr_x = sample[3] / imu.GYR_SENSITIVITY
+                        gyr_y = sample[4] / imu.GYR_SENSITIVITY
+                        gyr_z = sample[5] / imu.GYR_SENSITIVITY
+                        imu_last_scaled = [acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z]
+                        imu_frame_count += 1
+                        if f and not stop_logging:
+                            queue_row(f"{imu_sample_tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,,,{imu_last_sensor_us}\n")
+                            if validation_window_active:
+                                rollout_imu_samples.append({
+                                    "acc": [acc_x, acc_y, acc_z],
+                                    "gyro": [gyr_x, gyr_y, gyr_z],
+                                })
+                else:
+                    imu_skip_count += 1
             except:
                 pass
         
-        # Write IMU row (row_type = I, GPS fields empty, including gps_epoch)
-        if f and not stop_logging:
-            queue_row(f"{tick_ms},I,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f},,,,,,\n")
-            if loop_count <= 500:
-                rollout_imu_samples.append({
-                    "acc": [acc_x, acc_y, acc_z],
-                    "gyro": [gyr_x, gyr_y, gyr_z],
-                })
-        
-        # ── 2. GPS READ (every 10th tick = 10 Hz) ──
+        # ── 2. GPS READ (poll periodically; write only fresh valid fixes) ──
         if loop_count % 10 == 0:
             fix = gps.update(max_lines=4)
             
@@ -2264,8 +2314,8 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
             if f and not stop_logging and fix['valid'] and gps.new_fix:
                 epoch_val = fix.get('gps_epoch', 0)
                 queue_row(f"{tick_ms},G,{acc_x:.4f},{acc_y:.4f},{acc_z:.4f},{gyr_x:.2f},{gyr_y:.2f},{gyr_z:.2f}," +
-                          f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f},{epoch_val}\n")
-                if loop_count <= 500:
+                          f"{fix['lat']:.15g},{fix['lon']:.15g},{fix['altitude']:.1f},{fix['speed_kmh']:.2f},{fix['satellites']},{vbat:.2f},{epoch_val},{imu_last_sensor_us}\n")
+                if validation_window_active:
                     rollout_gps_samples.append({
                         "speed": float(fix.get("speed_kmh") or 0.0),
                         "lat": fix.get("lat"),
@@ -2339,7 +2389,11 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                     elapsed_minutes=elapsed_minutes,
                     track_data=track_eng.track,
                 )
-        validation_active = not validation_complete and time.ticks_diff(tick_ms, validation_start_ms) < IMU_VALIDATION_DURATION_MS
+        validation_active = (
+            validation_started
+            and not validation_complete
+            and validation_elapsed_ms < (IMU_VALIDATION_DELAY_MS + IMU_VALIDATION_DURATION_MS)
+        )
         if tft and validation_active and (loop_count - last_validation_render_tick) >= 10:
             last_validation_render_tick = loop_count
             pitch_deg, roll_deg = _profile_mount_angles(selected_profile)
@@ -2350,7 +2404,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                 roll_deg,
                 rollout_validation.get("status_text"),
             )
-        if not validation_complete and time.ticks_diff(tick_ms, validation_start_ms) >= IMU_VALIDATION_DURATION_MS:
+        if validation_started and not validation_complete and validation_elapsed_ms >= (IMU_VALIDATION_DELAY_MS + IMU_VALIDATION_DURATION_MS):
             validation_complete = True
             rollout_validation = _rollout_validation_status(selected_profile, rollout_gps_samples, rollout_imu_samples)
             append_json_marker("IMU_VALIDATION", rollout_validation)
@@ -2440,7 +2494,7 @@ def logging_loop(led, gps, imu, sm, track_eng, tft, vbat_adc, wdt, power_hold):
                 idf_free_kb=mem_info.get("idf_free", 0) // 1024,
                 idf_largest_kb=mem_info.get("idf_largest", 0) // 1024,
             )
-            print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count} | Queue: {len(write_buf)+len(flush_buf)} | Dropped: {dropped_rows} | MinHeap: {min_heap} | GCFreeKB: {mem_info.get('gc_free', 0) // 1024} | MaxLoop: {max_loop_ms}")
+            print(f"[Loop] State: {base_state} | Fix: {fix.get('valid')} | Loops: {loop_count} | Queue: {len(write_buf)+len(flush_buf)} | Dropped: {dropped_rows} | IMUFrames: {imu_frame_count} | IMUSkips: {imu_skip_count} | IMUMaxGapMs: {imu_max_gap_ms} | MinHeap: {min_heap} | GCFreeKB: {mem_info.get('gc_free', 0) // 1024} | MaxLoop: {max_loop_ms}")
 
 
         # ── 7. TIMING — Target 10ms per tick (100 Hz) ──

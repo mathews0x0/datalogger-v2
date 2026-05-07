@@ -1,12 +1,16 @@
 import os
 import json
-import matplotlib.pyplot as plt
 from typing import Dict, Optional, List
 import src.config as config
-from src.analysis.core.models import Session, Lap
+from src.analysis.core.models import Session, Lap, Sample, GPSSample, IMUSample, EnvSample
 from src.analysis.processing.geo import haversine_distance
 from src.analysis.processing.laps import LapDetector, StartLine
 from src.analysis.core.registry_manager import RegistryManager
+
+try:
+    import matplotlib.pyplot as plt  # noqa: F401
+except Exception:
+    plt = None
 
 class TrackGenerator:
     """
@@ -21,6 +25,111 @@ class TrackGenerator:
         # Initialize Registry Manager for sequential track IDs
         registry_path = os.path.join(self.output_dir, "registry.json")
         self.registry = RegistryManager(registry_path=registry_path)
+
+    @staticmethod
+    def _gps_fix_count(session: Session) -> int:
+        meta = getattr(session, "device_metadata", {}) or {}
+        count = meta.get("gps_fix_count")
+        if isinstance(count, int):
+            return count
+        return sum(1 for sample in session.samples if getattr(sample, "gps_is_fix", True))
+
+    @staticmethod
+    def _has_sufficient_gps_coverage(session: Session) -> bool:
+        if not session.samples or session.duration <= 0:
+            return False
+
+        meta = getattr(session, "device_metadata", {}) or {}
+        gps_fix_count = TrackGenerator._gps_fix_count(session)
+        gps_fix_span_s = float(meta.get("gps_fix_span_s") or 0.0)
+        coverage_ratio = gps_fix_span_s / session.duration if session.duration > 0 else 0.0
+        return gps_fix_count >= 50 and coverage_ratio >= 0.5
+
+    @staticmethod
+    def _lap_path_samples(lap: Lap) -> List:
+        gps_fix_samples = [sample for sample in lap.samples if getattr(sample, "gps_is_fix", True)]
+        source_samples = gps_fix_samples if len(gps_fix_samples) >= 16 else list(lap.samples)
+
+        filtered = []
+        last_lat = None
+        last_lon = None
+        for sample in source_samples:
+            lat = sample.gps.lat
+            lon = sample.gps.lon
+            if lat == 0.0 or lon == 0.0:
+                continue
+            if last_lat is not None and lat == last_lat and lon == last_lon:
+                continue
+            filtered.append(sample)
+            last_lat = lat
+            last_lon = lon
+
+        return filtered
+
+    @staticmethod
+    def _gps_only_session(session: Session) -> Session:
+        gps_samples = []
+        for sample in session.samples:
+            if not getattr(sample, "gps_is_fix", True):
+                continue
+            lat = sample.gps.lat
+            lon = sample.gps.lon
+            if lat == 0.0 or lon == 0.0:
+                continue
+            gps_samples.append(
+                Sample(
+                    timestamp=sample.timestamp,
+                    gps=GPSSample(sample.gps.lat, sample.gps.lon, sample.gps.speed, sample.gps.sats),
+                    imu=IMUSample(
+                        sample.imu.accel_x,
+                        sample.imu.accel_y,
+                        sample.imu.accel_z,
+                        sample.imu.gyro_x,
+                        sample.imu.gyro_y,
+                        sample.imu.gyro_z,
+                    ),
+                    env=EnvSample(sample.env.temp, sample.env.pressure),
+                    gps_is_fix=True,
+                )
+            )
+
+        gps_session = Session(description=f"{session.description} (gps only)", samples=gps_samples)
+        gps_session.device_metadata = dict(getattr(session, "device_metadata", {}) or {})
+        gps_session.device_metadata["gps_fix_count"] = len(gps_samples)
+        if gps_samples:
+            gps_session.device_metadata["gps_fix_span_s"] = max(0.0, gps_samples[-1].timestamp - gps_samples[0].timestamp)
+        return gps_session
+
+    @staticmethod
+    def _path_distance_m(samples: List) -> float:
+        total = 0.0
+        for idx in range(1, len(samples)):
+            total += haversine_distance(
+                samples[idx - 1].gps.lat,
+                samples[idx - 1].gps.lon,
+                samples[idx].gps.lat,
+                samples[idx].gps.lon,
+            ) * 1000.0
+        return total
+
+    @staticmethod
+    def _build_centerline(lap: Lap) -> List[Dict]:
+        path_samples = TrackGenerator._lap_path_samples(lap)
+        if len(path_samples) < 3:
+            return []
+        centerline = [{"lat": sample.gps.lat, "lon": sample.gps.lon} for sample in path_samples]
+
+        if centerline:
+            loop_gap_m = haversine_distance(
+                centerline[0]["lat"], centerline[0]["lon"],
+                centerline[-1]["lat"], centerline[-1]["lon"],
+            ) * 1000.0
+            if loop_gap_m > 5.0:
+                centerline.append(dict(centerline[0]))
+            else:
+                centerline[-1] = dict(centerline[0])
+
+        return centerline
 
     def generate_from_session(self, session: Session, track_id: int, track_name: str, radius_m: float = 20.0) -> Optional[Dict]:
         """
@@ -49,13 +158,28 @@ class TrackGenerator:
             print("[TrackGenerator] Error: Empty session.")
             return None
 
+        if not self._has_sufficient_gps_coverage(session):
+            gps_fix_count = self._gps_fix_count(session)
+            gps_fix_span_s = float((getattr(session, "device_metadata", {}) or {}).get("gps_fix_span_s") or 0.0)
+            coverage_ratio = gps_fix_span_s / session.duration if session.duration > 0 else 0.0
+            print(
+                f"[TrackGenerator] Insufficient GPS coverage for fallback generation "
+                f"(fixes={gps_fix_count}, span={gps_fix_span_s:.1f}s, coverage={coverage_ratio:.2%})."
+            )
+            return None
+
+        gps_session = self._gps_only_session(session)
+        if len(gps_session.samples) < 16:
+            print("[TrackGenerator] Not enough real GPS fixes for fallback generation.")
+            return None
+
         # 1. Identify Start (Smart Detection)
-        start_lat, start_lon = self._detect_start_line_candidate(session, radius_m)
+        start_lat, start_lon = self._detect_start_line_candidate(gps_session, radius_m)
 
         # 2. Detect Laps
         sl_obj = StartLine(start_lat, start_lon, radius_m)
         detector = LapDetector(sl_obj)
-        laps = detector.detect(session)
+        laps = detector.detect(gps_session)
 
         if not laps:
             print("[TrackGenerator] No laps detected to infer geometry.")
@@ -68,19 +192,12 @@ class TrackGenerator:
              print("[TrackGenerator] No valid laps found.")
              return None
              
-        # Calculate Median Distance
-        # We need to compute distance for each lap first? Lap object might not store it pre-calc.
-        # But we can iterate.
         lap_distances = []
         for l in valid_laps:
-            dist = 0.0
-            for i in range(1, len(l.samples)):
-                dist += haversine_distance(l.samples[i-1].gps.lat, l.samples[i-1].gps.lon, 
-                                         l.samples[i].gps.lat, l.samples[i].gps.lon)
-            lap_distances.append(dist)
+            lap_distances.append(self._path_distance_m(self._lap_path_samples(l)))
             
         median_dist = sorted(lap_distances)[len(lap_distances)//2]
-        print(f"[TrackGenerator] Median Lap Distance: {median_dist:.3f} km")
+        print(f"[TrackGenerator] Median Lap Distance: {median_dist:.1f} m")
         
         # Filter: Keep laps within 20% of median
         # This removes short Out laps (Start -> Line) and potentially weird In laps
@@ -95,55 +212,23 @@ class TrackGenerator:
             
         ref_lap = min(clean_laps, key=lambda l: l.duration)
         ref_lap_idx = valid_laps.index(ref_lap)
-        print(f"[TrackGenerator] Selected Reference Lap {ref_lap.lap_number} (Time: {ref_lap.duration:.2f}s, Dist: {lap_distances[ref_lap_idx]:.3f}km)")
+        print(f"[TrackGenerator] Selected Reference Lap {ref_lap.lap_number} (Time: {ref_lap.duration:.2f}s, Dist: {lap_distances[ref_lap_idx]:.1f}m)")
 
-        # 4. Process Geometry (Smooth & Close Loop)
-        # We extract samples from ref_lap
-        raw_lats = [s.gps.lat for s in ref_lap.samples]
-        raw_lons = [s.gps.lon for s in ref_lap.samples]
-        
-        # Smooth Geometry (Moving Average, window=5)
-        # Use a simple helper or inline
-        def smooth_coords(coords, window=5):
-            if len(coords) < window: return coords
-            smoothed = []
-            for i in range(len(coords)):
-                start = max(0, i - window // 2)
-                end = min(len(coords), i + window // 2 + 1)
-                chunk = coords[start:end]
-                smoothed.append(sum(chunk) / len(chunk))
-            return smoothed
-            
-        final_lats = smooth_coords(raw_lats)
-        final_lons = smooth_coords(raw_lons)
-        
-        # Explicitly Close the Loop
-        # Force the last point to match the first point exactly
-        if final_lats:
-             final_lats[-1] = final_lats[0]
-             final_lons[-1] = final_lons[0]
+        # 4. Build a centerline from real GPS fixes rather than the full interpolated IMU timeline.
+        centerline = self._build_centerline(ref_lap)
+        if len(centerline) < 3:
+            print("[TrackGenerator] Reference lap does not contain enough GPS geometry.")
+            return None
 
-        # 5. Overwrite Ref Lap Samples? 
-        # Ideally we want to prevent recalculating sectors on raw data if we smoothed geometry.
-        # But 'sectors' are calculated based on indices of ref_lap.
-        # We should create a "Synthetic Lap" for geometry definition?
-        # For simplicity, we keep sectors based on raw ref_lap (which is time-accurate)
-        # BUT we update the 'Track Geometry' source to be this smoothed list?
-        # The current system plots from 'ref_lap.samples'.
-        # We need to save this smoothed geometry into track.json or pass it to visualizer.
-        # Track JSON usually only stores sectors.
-        # Wait, track.json doesn't performantly store 1000 points of geometry?
-        # Usually it doesn't. But we need it for the map.
-        
-        # Let's update the Start Line to be exactly Point 0 of smoothed geometry
-        if final_lats:
-            start_lat = final_lats[0]
-            start_lon = final_lons[0]
+        final_lats = [point["lat"] for point in centerline]
+        final_lons = [point["lon"] for point in centerline]
+        start_lat = final_lats[0]
+        start_lon = final_lons[0]
 
-        # 6. Generate Sectors & Indices
+        # 5. Generate sectors & indices
         sectors, sector_indices = self._calculate_sectors_from_coords(final_lats, final_lons, start_lat, start_lon)
 
-        # 7. Build Track Dict
+        # 6. Build Track Dict
         track_data = {
             "id": track_id,
             "track_id": track_id,
@@ -163,12 +248,13 @@ class TrackGenerator:
                 "num_sectors": len(sectors),
                 "source_session": session.description
             },
+            "centerline": centerline,
             "sectors": sectors,
             "location": "Unknown",
             "created_at": "now"
         }
 
-        # 8. Create Folder & Save Artifacts
+        # 7. Create Folder & Save Artifacts
         try:
             os.makedirs(track_dir, exist_ok=True)
             
@@ -197,11 +283,13 @@ class TrackGenerator:
             with open(tbl_json_path, 'w') as f:
                 json.dump(default_tbl, f, indent=4)
                 
-            # C. Generate Map using SMOOTHED data
-            from src.analysis.core.track_visualizer import TrackVisualizer
-            map_path = os.path.join(track_dir, "track_map.png")
-            
-            TrackVisualizer.generate_track_map(final_lats, final_lons, track_data, map_path)
+            # C. Generate map using the selected raw GPS lap path
+            if plt is not None:
+                from src.analysis.core.track_visualizer import TrackVisualizer
+                map_path = os.path.join(track_dir, "track_map.png")
+                TrackVisualizer.generate_track_map(final_lats, final_lons, track_data, map_path)
+            else:
+                print("[TrackGenerator] Matplotlib unavailable. Skipping track_map.png generation.")
             
             # D. Register track in registry.json for UI
             self.registry.register_track(track_id, track_name, folder_name)
@@ -226,7 +314,8 @@ class TrackGenerator:
             print("[TrackGenerator] Error: No samples.")
             return 0.0, 0.0
             
-        # Dynamically calculate sample rate (Hz) to support both 10Hz and 100Hz logs
+        # Estimate the effective scan rate from the current sample stream.
+        # Track generation may operate on GPS-only samples, not the 100Hz IMU timeline.
         sample_rate = 10.0
         if len(samples) > 10:
             duration = samples[10].timestamp - samples[0].timestamp
@@ -234,7 +323,7 @@ class TrackGenerator:
                 sample_rate = 10.0 / duration
         hz = max(10, min(200, int(sample_rate)))
 
-        step = max(1, hz // 10) # Base 10Hz scan rate
+        step = max(1, hz // 10)
         buffer_frames = 60 * hz # ~60s - ensure we're finding full lap closures
         
         session_duration_s = (samples[-1].timestamp - samples[0].timestamp) if samples else 0
@@ -360,7 +449,8 @@ class TrackGenerator:
                 "sector_index": i,
                 "end_lat": s_lat,
                 "end_lon": s_lon,
-                "radius_m": round(dynamic_radius, 1)
+                "radius_m": round(dynamic_radius, 1),
+                "progress_m": round(target_dist, 3),
             })
             indices.append(closest_idx)
             

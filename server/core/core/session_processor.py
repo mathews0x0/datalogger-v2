@@ -1,6 +1,7 @@
 import os
 import json
 import math
+import statistics
 
 from src.analysis.ingestion.csv_loader import CSVLoader
 from src.analysis.core.track_manager import TrackManager
@@ -80,6 +81,63 @@ class SessionProcessor:
                 except Exception:
                     pass
         return SessionProcessor._start_line_target(track_info.get("start_line"))
+
+    @staticmethod
+    def _median_positive_dt(samples):
+        deltas = [
+            samples[i].timestamp - samples[i - 1].timestamp
+            for i in range(1, len(samples))
+            if samples[i].timestamp > samples[i - 1].timestamp
+        ]
+        return statistics.median(deltas) if deltas else 0.0
+
+    @staticmethod
+    def _repair_legacy_bmi323_gyro_scale(gx_raw, gy_raw, gz_raw, calibration_profile, runtime_validation, session):
+        """
+        Repair logs recorded with the old BMI323 config mismatch.
+
+        Those logs configured gyro range as +/-125 dps but decoded samples using
+        the +/-2000 dps sensitivity, inflating gyro values by about 16x. The same
+        config used 50Hz ODR despite the code/comments expecting 100Hz.
+        """
+        reason = (runtime_validation or {}).get("reason")
+        profile_bias = list((calibration_profile or {}).get("gyro_bias") or [])
+        median_dt = SessionProcessor._median_positive_dt(session.samples)
+        sample_rate_hz = (1.0 / median_dt) if median_dt > 0 else 0.0
+
+        gyro_values = gx_raw + gy_raw + gz_raw
+        gyro_abs_p99 = 0.0
+        if gyro_values:
+            sorted_abs = sorted(abs(value) for value in gyro_values)
+            gyro_abs_p99 = sorted_abs[min(len(sorted_abs) - 1, int(len(sorted_abs) * 0.99))]
+
+        legacy_signature = (
+            reason == "gyro_mismatch"
+            and 45.0 <= sample_rate_hz <= 60.0
+            and gyro_abs_p99 > 250.0
+        )
+        if not legacy_signature:
+            return gx_raw, gy_raw, gz_raw, calibration_profile
+
+        scale = 1.0 / 16.0
+        repaired_profile = calibration_profile
+        if calibration_profile:
+            repaired_profile = dict(calibration_profile)
+            if len(profile_bias) >= 3:
+                repaired_profile["gyro_bias"] = [value * scale for value in profile_bias[:3]]
+            repaired_profile.setdefault("postprocess_repairs", []).append({
+                "type": "bmi323_gyro_range_scale",
+                "scale": scale,
+                "detected_sample_rate_hz": round(sample_rate_hz, 2),
+                "gyro_abs_p99_before": round(gyro_abs_p99, 2),
+            })
+
+        return (
+            [value * scale for value in gx_raw],
+            [value * scale for value in gy_raw],
+            [value * scale for value in gz_raw],
+            repaired_profile,
+        )
 
     def _global_track_matches_package(self, session, track_info):
         layout_meta = self._load_layout_metadata(track_info)
@@ -276,9 +334,18 @@ class SessionProcessor:
             self.log.info("Running Advanced IMU Processing Pipeline...")
             
             try:
-                imu_proc = AdvancedIMUProcessor()
                 calibration_profile = getattr(session, "mount_profile", None)
                 runtime_validation = getattr(session, "runtime_validation", None)
+                gx_raw, gy_raw, gz_raw, calibration_profile = self._repair_legacy_bmi323_gyro_scale(
+                    gx_raw,
+                    gy_raw,
+                    gz_raw,
+                    calibration_profile,
+                    runtime_validation,
+                    session,
+                )
+
+                imu_proc = AdvancedIMUProcessor()
                 imu_results = imu_proc.process(timestamps, ax_raw, ay_raw, az_raw, gx_raw, gy_raw, gz_raw, 
                                              speeds=speeds, lats=lats, lons=lons,
                                              calibration_profile=calibration_profile,

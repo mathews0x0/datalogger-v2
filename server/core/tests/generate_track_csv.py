@@ -30,13 +30,19 @@ def interpolate_points(p1, p2, steps):
 def generate_track(filename="kari_simulation.csv", laps=3):
     print(f"Generating {laps} laps of Kari Motor Speedway...")
     
-    # 10Hz Simulation
-    hz = 10
+    # Fixed 100Hz logger simulation. GPS fix rows carry IMU too.
+    hz = 100
+    gps_stride = 10
     timestamp = 1700000000.0
+    tick_ms = 0
+    sample_index = 0
     
     with open(filename, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(["timestamp","latitude","longitude","speed","satellites","imu_x","imu_y","imu_z","pressure","temp"])
+        writer.writerow([
+            "tick_ms", "row_type", "acc_x", "acc_y", "acc_z", "gyro_x", "gyro_y", "gyro_z",
+            "lat", "lon", "alt", "speed", "sats", "vbat", "gps_epoch", "imu_sensor_us"
+        ])
         
         for lap in range(laps):
             for i in range(len(TRACK_POINTS) - 1):
@@ -48,7 +54,7 @@ def generate_track(filename="kari_simulation.csv", laps=3):
                 speed_kmh = 100.0 if segment_len > 0.001 else 40.0
                 
                 # Points in this segment
-                steps = 50 # 5 seconds per segment roughly
+                steps = 500 # 5 seconds per segment at 100Hz
                 points = interpolate_points(p1, p2, steps)
                 
                 for pt in points:
@@ -56,16 +62,24 @@ def generate_track(filename="kari_simulation.csv", laps=3):
                     lat = pt[0] + random.uniform(-0.00001, 0.00001)
                     lon = pt[1] + random.uniform(-0.00001, 0.00001)
                     
+                    row_type = "G" if sample_index % gps_stride == 0 else "I"
                     writer.writerow([
-                        f"{timestamp:.2f}",
-                        f"{lat:.6f}",
-                        f"{lon:.6f}",
-                        f"{speed_kmh + random.uniform(-1, 1):.1f}",
-                        "10", # Sats
-                        "0.1", "0.2", "9.8", # IMU
-                        "1013.2", "30.5"
+                        tick_ms,
+                        row_type,
+                        "0.1", "0.2", "9.8",
+                        "0.0", "0.0", "0.0",
+                        f"{lat:.6f}" if row_type == "G" else "",
+                        f"{lon:.6f}" if row_type == "G" else "",
+                        "920.0" if row_type == "G" else "",
+                        f"{speed_kmh + random.uniform(-1, 1):.1f}" if row_type == "G" else "",
+                        "10" if row_type == "G" else "",
+                        "3.80",
+                        f"{timestamp:.3f}" if row_type == "G" else "",
+                        tick_ms * 1000,
                     ])
                     timestamp += (1.0 / hz)
+                    tick_ms += int(1000 / hz)
+                    sample_index += 1
                     
     print(f"Saved to {filename}")
 

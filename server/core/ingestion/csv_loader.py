@@ -1,6 +1,5 @@
 import os
 import csv
-import io
 import json
 from typing import TextIO, Union
 from src.analysis.core.models import Session, Sample, GPSSample, IMUSample, EnvSample
@@ -8,11 +7,15 @@ from src.analysis.core.models import Session, Sample, GPSSample, IMUSample, EnvS
 class CSVLoader:
     """
     Decoupled CSV Ingestion for Motorcycle Telemetry.
-    Reads standard CSV format and produces a Session object.
-    
-    Supports two CSV formats:
-      - Legacy: gps_time,lat,lon,alt,speed,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,vbat
-      - Dual-rate: tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat
+    Reads the fixed telemetry CSV format and produces a Session object.
+
+    Expected format:
+      tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,...
+
+    row_type:
+      - I: 100Hz IMU sample without a raw GPS fix.
+      - G: 100Hz IMU sample carrying a raw GPS fix.
+      - M: marker/metadata row.
     """
     
     def load(self, file_source: Union[str, TextIO], source_name: str = "Unknown") -> Session:
@@ -33,71 +36,26 @@ class CSVLoader:
         try:
             reader = csv.DictReader(f)
             fieldnames = reader.fieldnames or []
-            
-            # Detect format by presence of row_type column
-            if 'row_type' in fieldnames:
-                return self._load_dual_rate(reader, source_name)
-            else:
-                return self._load_legacy(reader, source_name)
+
+            if 'row_type' not in fieldnames:
+                raise ValueError("Unsupported CSV format: expected fixed telemetry CSV with row_type column")
+            return self._load_fixed_100hz(reader, source_name)
                 
         finally:
             if should_close:
                 f.close()
     
-    def _load_legacy(self, reader, source_name: str) -> Session:
-        """Load old-format CSV (single-rate, all fields per row)."""
-        session = Session(description=source_name)
-        
-        for row in reader:
-            try:
-                # Parse with defaults for missing columns
-                # 1. Timestamp (Required)
-                # Parse the gps date/times to act as session start time, effectively handling local time conversion later
-                ts = float(row.get("timestamp") or row.get("time") or row.get("gps_time") or row.get("gps_unix_time") or 0)
-                
-                # 2. GPS
-                gps = GPSSample(
-                    lat=float(row.get("latitude") or row.get("lat") or row.get("gps_lat") or 0.0), 
-                    lon=float(row.get("longitude") or row.get("lon") or row.get("gps_lon") or 0.0),
-                    speed=float(row.get("speed") or row.get("gps_speed") or 0.0),
-                    sats=int(row.get("satellites") or row.get("sats") or 0)
-                )
-                
-                # 3. IMU
-                imu = IMUSample(
-                    accel_x=float(row.get("imu_x") or row.get("accel_x") or row.get("acc_x") or 0.0),
-                    accel_y=float(row.get("imu_y") or row.get("accel_y") or row.get("acc_y") or 0.0),
-                    accel_z=float(row.get("imu_z") or row.get("accel_z") or row.get("acc_z") or 0.0),
-                    gyro_x=float(row.get("gyro_x") or row.get("gx", 0.0)),
-                    gyro_y=float(row.get("gyro_y") or row.get("gy", 0.0)),
-                    gyro_z=float(row.get("gyro_z") or row.get("gz", 0.0))
-                )
-                
-                # 4. Environment
-                # Handle legacy CSVs without temp
-                env = EnvSample(
-                    temp=float(row.get("temp", row.get("temperature", 0.0)) or 0.0),
-                    pressure=float(row.get("pressure") or row.get("vbat", 0.0))
-                )
-                
-                session.add_sample(Sample(ts, gps, imu, env))
-                
-            except ValueError as e:
-                # Skip malformed rows
-                continue
-                
-        return session
-    
-    def _load_dual_rate(self, reader, source_name: str) -> Session:
+    def _load_fixed_100hz(self, reader, source_name: str) -> Session:
         """
-        Load new dual-rate CSV (100Hz IMU / 10Hz GPS).
+        Load fixed-format telemetry CSV emitted by the 100Hz logger.
         
         Strategy:
-          1. Collect all IMU (I) rows and GPS (G) rows separately.
-          2. Linearly interpolate GPS lat/lon/speed/alt to match each IMU timestamp.
-          3. Produce a unified Session at the IMU sample rate (~100Hz).
+          1. Collect all 100Hz IMU samples from I/G rows.
+          2. Preserve raw GPS values on G rows and mark them gps_is_fix=True.
+          3. Interpolate GPS values only for non-fix I rows.
         """
-        imu_rows = []  # (tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z)
+        # (tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z, is_gps_fix, raw_gps)
+        imu_rows = []
         gps_rows = []  # (tick_ms, lat, lon, alt, speed, sats, vbat)
         markers = {}
         
@@ -122,7 +80,7 @@ class CSVLoader:
                 gyr_z = float(row.get("gyro_z") or 0.0)
                 
                 if row_type == 'I':
-                    imu_rows.append((tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z))
+                    imu_rows.append((tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z, False, None))
                 elif row_type == 'G':
                     lat = float(row.get("lat") or 0.0)
                     lon = float(row.get("lon") or 0.0)
@@ -138,7 +96,7 @@ class CSVLoader:
                     
                     gps_rows.append((tick_ms, lat, lon, alt, speed, sats, vbat))
                     # Also add to IMU list (G rows contain IMU data too)
-                    imu_rows.append((tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z))
+                    imu_rows.append((tick_ms, acc_x, acc_y, acc_z, gyr_x, gyr_y, gyr_z, True, (lat, lon, alt, speed, sats, vbat)))
                 elif row_type == 'M':
                     marker_name = (row.get("lon") or "").strip()
                     marker_value = row.get("speed") or ""
@@ -158,9 +116,6 @@ class CSVLoader:
         # We use relative time since tick_ms is a monotonic clock
         base_tick = first_tick_ms if first_tick_ms else 0
         
-        # Build GPS index for interpolation
-        gps_ticks = [g[0] for g in gps_rows] if gps_rows else []
-        
         gps_idx = 0  # Current lower GPS bound for interpolation
         
         for imu in imu_rows:
@@ -178,10 +133,12 @@ class CSVLoader:
                 gyro_x=imu[4], gyro_y=imu[5], gyro_z=imu[6]
             )
             
-            # Interpolate GPS
+            # Interpolate GPS for IMU rows. Real GPS rows keep their raw fix value.
             lat, lon, alt, speed, sats, vbat = 0.0, 0.0, 0.0, 0.0, 0, 0.0
             
-            if gps_rows:
+            if imu[7] and imu[8] is not None:
+                lat, lon, alt, speed, sats, vbat = imu[8]
+            elif gps_rows:
                 # Advance GPS index to bracket the current tick
                 while gps_idx < len(gps_rows) - 1 and gps_rows[gps_idx + 1][0] <= tick_ms:
                     gps_idx += 1
@@ -214,9 +171,18 @@ class CSVLoader:
             gps_sample = GPSSample(lat=lat, lon=lon, speed=speed, sats=sats)
             env_sample = EnvSample(temp=0.0, pressure=vbat)
             
-            session.add_sample(Sample(ts, gps_sample, imu_sample, env_sample))
+            session.add_sample(Sample(ts, gps_sample, imu_sample, env_sample, gps_is_fix=bool(imu[7])))
 
-        session.device_metadata = {}
+        session.device_metadata = {
+            "gps_fix_count": len(gps_rows),
+        }
+        if gps_rows:
+            session.device_metadata["gps_fix_span_s"] = max(0.0, (gps_rows[-1][0] - gps_rows[0][0]) / 1000.0)
+            session.device_metadata["gps_fix_rate_hz"] = (
+                len(gps_rows) / session.device_metadata["gps_fix_span_s"]
+                if session.device_metadata["gps_fix_span_s"] > 0
+                else float(len(gps_rows))
+            )
         if markers.get("IMU_PROFILE") and markers.get("IMU_PROFILE") != "none":
             try:
                 session.device_metadata["imu_profile"] = json.loads(markers["IMU_PROFILE"])

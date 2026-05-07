@@ -448,6 +448,45 @@ class AdvancedIMUProcessor:
                 "candidate_scores": {"calibrated_profile": calibrated["validation"]["score"]},
                 "candidate_pass": {"calibrated_profile": calibrated["validation"]["passed"]},
             }
+            if not calibrated["validation"]["passed"]:
+                gps_only = self._compute_gps_fallback(gps_features)
+                gps_only["mount_confidence"] = "LOW"
+                gps_only["mount_method"] = "gps_primary_after_calibrated_profile_failure"
+                gps_only["rotation_matrix"] = calibrated.get("rotation_matrix", [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+                gps_only["gyro_bias"] = calibrated.get("gyro_bias", [0.0, 0.0, 0.0])
+                gps_only["gravity_vector"] = calibrated.get("gravity_vector", [0.0, 0.0, 1.0])
+                gps_only["evidence_summary"] = {
+                    "source": "gps_fallback",
+                    "reason": "calibrated_profile_validation_failed",
+                    "calibrated_profile_failures": calibrated["validation"].get("failures", []),
+                }
+                gps_only["confidence"] = 0.35
+                gps_only["validation"] = self._validation.validate(
+                    lean_angle=gps_only["lean_angle"],
+                    acceleration_g=gps_only["acceleration_g"],
+                    braking_g=gps_only["braking_g"],
+                    lateral_g=gps_only["lateral_g"],
+                    vertical_g=gps_only["az_cg"],
+                    speeds=speeds,
+                    straight_mask=gps_features["straight_mask"],
+                    gps_longitudinal_g=gps_features["gps_accel_g"],
+                    yaw_rate_deg_s=gps_features["yaw_rate_deg_s"],
+                    mount_confidence="LOW",
+                )
+                gps_only["diagnostics"] = {
+                    "selected_algorithm": "gps_primary",
+                    "candidate_scores": {
+                        "calibrated_profile": calibrated["validation"]["score"],
+                        "gps_primary": gps_only["validation"]["score"],
+                    },
+                    "candidate_pass": {
+                        "calibrated_profile": False,
+                        "gps_primary": gps_only["validation"]["passed"],
+                    },
+                }
+                gps_only["primary_validation"] = calibrated["validation"]
+                if gps_only["validation"]["score"] > calibrated["validation"]["score"]:
+                    return gps_only
             return calibrated
         mount = self._resolve_mount(
             timestamps=timestamps,

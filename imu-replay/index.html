@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IMU Replay Lab</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <h1>IMU Replay Lab</h1>
+        <p class="subtle">Replay a session CSV over its GPS path and inspect derived lean, braking, and acceleration.</p>
+
+        <section class="panel">
+          <h2>Session</h2>
+          <label class="field">
+            <span>Session CSV</span>
+            <input id="csvFile" type="file" accept=".csv,text/csv" />
+            <small id="csvFileName" class="file-name">No file selected</small>
+          </label>
+          <label class="field">
+            <span>Algorithm</span>
+            <select id="algorithmSelect"></select>
+          </label>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Min Speed</span>
+              <input id="minSpeed" type="number" step="0.5" value="0" />
+            </label>
+            <label class="field">
+              <span>Smoothing Ms</span>
+              <input id="smoothingMs" type="number" step="25" value="250" />
+            </label>
+          </div>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Lean Rate Limit</span>
+              <input id="leanRateLimit" type="number" step="10" value="120" />
+            </label>
+            <label class="field">
+              <span>Up Min G</span>
+              <input id="upMinG" type="number" step="0.05" value="0.72" />
+            </label>
+          </div>
+          <div class="inline-grid">
+            <label class="field">
+              <span>Accel Mag Tol</span>
+              <input id="accMagTol" type="number" step="0.05" value="0.35" />
+            </label>
+            <label class="field">
+              <span>Playback X</span>
+              <input id="playbackRate" type="number" step="0.25" value="8" />
+            </label>
+          </div>
+          <div class="controls-row">
+            <button id="processBtn" class="primary">Process</button>
+            <button id="loadDemoBtn">Load sess_004</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Filters</h2>
+          <div class="check-grid">
+            <label class="check-row">
+              <input id="enableHampelFilter" type="checkbox" checked />
+              <span>Hampel despike</span>
+            </label>
+            <label class="check-row">
+              <input id="enableMovingAverage" type="checkbox" checked />
+              <span>Moving average smooth</span>
+            </label>
+            <label class="check-row">
+              <input id="maskLowSpeed" type="checkbox" checked />
+              <span>Mask low speed</span>
+            </label>
+            <label class="check-row">
+              <input id="maskAccelMagnitude" type="checkbox" checked />
+              <span>Mask accel magnitude</span>
+            </label>
+            <label class="check-row">
+              <input id="maskPitch" type="checkbox" checked />
+              <span>Mask pitch transient</span>
+            </label>
+            <label class="check-row">
+              <input id="maskLongitudinalAccel" type="checkbox" checked />
+              <span>Mask hard accel/brake</span>
+            </label>
+            <label class="check-row">
+              <input id="maskWeakTurnEvidence" type="checkbox" checked />
+              <span>Mask weak turn evidence</span>
+            </label>
+            <label class="check-row">
+              <input id="maskLateralVibration" type="checkbox" />
+              <span>Mask lateral vibration</span>
+            </label>
+            <label class="check-row">
+              <input id="maskVerticalVibration" type="checkbox" />
+              <span>Mask vertical vibration</span>
+            </label>
+            <label class="check-row">
+              <input id="holdMaskedLean" type="checkbox" checked />
+              <span>Hold lean through mask</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Replay</h2>
+          <label class="field">
+            <span>Lap</span>
+            <select id="lapSelect">
+              <option value="all">Full Session</option>
+            </select>
+          </label>
+          <div class="controls-row">
+            <button id="playBtn" class="primary">Play</button>
+            <button id="pauseBtn">Pause</button>
+            <button id="resetBtn">Reset</button>
+          </div>
+          <label class="field">
+            <span>Timeline</span>
+            <input id="timeline" type="range" min="0" max="0" value="0" />
+          </label>
+          <div id="frameMeta" class="status compact">No processed session loaded.</div>
+        </section>
+
+        <section class="panel">
+          <h2>Derived State</h2>
+          <div class="metric-grid">
+            <div class="metric-card">
+              <span class="metric-label">Lean</span>
+              <strong id="leanValue">0.0 deg</strong>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Speed</span>
+              <strong id="speedValue">0.0 km/h</strong>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Algorithm Notes</h2>
+          <pre id="algorithmNotes" class="status compact">Load a session to inspect processor output.</pre>
+        </section>
+
+        <section class="panel">
+          <h2>Status</h2>
+          <pre id="status" class="status">Load a CSV to begin.</pre>
+        </section>
+      </aside>
+
+      <main class="canvas-wrap">
+        <div class="stage-card">
+          <canvas id="stage" width="1280" height="900"></canvas>
+        </div>
+      </main>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+  </html>

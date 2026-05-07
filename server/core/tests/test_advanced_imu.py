@@ -1,6 +1,8 @@
 import math
 import unittest
 
+from src.analysis.core.models import EnvSample, GPSSample, IMUSample, Sample, Session
+from src.analysis.core.session_processor import SessionProcessor
 from src.analysis.processing.advanced_imu import AdvancedIMUProcessor, IMUConfig, IMUValidationEngine
 
 
@@ -208,6 +210,36 @@ class TestAdvancedIMUProcessor(unittest.TestCase):
         self.assertEqual(result["mount_method"], "stored_profile")
         self.assertEqual(result["diagnostics"]["selected_algorithm"], "calibrated_profile")
         self.assertEqual(len(result["lean_angle"]), len(timestamps))
+
+    def test_repairs_legacy_bmi323_gyro_scale(self):
+        session = Session("legacy")
+        for i in range(200):
+            session.add_sample(
+                Sample(
+                    timestamp=i * 0.02,
+                    gps=GPSSample(12.0, 77.0, 40.0, 8),
+                    imu=IMUSample(0.0, 0.0, 1.0, 640.0, -320.0, 160.0),
+                    env=EnvSample(0.0, 4.0),
+                    gps_is_fix=False,
+                )
+            )
+
+        profile = {"gyro_bias": [16.0, -32.0, 48.0]}
+        validation = {"reason": "gyro_mismatch"}
+        gx, gy, gz, repaired_profile = SessionProcessor._repair_legacy_bmi323_gyro_scale(
+            [640.0] * 200,
+            [-320.0] * 200,
+            [160.0] * 200,
+            profile,
+            validation,
+            session,
+        )
+
+        self.assertAlmostEqual(gx[0], 40.0)
+        self.assertAlmostEqual(gy[0], -20.0)
+        self.assertAlmostEqual(gz[0], 10.0)
+        self.assertEqual(repaired_profile["gyro_bias"], [1.0, -2.0, 3.0])
+        self.assertEqual(repaired_profile["postprocess_repairs"][0]["type"], "bmi323_gyro_range_scale")
 
 
 if __name__ == "__main__":
