@@ -46,6 +46,20 @@ function movingAverage(values, windowSize) {
   return out;
 }
 
+function centeredMovingAverage(values, windowSize) {
+  if (windowSize <= 1 || !values.length) return values.slice();
+  const out = new Array(values.length);
+  const radius = Math.floor(windowSize / 2);
+  for (let index = 0; index < values.length; index += 1) {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length, index + radius + 1);
+    let sum = 0;
+    for (let sample = start; sample < end; sample += 1) sum += values[sample];
+    out[index] = sum / Math.max(1, end - start);
+  }
+  return out;
+}
+
 function maybeSmooth(values, windowSize, enabled) {
   if (!enabled) return values.slice();
   return movingAverage(values, Math.max(1, windowSize));
@@ -337,6 +351,25 @@ function computeGpsCurvatureLean(gpsRows) {
   return movingAverage(gpsLean, 7);
 }
 
+function computeGpsLongitudinalAccel(gpsRows) {
+  if (!gpsRows.length) return [];
+  const ticks = gpsRows.map((row) => row.tickMs / 1000);
+  const speeds = centeredMovingAverage(gpsRows.map((row) => Math.max(0, row.speedKmh) / 3.6), 5);
+  const accel = new Array(gpsRows.length).fill(0);
+
+  for (let index = 0; index < gpsRows.length; index += 1) {
+    let left = index;
+    while (left > 0 && ticks[index] - ticks[left] < 0.55) left -= 1;
+    let right = index;
+    while (right < gpsRows.length - 1 && ticks[right] - ticks[index] < 0.55) right += 1;
+    const dt = ticks[right] - ticks[left];
+    if (dt < 0.2) continue;
+    accel[index] = clamp(((speeds[right] - speeds[left]) / dt) / 9.80665, -1.5, 1.2);
+  }
+
+  return centeredMovingAverage(accel, 5);
+}
+
 function extractRuntimeValidation(rows) {
   const marker = rows.find((row) => row.row_type === "M" && row.lon === "IMU_VALIDATION");
   if (!marker) return null;
@@ -428,13 +461,14 @@ function joinImuToGps(session) {
   const gpsTicks = gpsWithXY.map((row) => row.tickMs / 1000);
   const gpsDt = Math.max(0.05, median(gpsTicks.slice(1).map((v, i) => v - gpsTicks[i])));
   const gpsYawRate = movingAverage(derivative(headingsUnwrapped, gpsDt), 3);
-  const gpsSpeedMs = gpsWithXY.map((row) => row.speedKmh / 3.6);
-  const gpsAccel = movingAverage(derivative(gpsSpeedMs, gpsDt).map((v) => v / 9.80665), 5);
+  const gpsAccel = computeGpsLongitudinalAccel(gps);
+  const gpsLean = computeGpsCurvatureLean(gps);
 
   for (let i = 0; i < gpsWithXY.length; i += 1) {
     gpsWithXY[i].headingDeg = headingsWrapped[i];
     gpsWithXY[i].yawRateDegS = gpsYawRate[i] || 0;
     gpsWithXY[i].gpsAccelG = gpsAccel[i] || 0;
+    gpsWithXY[i].gpsLeanDeg = gpsLean[i] || 0;
   }
 
   let gpsIndex = 0;
@@ -459,6 +493,7 @@ function joinImuToGps(session) {
       headingDeg: gpsRow.headingDeg,
       gpsYawRateDegS: gpsRow.yawRateDegS,
       gpsAccelG: gpsRow.gpsAccelG,
+      gpsLeanDeg: gpsRow.gpsLeanDeg,
       acc: sample.acc,
       gyro: sample.gyro,
     });
@@ -496,6 +531,7 @@ function resampleJoined(joined, dtSec) {
       headingDeg: lerp(a.headingDeg, b.headingDeg, alpha),
       gpsYawRateDegS: lerp(a.gpsYawRateDegS, b.gpsYawRateDegS, alpha),
       gpsAccelG: lerp(a.gpsAccelG, b.gpsAccelG, alpha),
+      gpsLeanDeg: lerp(a.gpsLeanDeg, b.gpsLeanDeg, alpha),
       acc: [0, 1, 2].map((i) => lerp(a.acc[i], b.acc[i], alpha)),
       gyro: [0, 1, 2].map((i) => lerp(a.gyro[i], b.gyro[i], alpha)),
       accBike: a.accBike ? [0, 1, 2].map((i) => lerp(a.accBike[i], b.accBike[i], alpha)) : null,
@@ -678,6 +714,7 @@ function enrichFusedFrames(rows, fusedSeries, config, algorithm) {
       headingDeg: row.headingDeg,
       leanDegRaw,
       leanDeg: leanDegRaw,
+      gpsLeanDeg: row.gpsLeanDeg,
       pitchDeg: fused.pitchDeg,
       yawDeg: fused.yawDeg,
       accelG,
@@ -794,6 +831,7 @@ function calibratedProjectionProcessor(session, config, options = {}) {
       headingDeg: row.headingDeg,
       leanDegRaw: lean[index],
       leanDeg: displayLean,
+      gpsLeanDeg: row.gpsLeanDeg,
       pitchDeg: (Math.atan2(-row.accBike[0], Math.sqrt(row.accBike[1] ** 2 + row.accBike[2] ** 2)) * 180) / Math.PI,
       yawDeg: 0,
       accelG: Math.max(0, forward[index]),
@@ -870,6 +908,7 @@ function crudeCalibratedProcessor(session, config, options = {}) {
       headingDeg: row.headingDeg,
       leanDegRaw: leanSeries[index],
       leanDeg: displayLean,
+      gpsLeanDeg: row.gpsLeanDeg,
       pitchDeg: rawPitch[index],
       yawDeg: 0,
       accelG: Math.max(0, forwardSeries[index]),
@@ -925,6 +964,7 @@ function rawAccelLeanProcessor(session, config, options = {}) {
       headingDeg: row.headingDeg,
       leanDegRaw: leanDeg,
       leanDeg,
+      gpsLeanDeg: row.gpsLeanDeg,
       pitchDeg,
       yawDeg: 0,
       accelG: Math.max(0, row.accBike[0]),
@@ -984,7 +1024,7 @@ function buildFixedTelemetryRows(rows) {
   return { dataRows, gpsRows, gpsIndices };
 }
 
-function repairGyroScaleForCalibratedV2(dataRows, profile) {
+function repairGyroScaleForCalibratedV2(dataRows, profile, config = {}) {
   const dts = [];
   const gyroAbs = [];
   for (let i = 1; i < dataRows.length; i += 1) {
@@ -997,13 +1037,20 @@ function repairGyroScaleForCalibratedV2(dataRows, profile) {
   const sampleRateHz = dts.length ? 1 / median(dts) : 0;
   const gyroAbsP99 = percentile(gyroAbs, 0.99);
   const shouldRepair = sampleRateHz >= 45 && sampleRateHz <= 60 && gyroAbsP99 > 250;
-  const scale = shouldRepair ? 1 / 16 : 1;
+  const configuredScale = Number(config.gyroScale);
+  const hasConfiguredScale = Number.isFinite(configuredScale) && configuredScale > 0;
+  const scale = hasConfiguredScale ? configuredScale : (shouldRepair ? 1 / 16 : 1);
   const gyroBias = (profile.gyro_bias || [0, 0, 0]).slice(0, 3);
   while (gyroBias.length < 3) gyroBias.push(0);
   return {
     scale,
     gyroBias: gyroBias.map((value) => value * scale),
-    repair: shouldRepair ? {
+    repair: hasConfiguredScale ? {
+      type: "manual_gyro_scale",
+      scale,
+      detectedSampleRateHz: Number(sampleRateHz.toFixed(2)),
+      gyroAbsP99Before: Number(gyroAbsP99.toFixed(2)),
+    } : shouldRepair ? {
       type: "bmi323_gyro_range_scale",
       scale,
       detectedSampleRateHz: Number(sampleRateHz.toFixed(2)),
@@ -1021,7 +1068,42 @@ function calibratedV2AccelLeanDeg(row, rotation, accelBias) {
   return (Math.atan2(-dot(accel, rotation[1]), Math.max(0.15, dot(accel, rotation[2]))) * 180) / Math.PI;
 }
 
-function runCalibratedV2Filter(dataRows, profile, rollAxis, gyroRepair) {
+function profileStaticLeanOffsetDeg(profile) {
+  const rotation = profile.rotation_matrix;
+  const gravity = profile.gravity_vector;
+  if (!rotation || !gravity || gravity.length < 3) return 0;
+  const lateral = dot(gravity, rotation[1]);
+  const up = dot(gravity, rotation[2]);
+  return (Math.atan2(-lateral, Math.max(0.15, up)) * 180) / Math.PI;
+}
+
+function softTrust(value, good, bad) {
+  if (good === bad) return value <= good ? 1 : 0;
+  if (good < bad) return clamp((bad - value) / (bad - good), 0, 1);
+  return clamp((value - bad) / (good - bad), 0, 1);
+}
+
+function calibratedV2CorrectionGain(forceError, aUp, aLong, rollRate, gyroActivity, options) {
+  const strongGain = Number.isFinite(options.accelCorrectionStrong) ? options.accelCorrectionStrong : 0.045;
+  const weakGain = Number.isFinite(options.accelCorrectionWeak) ? options.accelCorrectionWeak : 0.010;
+  if (options.accelBlendMode === "soft") {
+    const forceTrust = softTrust(forceError, 0.08, 0.24);
+    const upTrust = softTrust(aUp, 0.75, 0.45);
+    const longTrust = softTrust(Math.abs(aLong), 0.10, 0.45);
+    const rollTrust = softTrust(Math.abs(rollRate), 45, 160);
+    const gyroTrust = softTrust(gyroActivity, 180, 520);
+    const trust = forceTrust * upTrust * longTrust * rollTrust * gyroTrust;
+    return weakGain + ((strongGain - weakGain) * trust);
+  }
+
+  const stableForce = forceError < 0.16 && aUp > 0.65 && Math.abs(aLong) < 0.35;
+  const stableRotation = Math.abs(rollRate) < 90 && gyroActivity < 450;
+  if (stableForce && stableRotation) return strongGain;
+  if (forceError < 0.24 && aUp > 0.45 && Math.abs(rollRate) < 140) return weakGain;
+  return 0;
+}
+
+function runCalibratedV2Filter(dataRows, profile, rollAxis, gyroRepair, smoothingSamples = 5, correctionOptions = {}) {
   const rotation = profile.rotation_matrix;
   const accelBias = (profile.accel_bias || [0, 0, 0]).slice(0, 3);
   while (accelBias.length < 3) accelBias.push(0);
@@ -1051,19 +1133,15 @@ function runCalibratedV2Filter(dataRows, profile, rollAxis, gyroRepair) {
     const accelLean = (Math.atan2(-aLat, Math.max(0.15, aUp)) * 180) / Math.PI;
     const gyroActivity = norm(gyro);
     const forceError = Math.abs(accMag - 1);
-    const stableForce = forceError < 0.16 && aUp > 0.65 && Math.abs(aLong) < 0.35;
-    const stableRotation = Math.abs(rollRate) < 90 && gyroActivity < 450;
-    let correctionGain = 0;
-    if (stableForce && stableRotation) correctionGain = 0.045;
-    else if (forceError < 0.24 && aUp > 0.45 && Math.abs(rollRate) < 140) correctionGain = 0.010;
+    const correctionGain = calibratedV2CorrectionGain(forceError, aUp, aLong, rollRate, gyroActivity, correctionOptions);
     if (correctionGain) roll += correctionGain * angleDeltaDeg(accelLean, roll);
     roll = clamp(roll, -60, 60);
     leans.push(roll);
   }
-  return movingAverage(leans, 5);
+  return movingAverage(leans, smoothingSamples);
 }
 
-function selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRepair) {
+function selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRepair, smoothingSamples, correctionOptions) {
   const rotation = profile.rotation_matrix;
   const candidates = [
     { name: "calibrated_forward", axis: rotation[0] },
@@ -1078,17 +1156,89 @@ function selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRep
   ];
   let best = {
     name: "calibrated_forward",
-    leans: runCalibratedV2Filter(dataRows, profile, rotation[0], gyroRepair),
+    leans: runCalibratedV2Filter(dataRows, profile, rotation[0], gyroRepair, smoothingSamples, correctionOptions),
     score: -1,
   };
   for (const candidate of candidates) {
-    const leans = runCalibratedV2Filter(dataRows, profile, candidate.axis, gyroRepair);
+    const leans = runCalibratedV2Filter(dataRows, profile, candidate.axis, gyroRepair, smoothingSamples, correctionOptions);
     const sampled = gpsIndices.map((index) => leans[index]).slice(0, gpsLeans.length);
     const score = pearsonCorrelation(sampled, gpsLeans.slice(0, sampled.length));
     if (sampled.length >= 10 && score > best.score) {
       best = { ...candidate, leans, score };
     }
   }
+  return best;
+}
+
+function robustMean(values) {
+  if (!values.length) return 0;
+  if (values.length < 4) return values.reduce((sum, value) => sum + value, 0) / values.length;
+  const center = median(values);
+  const deviations = values.map((value) => Math.abs(value - center));
+  const mad = median(deviations);
+  const threshold = Math.max(0.08, 2.5 * 1.4826 * mad);
+  const kept = values.filter((value) => Math.abs(value - center) <= threshold);
+  return (kept.length ? kept : [center]).reduce((sum, value) => sum + value, 0) / (kept.length || 1);
+}
+
+function sampleAccelAxisAtGps(dataRows, gpsIndices, axis) {
+  return gpsIndices.map((gpsIndex) => {
+    const start = Math.max(0, gpsIndex - 2);
+    const end = Math.min(dataRows.length, gpsIndex + 3);
+    const values = [];
+    for (let index = start; index < end; index += 1) {
+      values.push(dot(dataRows[index].acc, axis));
+    }
+    return robustMean(values);
+  });
+}
+
+function centerImuForwardSamples(samples, gpsAccel, gpsRows, smoothingSamples = 5) {
+  const quiet = samples.filter((value, index) => Math.abs(gpsAccel[index] || 0) < 0.04 && (gpsRows[index]?.speedKmh || 0) > 15);
+  const baseline = median(quiet.length >= 20 ? quiet : samples);
+  return {
+    baseline,
+    samples: centeredMovingAverage(samples.map((value) => value - baseline), smoothingSamples),
+  };
+}
+
+function selectCalibratedV2AccelAxis(dataRows, profile, gpsIndices, gpsRows, gpsAccel, smoothingSamples) {
+  const rotation = profile.rotation_matrix;
+  const candidates = [
+    { name: "calibrated_forward", axis: normalize(rotation[0]) },
+    { name: "negative_calibrated_forward", axis: normalize(rotation[0].map((value) => -value)) },
+    { name: "calibrated_lateral", axis: normalize(rotation[1]) },
+    { name: "negative_calibrated_lateral", axis: normalize(rotation[1].map((value) => -value)) },
+    { name: "raw_x", axis: [1, 0, 0] },
+    { name: "negative_raw_x", axis: [-1, 0, 0] },
+    { name: "raw_y", axis: [0, 1, 0] },
+    { name: "negative_raw_y", axis: [0, -1, 0] },
+    { name: "raw_z", axis: [0, 0, 1] },
+    { name: "negative_raw_z", axis: [0, 0, -1] },
+  ];
+  const mask = gpsAccel
+    .map((value, index) => ({ value, index }))
+    .filter(({ value, index }) => Math.abs(value) >= 0.035 && (gpsRows[index]?.speedKmh || 0) >= 15)
+    .map(({ index }) => index);
+  let best = {
+    name: "calibrated_forward",
+    axis: candidates[0].axis,
+    samples: [],
+    baseline: 0,
+    score: -1,
+  };
+
+  for (const candidate of candidates) {
+    const rawSamples = sampleAccelAxisAtGps(dataRows, gpsIndices, candidate.axis);
+    const centered = centerImuForwardSamples(rawSamples, gpsAccel, gpsRows, smoothingSamples);
+    const sampledImu = mask.length >= 10 ? mask.map((index) => centered.samples[index]) : centered.samples;
+    const sampledGps = mask.length >= 10 ? mask.map((index) => gpsAccel[index]) : gpsAccel;
+    const score = pearsonCorrelation(sampledImu, sampledGps);
+    if (score > best.score) {
+      best = { ...candidate, samples: centered.samples, baseline: centered.baseline, score };
+    }
+  }
+
   return best;
 }
 
@@ -1103,8 +1253,20 @@ function calibratedV2Processor(session, config, options = {}) {
   }
   const gpsWithXY = latLonToMeters(gpsRows);
   const gpsLeans = computeGpsCurvatureLean(gpsRows);
-  const gyroRepair = repairGyroScaleForCalibratedV2(dataRows, profile);
-  const axisResult = selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRepair);
+  const gpsAccel = computeGpsLongitudinalAccel(gpsRows);
+  const gyroRepair = repairGyroScaleForCalibratedV2(dataRows, profile, config);
+  const smoothingSamples = clamp(Math.round(Number(config.smoothingSamples) || 5), 1, 51);
+  const correctionOptions = {
+    accelBlendMode: config.accelBlendMode || "hard",
+    accelCorrectionStrong: Number(config.accelCorrectionStrong),
+    accelCorrectionWeak: Number(config.accelCorrectionWeak),
+  };
+  const axisResult = selectCalibratedV2Axis(dataRows, profile, gpsIndices, gpsLeans, gyroRepair, smoothingSamples, correctionOptions);
+  const accelAxisResult = selectCalibratedV2AccelAxis(dataRows, profile, gpsIndices, gpsRows, gpsAccel, smoothingSamples);
+  const calibratedLeanGain = Number.isFinite(config.calibratedLeanGain) ? config.calibratedLeanGain : 1;
+  const leanOffsetDeg = Number.isFinite(config.leanOffsetDeg) ? config.leanOffsetDeg : 0;
+  const longitudinalGain = Number.isFinite(config.longitudinalGain) ? config.longitudinalGain : 1;
+  const staticLeanOffsetDeg = profileStaticLeanOffsetDeg(profile);
 
   for (let i = 1; i < gpsWithXY.length; i += 1) {
     const dx = gpsWithXY[i].x - gpsWithXY[i - 1].x;
@@ -1116,8 +1278,10 @@ function calibratedV2Processor(session, config, options = {}) {
   const frames = gpsRows.map((gpsRow, index) => {
     const sourceIndex = gpsIndices[index];
     const source = dataRows[sourceIndex];
-    const leanDeg = axisResult.leans[sourceIndex] ?? 0;
+    const leanDeg = clamp(((axisResult.leans[sourceIndex] ?? 0) * calibratedLeanGain) + leanOffsetDeg, -60, 60);
     const gpsLeanDeg = gpsLeans[index] ?? 0;
+    const imuForwardG = (accelAxisResult.samples[index] ?? 0) * longitudinalGain;
+    const gpsAccelG = gpsAccel[index] ?? 0;
     return {
       tickMs: source.tickMs,
       gpsTickMs: gpsRow.tickMs,
@@ -1133,8 +1297,8 @@ function calibratedV2Processor(session, config, options = {}) {
       gpsLeanDeg,
       pitchDeg: 0,
       yawDeg: 0,
-      accelG: 0,
-      brakeG: 0,
+      accelG: Math.max(0, imuForwardG),
+      brakeG: Math.max(0, -imuForwardG),
       confidence: 1,
       accelTrust: 1,
       turnEvidence: clamp(Math.abs(gpsLeanDeg) / 30, 0, 1),
@@ -1142,10 +1306,10 @@ function calibratedV2Processor(session, config, options = {}) {
       latG: 0,
       latHighG: 0,
       upHighG: 0,
-      forwardRawG: 0,
+      forwardRawG: imuForwardG,
       accMag: norm(source.acc),
       gpsYawRateDegS: 0,
-      gpsAccelG: 0,
+      gpsAccelG,
       masked: false,
       algorithm: options.name || "calibratedV2",
     };
@@ -1161,6 +1325,16 @@ function calibratedV2Processor(session, config, options = {}) {
   });
   stats.axisName = axisResult.name;
   stats.axisCorrelation = Number(axisResult.score.toFixed(3));
+  stats.accelAxisName = accelAxisResult.name;
+  stats.accelAxisCorrelation = Number(accelAxisResult.score.toFixed(3));
+  stats.accelAxisBaselineG = Number(accelAxisResult.baseline.toFixed(4));
+  stats.gyroScale = Number(gyroRepair.scale.toFixed(6));
+  stats.smoothingSamples = smoothingSamples;
+  stats.leanOffsetDeg = Number(leanOffsetDeg.toFixed(3));
+  stats.profileStaticLeanOffsetDeg = Number(staticLeanOffsetDeg.toFixed(3));
+  stats.accelBlendMode = correctionOptions.accelBlendMode;
+  stats.accelCorrectionStrong = Number((Number.isFinite(correctionOptions.accelCorrectionStrong) ? correctionOptions.accelCorrectionStrong : 0.045).toFixed(4));
+  stats.accelCorrectionWeak = Number((Number.isFinite(correctionOptions.accelCorrectionWeak) ? correctionOptions.accelCorrectionWeak : 0.010).toFixed(4));
   stats.repairs = gyroRepair.repair ? [gyroRepair.repair] : [];
   return {
     frames,
@@ -1202,6 +1376,7 @@ export const processors = {
   rawAccelLeanV1: {
     id: "rawAccelLeanV1",
     label: "Raw Accel Lean",
+    visible: false,
     description: "Raw calibrated accelerometer lean: rotate IMU into the bike frame and compute atan2(lateral, up). No smoothing, filters, masking, gain, or up-floor.",
     process(session, config) {
       return rawAccelLeanProcessor(session, config, { name: "rawAccelLeanV1" });
@@ -1210,6 +1385,7 @@ export const processors = {
   accelOnlyV1: {
     id: "accelOnlyV1",
     label: "Accel Only",
+    visible: false,
     description: "Lean from the calibrated accelerometer only. Uses the global smoothing controls exactly as configured, with no extra forced smoothing.",
     process(session, config) {
       return crudeCalibratedProcessor(session, config, { name: "accelOnlyV1" });
@@ -1218,6 +1394,7 @@ export const processors = {
   accelOnlySmoothedV1: {
     id: "accelOnlySmoothedV1",
     label: "Accel Only Smoothed",
+    visible: false,
     description: "Lean from the calibrated accelerometer only, with stronger smoothing than the global setting and the existing confidence masking. No gyro fusion.",
     process(session, config) {
       const smoothConfig = {
@@ -1230,6 +1407,7 @@ export const processors = {
   crudeCalibratedV1: {
     id: "crudeCalibratedV1",
     label: "Crude Calibrated Lean",
+    visible: false,
     description: "Very crude lean from accelerometer geometry only: rotate IMU into the bike frame using calibration, then compute lean as atan2(lateral, up). No fusion.",
     process(session, config) {
       return crudeCalibratedProcessor(session, config, { name: "crudeCalibratedV1" });
@@ -1238,15 +1416,46 @@ export const processors = {
   calibratedV1: {
     id: "calibratedV1",
     label: "Projection Baseline",
+    visible: false,
     description: "Calibrated bike-frame projection with heuristics only. Useful as a baseline, not the target estimator.",
     process(session, config) {
       return calibratedProjectionProcessor(session, config, { name: "calibratedV1" });
     },
   },
+  calibratedV2Raw: {
+    id: "calibratedV2Raw",
+    label: "Calibrated V2 Raw",
+    description: "Same calibratedV2 estimator without post-fit display gains or GPS lag. Kept as a raw reference for tuning.",
+    params: [
+      { key: "gyroScale", label: "Gyro Scale", type: "number", default: 0.0625, step: 0.001 },
+      { key: "smoothingSamples", label: "Smoothing Samples", type: "number", default: 5, step: 1 },
+      { key: "accelBlendMode", label: "Accel Blend Mode", type: "text", default: "hard" },
+      { key: "accelCorrectionStrong", label: "Accel Strong Gain", type: "number", default: 0.045, step: 0.005 },
+      { key: "accelCorrectionWeak", label: "Accel Weak Gain", type: "number", default: 0.010, step: 0.001 },
+      { key: "calibratedLeanGain", label: "Lean Gain", type: "number", default: 1.0, step: 0.05 },
+      { key: "leanOffsetDeg", label: "Lean Offset Deg", type: "number", default: 0.0, step: 0.1 },
+      { key: "longitudinalGain", label: "Longitudinal Gain", type: "number", default: 1.0, step: 0.05 },
+      { key: "gpsLagMs", label: "GPS Lag Ms", type: "number", default: 0, step: 25 },
+    ],
+    process(session, config) {
+      return calibratedV2Processor(session, config, { name: "calibratedV2Raw" });
+    },
+  },
   calibratedV2: {
     id: "calibratedV2",
-    label: "Calibrated V2",
-    description: "GPS-fix report view using gyro attitude integration, automatic BMI323 gyro scale repair, session axis selection, and gated accelerometer drift correction.",
+    label: "Calibrated V2 Tuned",
+    description: "Best current tuning candidate. Gyro attitude lean + GPS-assisted axis selection + tuned display gains from sess_008 simulation.",
+    params: [
+      { key: "gyroScale", label: "Gyro Scale", type: "number", default: 0.07143, step: 0.001 },
+      { key: "smoothingSamples", label: "Smoothing Samples", type: "number", default: 5, step: 1 },
+      { key: "accelBlendMode", label: "Accel Blend Mode", type: "text", default: "hard" },
+      { key: "accelCorrectionStrong", label: "Accel Strong Gain", type: "number", default: 0.045, step: 0.005 },
+      { key: "accelCorrectionWeak", label: "Accel Weak Gain", type: "number", default: 0.010, step: 0.001 },
+      { key: "calibratedLeanGain", label: "Lean Gain", type: "number", default: 1.1, step: 0.05 },
+      { key: "leanOffsetDeg", label: "Lean Offset Deg", type: "number", default: 0.0, step: 0.1 },
+      { key: "longitudinalGain", label: "Longitudinal Gain", type: "number", default: 0.65, step: 0.05 },
+      { key: "gpsLagMs", label: "GPS Lag Ms", type: "number", default: 250, step: 25 },
+    ],
     process(session, config) {
       return calibratedV2Processor(session, config, { name: "calibratedV2" });
     },
@@ -1254,6 +1463,7 @@ export const processors = {
   complementaryV1: {
     id: "complementaryV1",
     label: "Complementary Fusion V1",
+    visible: false,
     description: "Uniform resample plus complementary roll/pitch fusion using gyro as the fast path and accel as a low-frequency gravity correction.",
     process(session, config) {
       return fusedProcessor(session, config, "complementary", { name: "complementaryV1" });
@@ -1262,6 +1472,7 @@ export const processors = {
   mahonyV1: {
     id: "mahonyV1",
     label: "Mahony Fusion V1",
+    visible: false,
     description: "Uniform resample plus 6-axis Mahony fusion in the calibrated bike frame with confidence-aware accel correction.",
     process(session, config) {
       return fusedProcessor(session, config, "mahony", { name: "mahonyV1" });

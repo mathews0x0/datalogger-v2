@@ -2,7 +2,7 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2026-05-08
+**Last Updated:** 2026-05-10
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
@@ -4689,3 +4689,247 @@ This gives the project a repeatable way to compare:
 - Keep `calibratedV2` as a research/replay algorithm until firmware emits correctly scaled gyro data at the intended rates.
 - Do not claim production IMU lean accuracy until axis/sign selection is solved from calibration metadata rather than GPS comparison.
 - Prioritize firmware validation for actual logged sample rate and BMI323 gyro scale before further product-facing lean claims.
+
+## 2026-05-10 - IMU Replay Tuning Lab, Longitudinal Baseline, and Profile Workflow
+
+### Context
+
+After the calibratedV2 discovery, PM shifted the immediate goal from producing a single lean CSV toward building a repeatable tuning environment.
+
+The new product goal is:
+
+> Use GPS-derived lean and GPS-derived longitudinal acceleration as imperfect but useful external baselines, then tune IMU algorithms until the IMU shapes, timing, and magnitudes become physically credible.
+
+This is explicitly a replay/research workflow, not a production claim of final IMU accuracy.
+
+### Longitudinal Acceleration / Braking Dataset
+
+A new dataset export path was added for braking and acceleration comparison.
+
+The target output shape is:
+
+- `lat`
+- `long`
+- `speed`
+- `imu_brake`
+- `gps_brake`
+- `brake_delta`
+- `imu_accel`
+- `gps_accel`
+- `accel_delta`
+
+Implementation note:
+
+- `tools/export_accel_brake_dataset.py` was added for offline export.
+- A temporary generated output exists under `temp_data/sess_008_accel_brake.csv`.
+- GPS longitudinal force is calculated from smoothed GPS speed change.
+- IMU longitudinal force is calculated from the calibrated bike-frame forward accelerometer axis, scaled by the current longitudinal gain.
+
+PM interpretation:
+
+- GPS speed-derived acceleration/braking is lagged and smoothed, but useful as a low-frequency truth reference.
+- IMU acceleration/braking should respond earlier because force happens before GPS speed visibly changes.
+- Therefore the comparison must support lag tuning rather than expecting point-perfect alignment at identical timestamps.
+
+### Replay Lab Visualization Changes
+
+The `imu-replay` tool was converted from a playback-first visualizer into a graph-first tuning lab.
+
+The current visualization now focuses on:
+
+- lean graph: IMU attitude lean versus GPS curvature lean
+- longitudinal graph: acceleration above zero and braking below zero, with IMU and GPS overlaid
+- static GPS track context panel
+- graph cursor instead of automatic playback
+
+Playback animation was intentionally removed from the primary workflow because tuning requires stationary inspection of outliers, not watching a run animate.
+
+After PM feedback, the GPS layout was brought back in a more useful form:
+
+- clicking any point on either graph moves the current cursor
+- the static track layout updates an arrowhead to the matching GPS position
+- the arrowhead uses heading and lean direction for context
+- this allows outlier investigation by connecting graph anomalies to the track location
+
+This resolves the workflow need: tune the signal in the graph, then immediately see where that behavior happened on the circuit.
+
+### Tuning Parameters Exposed
+
+The replay lab now exposes algorithm-specific tuning values rather than generic global filters.
+
+For the visible calibratedV2 family, the important controls are:
+
+- `Gyro Scale`
+- `Smoothing Samples`
+- `Accel Blend Mode`
+- `Accel Strong Gain`
+- `Accel Weak Gain`
+- `Lean Gain`
+- `Lean Offset Deg`
+- `Longitudinal Gain`
+- `GPS Lag Ms`
+
+Older filters and algorithm controls that did not make sense for the current research path were hidden or removed from the visible UI.
+
+This is a deliberate product cleanup:
+
+- do not show knobs that imply false control
+- keep only values that map directly to the current algorithm behavior
+- make the tool useful for systematic tuning instead of random parameter hunting
+
+### Gyro Scale Investigation
+
+The earlier 1/16 BMI323 gyro-scale repair was revisited.
+
+PM questioned whether `1/16` had been chosen arbitrarily and whether intermediate values such as between `1/16` and `1/8` should be allowed.
+
+The resulting interpretation:
+
+- the physical root issue is still likely a BMI323 configuration/range scaling mismatch in the captured field data
+- `1/16` is a plausible repair for the observed failure signature, but it should not be treated as sacred
+- finer tuning between coarse binary ratios is valid for replay analysis
+- the replay lab should allow direct numeric gyro scale input rather than limiting the user to fixed presets
+
+Useful presets remain documented for debugging:
+
+- `1/8 = 0.125`
+- `1/10 = 0.100`
+- `1/12 = 0.0833`
+- `1/14 = 0.0714`
+- `1/16 = 0.0625`
+- `1/32 = 0.03125`
+
+PM finding:
+
+- `1/16` can produce better lean magnitude / MAE in some comparisons
+- correlation can change when GPS lag is not matched first
+- lag tuning must be performed before judging gyro scale purely by correlation
+
+### Accel Blend and Lean Correlation Finding
+
+Soft accelerometer blending was added to test whether hard correction gates were creating discontinuities.
+
+The key behavior:
+
+- hard mode switches accelerometer correction on/off based on trust gates
+- soft mode turns those checks into a continuous trust score
+- this allows accelerometer correction to fade in and out instead of stepping abruptly
+
+PM/user-tuned profile that visually improved correlation on `sess_004`:
+
+- algorithm: `Calibrated V2 Raw`
+- `gyroScale = 0.04`
+- `smoothingSamples = 5`
+- `accelBlendMode = soft`
+- `accelCorrectionStrong = -0.005`
+- `accelCorrectionWeak = 0.009`
+- `leanGain = 1`
+- `leanOffsetDeg = 0`
+- `longitudinalGain = 0.85`
+- `gpsLagMs = 175`
+
+Important interpretation:
+
+- the graph shape became strongly correlated, especially after lag and smoothing tuning
+- IMU lean still overshot some peaks and missed or extended some exits
+- some mismatch may be real riding behavior: rider body/bike lean and chosen line can differ from the GPS path curvature baseline
+- some mismatch may still be algorithmic: gyro scale, accelerometer correction, drift, and GPS baseline smoothing all affect the comparison
+
+The negative `accelCorrectionStrong` value is not production-safe by itself. It is a diagnostic signal that the "trusted accelerometer" correction path may be pushing the integrated lean in the wrong direction during some supposedly high-trust windows.
+
+### Lean Bias / Offset Handling
+
+A signed lean offset control was added.
+
+Purpose:
+
+- test whether the IMU lean curve has a fixed left/right bias
+- allow manual correction during replay comparison
+- separate constant bias from dynamic gain/scale errors
+
+PM clarification:
+
+- offset should not be blindly taken from `mount_tilt.roll_deg`
+- the calibration rotation matrix already accounts for mount geometry
+- profile-derived static residual can be reported, but production correction should come from a validated calibration model, not from simply adding mount roll as lean
+
+### Longitudinal Force Interpretation
+
+PM asked why gyro-scale tuning does not affect the acceleration/braking graph.
+
+The answer is now captured as a product/algorithm distinction:
+
+- gyro scale affects angular-rate integration, therefore lean
+- longitudinal force currently comes from the calibrated forward accelerometer axis
+- `Longitudinal Gain` and smoothing affect acceleration/braking magnitude
+- gyro scale does not affect longitudinal force unless the algorithm later uses gyro-derived pitch/attitude to compensate gravity leakage in the forward axis
+
+This is physically correct for the current implementation:
+
+- gyro measures rotation rate
+- accelerometer measures specific force
+- braking/acceleration force is primarily a forward-axis accelerometer signal
+
+Future algorithm note:
+
+- if pitch/attitude compensation is added to remove gravity leakage from forward acceleration, gyro scale may indirectly affect longitudinal force
+- the current replay tool does not do that yet
+
+### Tuning Profiles
+
+The replay lab now has local tuning profiles.
+
+Capabilities added:
+
+- save current algorithm and tuning values under a profile name
+- load a saved profile and reprocess the current session
+- update an existing profile by selecting it and saving again
+- delete selected profiles
+- create variants by selecting `New profile` and saving under a new name
+
+Implementation choice:
+
+- profiles are stored in browser `localStorage`
+- profiles are not written as repo files
+- each profile stores the selected algorithm id and only that algorithm's current tuning values
+
+PM value:
+
+- allows systematic comparison of tuning attempts
+- avoids losing good manual settings while exploring alternatives
+- supports the current workflow of trying multiple gyro/lag/blend/gain combinations across sessions
+
+### Documentation / Tooling Updates
+
+Documentation and tooling were updated to reflect the current research state.
+
+Relevant artifacts:
+
+- `imu-replay/README.md`
+- `docs/calibratedv2_algorithm.md`
+- `tools/export_accel_brake_dataset.py`
+- `imu-replay/app.js`
+- `imu-replay/processor.js`
+- `imu-replay/index.html`
+- `imu-replay/styles.css`
+
+The replay tool now represents a focused analysis lab rather than a rider-facing playback UI.
+
+### PM Decisions
+
+- Use GPS-derived values as the current tuning baseline, while remembering that GPS has lag, smoothing, and line/path limitations.
+- Keep calibratedV2 and calibratedV2Raw as replay/research algorithms, not production claims.
+- Tune GPS lag before judging gyro scale or lean correlation.
+- Treat user-found high-correlation parameter sets as candidate profiles, not proof of correctness.
+- Keep acceleration/braking and lean visible across algorithms because both are needed to judge physical plausibility.
+- Preserve static track context because graph outliers need location context.
+- Use local tuning profiles for experimentation until a stable production algorithm emerges.
+
+### Open Risks
+
+- GPS lean is only a baseline from path curvature; it is not a direct measurement of bike lean.
+- Rider body position, different line choice, and path smoothing can create real disagreement between GPS curvature lean and bike IMU lean.
+- The BMI323 gyro scale issue still needs firmware-level confirmation.
+- IMU sample rate remains below the intended target in the reviewed sessions.
+- Negative or unusual accel correction gains may indicate sign/axis issues rather than a real physical model.
+- The current replay algorithm still uses GPS assistance for axis/sign discovery, so it is not yet independently deployable as production IMU-only lean.

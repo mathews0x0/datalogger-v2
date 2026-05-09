@@ -129,10 +129,37 @@ button.primary:hover {
   background: #0b5e65;
 }
 
+button.danger {
+  margin-top: 10px;
+  background: #ead5ca;
+  color: #6e2d22;
+}
+
+button.danger:hover {
+  background: #dfc1b4;
+}
+
+.profile-help {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 .inline-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.param-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.param-grid .field {
+  margin-bottom: 0;
 }
 
 .controls-row {
