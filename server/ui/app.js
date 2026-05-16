@@ -2487,6 +2487,9 @@ function projectTelemetryToCanonicalRaw(layout, telemetry) {
 
     return telemetry.lats.map((lat, index) => {
         const lon = telemetry.lons[index];
+        if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+            return null;
+        }
         const localX = (lon - ref.lon0) * ref.metersPerDegLon;
         const localY = (ref.lat0 - lat) * ref.metersPerDegLat;
         if (affineFit?.x_coeffs?.length === 3 && affineFit?.y_coeffs?.length === 3) {
@@ -2558,10 +2561,11 @@ function estimateCanonicalCorrection(layout, projectedPoints) {
     const template = (layout?.sampled_points || [])
         .map(point => point?.canonical)
         .filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y));
-    if (template.length < 12 || projectedPoints.length < 12) return null;
+    const validProjected = (projectedPoints || []).filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (template.length < 12 || validProjected.length < 12) return null;
 
-    const sampleStep = Math.max(1, Math.floor(projectedPoints.length / 240));
-    const samples = projectedPoints.filter((_, index) => index % sampleStep === 0);
+    const sampleStep = Math.max(1, Math.floor(validProjected.length / 240));
+    const samples = validProjected.filter((_, index) => index % sampleStep === 0);
     const templateCenter = template.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
     templateCenter.x /= template.length;
     templateCenter.y /= template.length;
@@ -2611,11 +2615,14 @@ function estimateCanonicalCorrection(layout, projectedPoints) {
 
 function applyCanonicalCorrection(points, correction) {
     if (!correction) return points;
-    const center = points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
-    center.x /= points.length || 1;
-    center.y /= points.length || 1;
+    const validPoints = points.filter(point => point && Number.isFinite(point.x) && Number.isFinite(point.y));
+    if (!validPoints.length) return points;
+    const center = validPoints.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), { x: 0, y: 0 });
+    center.x /= validPoints.length || 1;
+    center.y /= validPoints.length || 1;
     const angleRad = correction.angle * Math.PI / 180;
     return points.map(point => {
+        if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return null;
         const rotated = rotatePointAround(point, center, angleRad);
         return {
             x: rotated.x + correction.tx,
@@ -6756,11 +6763,13 @@ function fitTrackMap() {
     // Sampling for performance
     const step = Math.ceil(lats.length / 2000) || 1;
     for (let i = 0; i < lats.length; i += step) {
+        if (lats[i] == null || lons[i] == null || !Number.isFinite(lats[i]) || !Number.isFinite(lons[i])) continue;
         if (lats[i] < minLat) minLat = lats[i];
         if (lats[i] > maxLat) maxLat = lats[i];
         if (lons[i] < minLon) minLon = lons[i];
         if (lons[i] > maxLon) maxLon = lons[i];
     }
+    if (minLat === 90 || minLon === 180) return;
 
     if (minLat === maxLat) { minLat -= 0.001; maxLat += 0.001; }
     if (minLon === maxLon) { minLon -= 0.001; maxLon += 0.001; }
@@ -6804,13 +6813,34 @@ function project(lat, lon) {
 
 function projectPlaybackPoint(index) {
     if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
-        const point = pbState.projectedPoints[Math.max(0, Math.min(pbState.projectedPoints.length - 1, index))];
+        let clamped = Math.max(0, Math.min(pbState.projectedPoints.length - 1, index));
+        let point = pbState.projectedPoints[clamped];
+        if (!point) {
+            let left = clamped - 1;
+            let right = clamped + 1;
+            while (left >= 0 || right < pbState.projectedPoints.length) {
+                if (left >= 0 && pbState.projectedPoints[left]) {
+                    point = pbState.projectedPoints[left];
+                    break;
+                }
+                if (right < pbState.projectedPoints.length && pbState.projectedPoints[right]) {
+                    point = pbState.projectedPoints[right];
+                    break;
+                }
+                left -= 1;
+                right += 1;
+            }
+        }
+        if (!point) return null;
         return {
             x: point.x * pbState.scale + pbState.offsetX,
             y: point.y * pbState.scale + pbState.offsetY
         };
     }
-    return project(pbState.data.lat[index], pbState.data.lon[index]);
+    const lat = pbState.data.lat[index];
+    const lon = pbState.data.lon[index];
+    if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return project(lat, lon);
 }
 
 function currentPlaybackLapBounds() {
@@ -6860,72 +6890,50 @@ function renderStaticMap() {
             );
         }
 
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        ctx.lineWidth = 1;
-        for (let i = startIndex; i < Math.min(endIndex - 1, count - 1); i++) {
-            const p1 = projectPlaybackPoint(i);
-            const p2 = projectPlaybackPoint(i + 1);
-            ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-            if (pbState.mapMode === 'speed') {
-                const s = data.speed[i] || 0;
-                ctx.strokeStyle = getHeatmapColor(s, 40, 200);
-            } else if (pbState.mapMode === 'accel') {
-                const ax = data.aligned_accel_x ? data.aligned_accel_x[i] : (data.ax ? data.ax[i] : 0);
-                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 140, ${Math.min(ax / 0.5, 1)})`;
-                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 70, 70, ${Math.min(Math.abs(ax) / 0.8, 1)})`;
-                else ctx.strokeStyle = '#2a2a2a';
-            } else {
-                ctx.strokeStyle = '#1ea7ff';
-            }
-            ctx.stroke();
-        }
+        drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), (index) => projectPlaybackPoint(index));
         return;
     }
 
+    drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), (index) => {
+        if (data.lat[index] == null || data.lon[index] == null || !Number.isFinite(data.lat[index]) || !Number.isFinite(data.lon[index])) return null;
+        return project(data.lat[index], data.lon[index]);
+    });
+}
+
+function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectIndex) {
+    const gpsValid = data.gps_is_valid || [];
+    const gpsFix = data.gps_is_fix || [];
+    const points = [];
+    for (let i = startIndex; i < endIndex; i += 1) {
+        if (gpsValid.length && !gpsValid[i]) continue;
+        const point = projectIndex(i);
+        if (!point) continue;
+        points.push({
+            x: point.x,
+            y: point.y,
+            isFix: Boolean(gpsFix[i]),
+        });
+    }
+
+    if (!points.length) return;
+
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(150, 150, 150, 0.72)';
     ctx.lineWidth = 1;
-
-    // Draw segments in chunks
-    const step = 1;
-
     ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i += 1) {
+        ctx.lineTo(points[i].x, points[i].y);
+    }
+    ctx.stroke();
 
-    // If mapMode is 'clean', we can do one fast stroke
-    // If mapMode is 'speed' or 'accel', we need colored segments
-
-    if (pbState.mapMode === 'clean') {
-        ctx.strokeStyle = '#1ea7ff';
-        for (let i = startIndex; i < Math.min(endIndex - 1, count - 1); i += 2) { // 2x stride for perf
-            const p = project(data.lat[i], data.lon[i]);
-            if (i === startIndex) ctx.moveTo(p.x, p.y);
-            else ctx.lineTo(p.x, p.y);
-        }
-        ctx.stroke();
-    } else {
-        // Colored segments
-        for (let i = startIndex; i < Math.min(endIndex - step, count - step); i += step) {
-            const p1 = project(data.lat[i], data.lon[i]);
-            const p2 = project(data.lat[i + step], data.lon[i + step]);
-
-            ctx.beginPath();
-            ctx.moveTo(p1.x, p1.y);
-            ctx.lineTo(p2.x, p2.y);
-
-            if (pbState.mapMode === 'speed') {
-                const s = data.speed[i] || 0;
-                ctx.strokeStyle = getHeatmapColor(s, 40, 200);
-            } else if (pbState.mapMode === 'accel') {
-                const ax = data.aligned_accel_x ? data.aligned_accel_x[i] : (data.ax ? data.ax[i] : 0);
-                if (ax > 0.1) ctx.strokeStyle = `rgba(0, 255, 140, ${Math.min(ax / 0.5, 1)})`;
-                else if (ax < -0.1) ctx.strokeStyle = `rgba(255, 70, 70, ${Math.min(Math.abs(ax) / 0.8, 1)})`;
-                else ctx.strokeStyle = '#2a2a2a';
-            }
-            ctx.stroke();
-        }
+    for (let i = 0; i < points.length; i += 1) {
+        const point = points[i];
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, point.isFix ? 2.2 : 1.7, 0, Math.PI * 2);
+        ctx.fillStyle = point.isFix ? '#ff4d4f' : '#4da3ff';
+        ctx.fill();
     }
 }
 
@@ -7062,7 +7070,7 @@ function pbAnimationLoop() {
 function drawFrame() {
     const i = Math.floor(pbState.currentIndex);
     const data = pbState.data;
-    if (!data || !data.lat[i]) return;
+    if (!data) return;
 
     const currentLap = currentPlaybackLapBounds();
     if (pbState.renderedLapKey !== currentLap.lapKey) {
@@ -7077,6 +7085,7 @@ function drawFrame() {
     }
 
     const p = projectPlaybackPoint(i);
+    if (!p) return;
 
     // Dot
     ctx.beginPath();

@@ -92,6 +92,119 @@ class SessionProcessor:
         return statistics.median(deltas) if deltas else 0.0
 
     @staticmethod
+    def _gps_valid_samples(session):
+        return [sample for sample in session.samples if getattr(sample, "gps_is_valid", True)]
+
+    @staticmethod
+    def _build_processing_gps_series(session):
+        samples = session.samples
+        if not samples:
+            return [], [], []
+
+        valid = SessionProcessor._gps_valid_samples(session)
+        if not valid:
+            zeros = [0.0] * len(samples)
+            return zeros[:], zeros[:], zeros[:]
+        if len(valid) == 1:
+            lat = valid[0].gps.lat
+            lon = valid[0].gps.lon
+            speed = valid[0].gps.speed
+            return [lat] * len(samples), [lon] * len(samples), [speed] * len(samples)
+
+        ticks = [int(round(sample.timestamp * 1000.0)) for sample in samples]
+        gps_rows = [
+            (
+                int(round(sample.timestamp * 1000.0)),
+                float(sample.gps.lat),
+                float(sample.gps.lon),
+                0.0,
+                float(sample.gps.speed),
+                int(sample.gps.sats),
+                0.0,
+            )
+            for sample in valid
+        ]
+        promoted = SessionProcessor._hermite_interpolate_series(gps_rows, ticks)
+        lats = []
+        lons = []
+        speeds = []
+        for tick_ms in ticks:
+            row = promoted.get(tick_ms)
+            if row is None:
+                lats.append(0.0)
+                lons.append(0.0)
+                speeds.append(0.0)
+            else:
+                lats.append(row[0])
+                lons.append(row[1])
+                speeds.append(row[3])
+        return lats, lons, speeds
+
+    @staticmethod
+    def _hermite_interpolate_series(gps_rows, target_ticks):
+        if len(gps_rows) < 2:
+            return {}
+
+        origin_lat = gps_rows[0][1]
+        origin_lon = gps_rows[0][2]
+        lat_scale = 111320.0
+        lon_scale = 111320.0 * math.cos(math.radians(origin_lat))
+        points = []
+        for tick_ms, lat, lon, alt, speed, sats, vbat in gps_rows:
+            points.append({
+                "tick_ms": tick_ms,
+                "x": (lon - origin_lon) * lon_scale,
+                "y": (origin_lat - lat) * lat_scale,
+            })
+
+        tangents = []
+        for index, point in enumerate(points):
+            if index == 0:
+                nxt = points[1]
+                dt = max(1, nxt["tick_ms"] - point["tick_ms"])
+                tangents.append({"dx": (nxt["x"] - point["x"]) / dt, "dy": (nxt["y"] - point["y"]) / dt})
+            elif index == len(points) - 1:
+                prev = points[index - 1]
+                dt = max(1, point["tick_ms"] - prev["tick_ms"])
+                tangents.append({"dx": (point["x"] - prev["x"]) / dt, "dy": (point["y"] - prev["y"]) / dt})
+            else:
+                prev = points[index - 1]
+                nxt = points[index + 1]
+                dt = max(1, nxt["tick_ms"] - prev["tick_ms"])
+                tangents.append({"dx": (nxt["x"] - prev["x"]) / dt, "dy": (nxt["y"] - prev["y"]) / dt})
+
+        def clamp(value, lo, hi):
+            return max(lo, min(hi, value))
+
+        out = {}
+        sorted_ticks = sorted(enumerate(target_ticks), key=lambda item: item[1])
+        segment_index = 0
+        last_segment = len(points) - 2
+        for original_index, tick_ms in sorted_ticks:
+            while segment_index < last_segment and tick_ms > points[segment_index + 1]["tick_ms"]:
+                segment_index += 1
+            a = points[segment_index]
+            b = points[min(segment_index + 1, len(points) - 1)]
+            tangent_a = tangents[segment_index]
+            tangent_b = tangents[min(segment_index + 1, len(tangents) - 1)]
+            dt = max(1, b["tick_ms"] - a["tick_ms"])
+            u = clamp((tick_ms - a["tick_ms"]) / dt, 0.0, 1.0)
+            h00 = (2 * u * u * u) - (3 * u * u) + 1
+            h10 = (u * u * u) - (2 * u * u) + u
+            h01 = (-2 * u * u * u) + (3 * u * u)
+            h11 = (u * u * u) - (u * u)
+            x = (h00 * a["x"]) + (h10 * dt * tangent_a["dx"]) + (h01 * b["x"]) + (h11 * dt * tangent_b["dx"])
+            y = (h00 * a["y"]) + (h10 * dt * tangent_a["dy"]) + (h01 * b["y"]) + (h11 * dt * tangent_b["dy"])
+            speed = gps_rows[segment_index][4] + ((gps_rows[min(segment_index + 1, len(gps_rows) - 1)][4] - gps_rows[segment_index][4]) * u)
+            out[target_ticks[original_index]] = (
+                origin_lat - (y / lat_scale),
+                origin_lon + (x / lon_scale),
+                0.0,
+                speed,
+            )
+        return out
+
+    @staticmethod
     def _repair_legacy_bmi323_gyro_scale(gx_raw, gy_raw, gz_raw, calibration_profile, runtime_validation, session):
         """
         Repair logs recorded with the old BMI323 config mismatch.
@@ -167,6 +280,8 @@ class SessionProcessor:
         projected = []
         step = max(1, len(session.samples) // 250)
         for sample in session.samples[::step]:
+            if not getattr(sample, "gps_is_valid", True):
+                continue
             local_x = (float(sample.gps.lon) - float(geo_reference["lon0"])) * float(geo_reference["metersPerDegLon"])
             local_y = (float(geo_reference["lat0"]) - float(sample.gps.lat)) * float(geo_reference["metersPerDegLat"])
             x_rot = local_x * cos_t - local_y * sin_t
@@ -218,6 +333,8 @@ class SessionProcessor:
                 continue
             radius_km = max(float(radius_m), 60.0) / 1000.0
             for sample in session.samples:
+                if not getattr(sample, "gps_is_valid", True):
+                    continue
                 dist = haversine_distance(sample.gps.lat, sample.gps.lon, target_lat, target_lon)
                 if dist < radius_km and (best_distance is None or dist < best_distance):
                     best_candidate = track
@@ -327,9 +444,7 @@ class SessionProcessor:
             gy_raw = [(s.imu.gyro_y if s.imu.gyro_y else 0.0) for s in session.samples]
             gz_raw = [(s.imu.gyro_z if s.imu.gyro_z else 0.0) for s in session.samples]
             
-            lats = [s.gps.lat for s in session.samples]
-            lons = [s.gps.lon for s in session.samples]
-            speeds = [s.gps.speed for s in session.samples]
+            lats, lons, speeds = self._build_processing_gps_series(session)
 
             self.log.info("Running Advanced IMU Processing Pipeline...")
             

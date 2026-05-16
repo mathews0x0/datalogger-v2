@@ -1621,6 +1621,24 @@ function rowTypeOrder(rowType) {
   return 3;
 }
 
+function sortSessionRows(rows) {
+  return [...rows].sort((a, b) => {
+    const tickA = parseInt(a?.tick_ms, 10);
+    const tickB = parseInt(b?.tick_ms, 10);
+    const hasTickA = Number.isFinite(tickA);
+    const hasTickB = Number.isFinite(tickB);
+    if (hasTickA && hasTickB) {
+      const tickDelta = tickA - tickB;
+      if (tickDelta !== 0) return tickDelta;
+    } else if (hasTickA) {
+      return 1;
+    } else if (hasTickB) {
+      return -1;
+    }
+    return rowTypeOrder(a?.row_type) - rowTypeOrder(b?.row_type);
+  });
+}
+
 function gpsAnchorRows(rows) {
   return rows.filter((row) => row.row_type === "G");
 }
@@ -1804,5 +1822,5 @@ export function parseSessionCsv(text) {
     });
     return row;
   });
-  return { header, rows };
+  return { header, rows: sortSessionRows(rows) };
 }

@@ -51,19 +51,24 @@ class LapDetector:
         """
         laps = []
         crossing_indices = []
-        
+        gps_indices = [index for index, sample in enumerate(session.samples) if getattr(sample, "gps_is_valid", True)]
+        if not gps_indices:
+            return []
+
+        gps_samples = [session.samples[index] for index in gps_indices]
         in_zone = False
         
         # Dynamically calculate sample rate (Hz)
         sample_rate = 10.0
-        if session.samples and len(session.samples) > 10:
-            duration = session.samples[10].timestamp - session.samples[0].timestamp
+        if len(gps_samples) > 10:
+            duration = gps_samples[10].timestamp - gps_samples[0].timestamp
             if duration > 0.05:
                 sample_rate = 10.0 / duration
         hz = max(10, min(200, int(sample_rate)))
         lookback_limit = max(20, int(2.0 * hz)) # Look back up to 2 seconds
 
-        for i, sample in enumerate(session.samples):
+        for filtered_i, sample in enumerate(gps_samples):
+            i = gps_indices[filtered_i]
             dist_km = haversine_distance(
                 sample.gps.lat, sample.gps.lon,
                 self.start_line.lat, self.start_line.lon
@@ -77,8 +82,8 @@ class LapDetector:
                     # Calculate heading using look-back to handle "stair-step" GPS
                     heading = None
                     # Look back up to 2s to find 5m of movement
-                    for lookback in range(1, min(i, lookback_limit) + 1):
-                        prev = session.samples[i - lookback]
+                    for lookback in range(1, min(filtered_i, lookback_limit) + 1):
+                        prev = gps_samples[filtered_i - lookback]
                         d_km = haversine_distance(
                             prev.gps.lat, prev.gps.lon,
                             sample.gps.lat, sample.gps.lon
@@ -90,17 +95,20 @@ class LapDetector:
                             )
                             break
                     
-                    if heading is None and i > 0:
+                    if heading is None and filtered_i > 0:
                         # Fallback: if we haven't moved 5m in 2s, just use the immediate previous point if it exists
-                        prev = session.samples[i - 1]
+                        prev = gps_samples[filtered_i - 1]
                         if prev.gps.lat != sample.gps.lat or prev.gps.lon != sample.gps.lon:
                              heading = self._calculate_heading(
                                 prev.gps.lat, prev.gps.lon,
                                 sample.gps.lat, sample.gps.lon
                             )
 
+                    # Seed the very first crossing even without heading history.
+                    if heading is None and not crossing_indices:
+                        crossing_indices.append(i)
                     # Validate heading
-                    if heading is not None:
+                    elif heading is not None:
                         if not self._heading_is_valid(heading):
                             in_zone = False  # Reset zone so we keep checking
                             continue  # Skip wrong-way crossing

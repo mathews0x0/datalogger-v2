@@ -168,9 +168,9 @@ class SessionExporter:
         # Build Columns
         # Rounding for file size optimization
         times = [round(s.timestamp - t0, 3) for s in session.samples]
-        lats = [round(s.gps.lat, 6) for s in session.samples]
-        lons = [round(s.gps.lon, 6) for s in session.samples]
-        speeds = [round(s.gps.speed, 1) for s in session.samples]
+        lats = [round(s.gps.lat, 6) if getattr(s, "gps_is_valid", True) else None for s in session.samples]
+        lons = [round(s.gps.lon, 6) if getattr(s, "gps_is_valid", True) else None for s in session.samples]
+        speeds = [round(s.gps.speed, 1) if getattr(s, "gps_is_valid", True) else None for s in session.samples]
         
         # Base keys
         payload = {
@@ -178,6 +178,8 @@ class SessionExporter:
             "lat": lats,
             "lon": lons,
             "speed": speeds,
+            "gps_is_fix": [bool(getattr(s, "gps_is_fix", True)) for s in session.samples],
+            "gps_is_valid": [bool(getattr(s, "gps_is_valid", True)) for s in session.samples],
             "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
         }
         

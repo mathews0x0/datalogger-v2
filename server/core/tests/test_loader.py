@@ -51,24 +51,46 @@ class TestCSVLoader(unittest.TestCase):
         self.assertAlmostEqual(s_gps.gps.lat, 12.0000)
         self.assertAlmostEqual(s_gps.gps.speed, 80.0)
     
-    def test_fixed_100hz_gps_interpolation(self):
-        """Test that GPS data is linearly interpolated between fixes."""
+    def test_fixed_100hz_hermite_sparse_promotion(self):
+        """Promote only the maximum Hermite-supported subset of I rows."""
         csv_data = """tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat
-1000,G,0.10,0.20,1.00,1.0,2.0,3.0,10.0000,20.0000,100.0,50.0,8,3.80
-1050,I,0.15,0.25,1.05,1.5,2.5,3.5,,,,,,
-1100,G,0.20,0.30,1.10,2.0,3.0,4.0,10.0010,20.0010,110.0,60.0,10,3.79
-"""
+    1000,G,0.10,0.20,1.00,1.0,2.0,3.0,10.0000,20.0000,100.0,50.0,8,3.80
+    1030,I,0.13,0.23,1.03,1.3,2.3,3.3,,,,,,
+    1060,I,0.16,0.26,1.06,1.6,2.6,3.6,,,,,,
+    1100,G,0.20,0.30,1.10,2.0,3.0,4.0,10.0010,20.0010,110.0,60.0,10,3.79
+    """
         f = io.StringIO(csv_data)
         session = CSVLoader().load(f)
         
-        # 3 samples: G at 1000, I at 1050, G at 1100
-        self.assertEqual(len(session), 3)
-        
-        # Middle sample (tick_ms=1050) should have GPS interpolated halfway
-        s_mid = session.samples[1]
-        self.assertAlmostEqual(s_mid.gps.lat, 10.0005, places=4)
-        self.assertAlmostEqual(s_mid.gps.lon, 20.0005, places=4)
-        self.assertAlmostEqual(s_mid.gps.speed, 55.0, places=1)  # Midpoint of 50 and 60
+        self.assertEqual(len(session), 4)
+
+        # With 2 anchors and 2 I rows, max supported factor is 2, so only one I row is promoted.
+        promoted = [sample for sample in session.samples if sample.gps_is_valid and not sample.gps_is_fix]
+        self.assertEqual(len(promoted), 1)
+        self.assertAlmostEqual(promoted[0].timestamp, 0.06, places=2)
+        self.assertAlmostEqual(promoted[0].gps.lat, 10.0006, places=4)
+        self.assertAlmostEqual(promoted[0].gps.lon, 20.0006, places=4)
+
+        blank = session.samples[1]
+        self.assertFalse(blank.gps_is_fix)
+        self.assertFalse(blank.gps_is_valid)
+        self.assertAlmostEqual(blank.gps.lat, 0.0)
+        self.assertAlmostEqual(blank.gps.lon, 0.0)
+
+    def test_fixed_100hz_mixed_stream_is_sorted_by_tick(self):
+        """Mixed I/G file order should still produce a chronological session timeline."""
+        csv_data = """tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat
+1100,I,0.10,0.20,1.00,1.0,2.0,3.0,,,,,,
+1000,G,0.20,0.30,1.10,2.0,3.0,4.0,12.0000,77.0000,920.0,80.0,8,3.80
+1110,I,0.11,0.21,1.01,1.1,2.1,3.1,,,,,,
+1010,G,0.21,0.31,1.11,2.1,3.1,4.1,12.0001,77.0001,921.0,81.0,9,3.79
+"""
+        session = CSVLoader().load(io.StringIO(csv_data))
+
+        ticks_ms = [round(sample.timestamp * 1000) for sample in session.samples]
+        self.assertEqual(ticks_ms, [0, 10, 100, 110])
+        self.assertTrue(session.samples[0].gps_is_fix)
+        self.assertTrue(session.samples[1].gps_is_fix)
 
     def test_fixed_100hz_no_gps_rows(self):
         """Test fixed telemetry CSV with only IMU rows (no GPS fix yet)."""
@@ -83,6 +105,7 @@ class TestCSVLoader(unittest.TestCase):
         # GPS should be all zeros when no GPS rows exist
         self.assertAlmostEqual(session.samples[0].gps.lat, 0.0)
         self.assertAlmostEqual(session.samples[0].gps.lon, 0.0)
+        self.assertFalse(session.samples[0].gps_is_valid)
 
     def test_fixed_100hz_marker_metadata(self):
         csv_data = """tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch

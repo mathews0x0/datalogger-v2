@@ -30,6 +30,7 @@ class Sample:
     imu: IMUSample
     env: EnvSample
     gps_is_fix: bool = True
+    gps_is_valid: bool = True
 
 class Session:
     """

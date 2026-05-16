@@ -4933,3 +4933,156 @@ The replay tool now represents a focused analysis lab rather than a rider-facing
 - IMU sample rate remains below the intended target in the reviewed sessions.
 - Negative or unusual accel correction gains may indicate sign/axis issues rather than a real physical model.
 - The current replay algorithm still uses GPS assistance for axis/sign discovery, so it is not yet independently deployable as production IMU-only lean.
+
+## 2026-05-17 Playback Mesh Investigation, Hermite Promotion, And Timeline Ordering
+
+### Context
+
+We investigated why the production playback map looked "meshy" even when the underlying lap shape appeared visually correct.
+
+Inputs reviewed:
+
+- a production playback screenshot showing a woven grey path
+- the raw session CSV `sess_002.csv`
+
+This work spanned both:
+
+- production processing/rendering in `server/`
+- replay-lab tooling in `imu-replay/`
+
+### Data Finding
+
+The critical structural finding was that the CSV is not globally sorted by `tick_ms`.
+
+Observed pattern in `sess_002.csv`:
+
+- `I` rows are internally time-ordered
+- `G` rows are internally time-ordered
+- the combined file order is not chronological
+
+This means a pipeline that trusts file order can build a playback path that jumps backward and forward in time even when the individual points are correct.
+
+### Production Playback Path Understanding
+
+We mapped the production path as:
+
+1. CSV ingestion loader
+2. unified `Session.samples` timeline
+3. session processor and lap detection
+4. session exporter
+5. playback UI renderer
+
+Important product understanding:
+
+- the loader had been expanding GPS onto the processing timeline
+- downstream timing, lap detection, and rendering all consumed that merged timeline
+- interpolated or promoted GPS therefore affects both metrics and display, not just the map
+
+### Hermite Promotion Work
+
+The user asked to replace linear GPS interpolation with Hermite logic from replay-lab.
+
+Production ingestion was changed to:
+
+- preserve real `G` fixes
+- compute the maximum supported Hermite promotion factor from the available anchors and IMU ticks
+- promote only a subset of `I` rows to GPS-valid samples using Hermite interpolation
+- leave some `I` rows GPS-empty by design
+
+Supporting stack changes were made so sparse GPS is tolerated:
+
+- `gps_is_valid` added to `Sample`
+- processing paths skip invalid GPS where necessary
+- advanced IMU processing rebuilds a dense GPS series from valid sparse points
+- exporter emits `gps_is_fix` and `gps_is_valid`
+- playback UI tolerates sparse GPS
+
+### Timeout Regression And Fix
+
+The first Hermite implementation caused production timeouts on large sessions.
+
+Root cause:
+
+- repeated rescans inside the promotion/interpolation logic created near-quadratic behavior
+
+Fix:
+
+- loader-side Hermite promotion and processing-side Hermite reconstruction were rewritten to use sorted single-pass traversal
+
+Outcome:
+
+- tests passed
+- local processing time returned to acceptable levels
+
+### Diagnostic Playback Rendering
+
+To isolate the display issue, playback was temporarily changed to draw:
+
+- red dots for real GPS fixes
+- blue dots for promoted GPS points
+- grey connector lines between GPS-valid points
+
+This clarified that:
+
+- point placement could look clean
+- the polyline order and connection behavior could still be wrong
+
+### Root Cause Of The Mesh
+
+The main cause of the remaining playback mesh was timeline ordering.
+
+Production had been preserving file order when building `Session.samples`, so playback was connecting GPS-valid points in file order instead of chronological order.
+
+Because the source CSV mixes two individually ordered substreams (`I` and `G`) without globally sorting them, the map line could jump backward in time and weave across nearby points, especially in corners.
+
+### Production Fix
+
+Production ingestion now sorts by `tick_ms` before building the unified session:
+
+- `imu_rows` sorted by tick
+- `gps_rows` sorted by tick
+- Hermite promotion operates on sorted anchors/ticks
+- playback now connects each GPS-valid point to the next adjacent GPS-valid point in time
+
+Verification performed:
+
+- loader regression test added for mixed `I`/`G` file-order input
+- loader unit tests passed
+- `sess_002.csv` now produces a monotonic sample timeline
+
+### Replay-Lab Alignment
+
+Replay-lab was then checked for the same assumption.
+
+Finding:
+
+- raw replay-lab load previously trusted CSV file order
+- only the Hermite-enriched export path sorted rows afterward
+
+Replay-lab was updated so `parseSessionCsv()` now sorts rows by `tick_ms` on load, with `row_type` as the tie-breaker.
+
+Result:
+
+- production and replay-lab now both normalize mixed `I`/`G` input into chronological order before downstream processing
+
+### Files Touched
+
+- `server/core/ingestion/csv_loader.py`
+- `server/core/core/models.py`
+- `server/core/core/session_processor.py`
+- `server/core/core/session_exporter.py`
+- `server/core/core/track_manager.py`
+- `server/core/processing/laps.py`
+- `server/ui/app.js`
+- `server/core/tests/test_loader.py`
+- `imu-replay/processor.js`
+
+### Follow-Up
+
+Playback should be visually re-checked after the ordering fix.
+
+If any mesh remains, the next likely causes are now display-layer concerns rather than ingestion order:
+
+- connector lines bridging intentionally missing GPS gaps
+- diagnostic rendering overemphasizing sparse gaps
+- need for a display-specific geometry path separate from the processing timeline

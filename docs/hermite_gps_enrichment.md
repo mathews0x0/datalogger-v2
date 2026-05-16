@@ -1,8 +1,19 @@
 # Hermite GPS Enrichment
 
-This note describes the logic used to generate [`temp_data/figure8_hermite_3x.csv`](/Users/mj/Documents/datalogger-v2/temp_data/figure8_hermite_3x.csv:1) from the baseline session [`temp_data/figure8_60pts.csv`](/Users/mj/Documents/datalogger-v2/temp_data/figure8_60pts.csv:1).
+This note describes the Hermite GPS enrichment approach used in replay tooling and the related sparse-promotion strategy now used in server-side ingestion. It originally described generating [`temp_data/figure8_hermite_3x.csv`](/Users/mj/Documents/datalogger-v2/temp_data/figure8_hermite_3x.csv:1) from the baseline session [`temp_data/figure8_60pts.csv`](/Users/mj/Documents/datalogger-v2/temp_data/figure8_60pts.csv:1).
 
-The goal is to increase GPS point density by about `3x` without assuming we know the track shape in advance. The only allowed inputs are the CSV rows themselves.
+The goal is to increase useful GPS point density without assuming we know the track shape in advance. The only allowed inputs are the CSV rows themselves.
+
+There are now two related uses of this idea:
+
+- replay-lab enrichment:
+  - can rewrite a session into a denser GPS-bearing stream for analysis/export
+- production ingestion:
+  - promotes only a subset of existing IMU ticks to GPS-valid samples
+  - may leave some `I` rows with no GPS at all
+  - uses the maximum supported promotion factor from the available anchors and IMU ticks
+
+In both cases, the session should be processed in chronological `tick_ms` order rather than trusting raw file order.
 
 ## Inputs
 
@@ -29,7 +40,7 @@ The Hermite approach fixes that by:
 1. Converting GPS lat/lon to local `x,y` meters
 2. Estimating a tangent direction at each GPS anchor from neighboring anchors
 3. Using cubic Hermite interpolation between each pair of anchors
-4. Resampling the path at roughly `3x` the original GPS rate
+4. Resampling or promoting points between anchors
 5. Converting the interpolated `x,y` points back to lat/lon
 6. Interpolating speed over the same timestamps
 7. Estimating lean from the curvature of the enriched path
@@ -73,18 +84,24 @@ tangent_i = (p[i+1] - p[i-1]) / (t[i+1] - t[i-1])
 
 This is a centered finite-difference estimate. It uses only the observed GPS sequence and gives a local motion direction that is smoother than per-segment headings.
 
-## Step 3: Resample Timestamps At 3x Density
+## Step 3: Choose Target Timestamps
 
 The baseline GPS cadence is about one point every `120 ms`.
 
-To create a `3x` denser GPS stream, we generate new target timestamps every `40 ms`:
+For a dense replay-lab enrichment mode, we can generate new target timestamps every `40 ms` to create a `3x` denser GPS stream:
 
 - original:
   - `0, 120, 240, ...`
 - enriched:
   - `0, 40, 80, 120, 160, ...`
 
-These timestamps define where the new GPS points should exist.
+For the server-side sparse promotion path, target timestamps are chosen from IMU ticks that already exist between adjacent GPS anchors:
+
+- only a subset of `I` ticks are promoted
+- some `I` rows remain GPS-empty by design
+- the maximum factor is limited by how many intermediate IMU ticks are actually available
+
+In both cases, the selected timestamps define where new GPS-bearing points should exist.
 
 ## Step 4: Cubic Hermite Interpolation
 
@@ -128,7 +145,7 @@ Once we have enriched `x,y` positions, we convert them back into GPS coordinates
 - `lat = origin_lat - y / lat_scale`
 - `lon = origin_lon + x / lon_scale`
 
-Those become the enriched `lat` and `lon` values written into the new `G` rows.
+Those become the enriched `lat` and `lon` values written into the new GPS-bearing rows.
 
 ## Step 6: Estimate Speed For Enriched Points
 
@@ -191,9 +208,9 @@ This method still has real limits:
 
 So this is a strong display-quality baseline, but not necessarily the final best estimator.
 
-## Current Output File
+## Current Uses
 
-The generated enriched session is:
+One generated enriched session is:
 
 - [`temp_data/figure8_hermite_3x.csv`](/Users/mj/Documents/datalogger-v2/temp_data/figure8_hermite_3x.csv:1)
 
@@ -202,6 +219,13 @@ It contains:
 - original `M` rows
 - original `I` rows
 - Hermite-enriched `G` rows at about `3x` GPS density
+
+The production server path does not rewrite every intermediate row into a GPS-bearing row. Instead it:
+
+- preserves real `G` fixes
+- promotes selected `I` rows to GPS-valid samples
+- leaves non-promoted `I` rows without GPS
+- relies on downstream processing/rendering code to tolerate sparse GPS
 
 ## Recommended Next Improvements
 

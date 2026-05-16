@@ -93,6 +93,8 @@ class TrackManager:
             
             # Check samples
             for sample in session.samples:
+                if not getattr(sample, "gps_is_valid", True):
+                    continue
                 dist = haversine_distance(sample.gps.lat, sample.gps.lon, target_lat, target_lon)
                 if dist < radius_km:
                     return track
