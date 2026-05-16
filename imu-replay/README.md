@@ -71,9 +71,13 @@ When `Calibrated V2 Tuned` is selected in the UI, the default tuning values are:
 - `Lean Gain`: `1.1`
 - `Lean Offset Deg`: `0.0`
 - `Longitudinal Gain`: `0.65`
+- `Auto GPS Lag`: `0`
 - `GPS Lag Ms`: `250`
+- `Auto Lag Min/Max/Step`: `-800 / 2200 / 25`
 
 The lag is applied only to comparison/graph scoring. It accounts for the expected delay between IMU force and the later GPS speed/path response.
+
+Set `Auto GPS Lag (0/1)` to `1` to scan the configured lag range and automatically choose the lag with the best combined lean and longitudinal alignment for the current selected lap/session. Changing the lap recomputes the auto lag for that view.
 
 `Lean Offset Deg` is a manual signed bias applied after gyro integration and lean gain. Positive shifts the IMU lean curve one direction; negative shifts it the other. The UI also reports `Profile static lean offset`, computed from the saved gravity vector and rotation matrix. Do not use `mount_tilt.roll_deg` directly as lean offset because the rotation matrix already accounts for mount geometry.
 

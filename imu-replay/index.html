@@ -19,16 +19,34 @@
             <input id="csvFile" type="file" accept=".csv,text/csv" />
             <small id="csvFileName" class="file-name">No file selected</small>
           </label>
-          <label class="field">
-            <span>Algorithm</span>
-            <select id="algorithmSelect"></select>
-          </label>
-          <div id="paramFields" class="param-grid"></div>
-          <div class="controls-row">
-            <button id="processBtn" class="primary">Process</button>
-            <button id="resetParamsBtn">Reset Params</button>
+          <div class="tab-row">
+            <button id="tuningTabBtn" class="tab-btn active" type="button">Tuning</button>
+            <button id="hermiteTabBtn" class="tab-btn" type="button">Hermite</button>
           </div>
-          <button id="loadDemoBtn">Load sess_004</button>
+          <div id="tuningPane">
+            <label class="field">
+              <span>Algorithm</span>
+              <select id="algorithmSelect"></select>
+            </label>
+            <div id="paramFields" class="param-grid"></div>
+            <div class="controls-row">
+              <button id="processBtn" class="primary">Process</button>
+              <button id="resetParamsBtn">Reset Params</button>
+            </div>
+            <div id="liveTuningMeta" class="status compact">Live tuning is on. Parameter changes reprocess the active session immediately.</div>
+            <button id="loadDemoBtn">Load sess_004</button>
+          </div>
+          <div id="hermitePane" class="hidden-pane">
+            <label class="field">
+              <span>Enrichment Factor</span>
+              <input id="hermiteFactor" type="number" min="2" max="8" step="1" value="3" />
+            </label>
+            <div class="controls-row">
+              <button id="processHermiteBtn" class="primary" type="button">Process As Hermite</button>
+              <button id="reloadOriginalBtn" type="button">Reload Original</button>
+            </div>
+            <div id="sessionDatasetMeta" class="status compact">Original session data is active.</div>
+          </div>
         </section>
 
         <section class="panel">
@@ -53,31 +71,7 @@
 
         <section class="panel">
           <h2>Graph Cursor</h2>
-          <label class="field">
-            <span>Lap</span>
-            <select id="lapSelect">
-              <option value="all">Full Session</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>Timeline</span>
-            <input id="timeline" type="range" min="0" max="0" value="0" />
-          </label>
           <div id="frameMeta" class="status compact">No processed session loaded.</div>
-        </section>
-
-        <section class="panel">
-          <h2>Derived State</h2>
-          <div class="metric-grid">
-            <div class="metric-card">
-              <span class="metric-label">Lean</span>
-              <strong id="leanValue">0.0 deg</strong>
-            </div>
-            <div class="metric-card">
-              <span class="metric-label">Speed</span>
-              <strong id="speedValue">0.0 km/h</strong>
-            </div>
-          </div>
         </section>
 
         <section class="panel">
@@ -93,7 +87,87 @@
 
       <main class="canvas-wrap">
         <div class="stage-card">
+          <div class="stage-overlay stage-overlay-side">
+            <div class="overlay-metric widget-card lean-widget">
+              <div class="widget-header">
+                <span class="overlay-label">Lean Angle</span>
+                <strong id="speedValue" class="widget-meta">0.0 km/h</strong>
+              </div>
+              <div id="leanGauge" class="lean-gauge">
+                <div class="lean-gauge-center">
+                  <strong id="leanValue">0.0 deg</strong>
+                  <span id="leanDirection">Upright</span>
+                </div>
+                <div class="lean-arc">
+                  <svg class="lean-arc-svg" viewBox="0 0 120 68" aria-hidden="true">
+                    <path class="lean-arc-track" d="M20 54 A40 40 0 0 1 100 54" pathLength="100"></path>
+                    <path class="lean-arc-stroke lean-arc-stroke-left" d="M60 14 A40 40 0 0 0 20 54" pathLength="100"></path>
+                    <path class="lean-arc-stroke lean-arc-stroke-right" d="M60 14 A40 40 0 0 1 100 54" pathLength="100"></path>
+                  </svg>
+                </div>
+                <div class="lean-balance">
+                  <span class="lean-balance-side">Left</span>
+                  <div class="lean-balance-track">
+                    <div class="lean-balance-fill lean-balance-fill-left"></div>
+                    <div class="lean-balance-fill lean-balance-fill-right"></div>
+                    <div class="lean-balance-centerline"></div>
+                    <div class="lean-balance-marker"></div>
+                  </div>
+                  <span class="lean-balance-side">Right</span>
+                </div>
+              </div>
+            </div>
+            <div class="overlay-metric widget-card brake-widget">
+              <div class="widget-header">
+                <span class="overlay-label">Throttle / Brake</span>
+                <strong id="driveValue" class="widget-meta">Coast</strong>
+              </div>
+              <div id="driveBar" class="drive-bar">
+                <div class="drive-bar-track">
+                  <div class="drive-bar-centerline"></div>
+                  <div id="driveBrakeFill" class="drive-bar-fill drive-bar-fill-brake"></div>
+                  <div id="driveThrottleFill" class="drive-bar-fill drive-bar-fill-throttle"></div>
+                </div>
+                <div class="drive-bar-labels">
+                  <span>Brake</span>
+                  <span>Throttle</span>
+                </div>
+              </div>
+            </div>
+            <div class="overlay-metric overlay-control">
+              <label class="overlay-label" for="trackZoom">Track Zoom</label>
+              <input id="trackZoom" type="range" min="1" max="4" step="0.1" value="1.4" aria-label="Track zoom" />
+              <strong id="trackZoomValue">1.4x</strong>
+            </div>
+            <div class="overlay-metric overlay-control">
+              <label class="overlay-label" for="lapSelect">Graph Lap Focus</label>
+              <select id="lapSelect">
+                <option value="all">Full Session</option>
+              </select>
+              <label class="overlay-label" for="graphZoom">Graph Window</label>
+              <input id="graphZoom" type="range" min="1" max="1" step="1" value="1" aria-label="Graph window zoom" />
+              <strong id="graphZoomValue">1 lap view</strong>
+            </div>
+            <div class="overlay-metric overlay-control">
+              <span class="overlay-label">Graph Series</span>
+              <label class="toggle-row">
+                <input id="showGpsSeries" type="checkbox" checked />
+                <span>Show GPS</span>
+              </label>
+              <label class="toggle-row">
+                <input id="showImuSeries" type="checkbox" checked />
+                <span>Show IMU</span>
+              </label>
+            </div>
+          </div>
           <canvas id="stage" width="1280" height="900"></canvas>
+          <div class="stage-overlay stage-overlay-bottom">
+            <button id="seekBackBtn" type="button" aria-label="Seek backward">-5s</button>
+            <button id="playPauseBtn" class="primary" type="button">Play</button>
+            <button id="seekForwardBtn" type="button" aria-label="Seek forward">+5s</button>
+            <input id="timeline" type="range" min="0" max="0" value="0" aria-label="Replay timeline" />
+            <div id="playbackMeta" class="playback-meta">00:00.0 / 00:00.0</div>
+          </div>
         </div>
       </main>
     </div>

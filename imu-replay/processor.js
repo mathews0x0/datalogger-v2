@@ -284,7 +284,7 @@ function splitCsvLine(line) {
 
 function buildGpsRows(rows) {
   return rows
-    .filter((row) => row.row_type === "G")
+    .filter((row) => row.row_type === "G" || row.row_type === "IG")
     .map((row) => ({
       tickMs: parseInt(row.tick_ms, 10),
       lat: parseNumber(row.lat),
@@ -297,7 +297,7 @@ function buildGpsRows(rows) {
 
 function buildImuRows(rows) {
   return rows
-    .filter((row) => row.row_type === "I")
+    .filter((row) => row.row_type === "I" || row.row_type === "IG")
     .map((row) => ({
       tickMs: parseInt(row.tick_ms, 10),
       acc: [parseNumber(row.acc_x) ?? 0, parseNumber(row.acc_y) ?? 0, parseNumber(row.acc_z) ?? 0],
@@ -1001,7 +1001,7 @@ function buildFixedTelemetryRows(rows) {
   const gpsRows = [];
   const gpsIndices = [];
   for (const row of rows) {
-    if (row.row_type !== "I" && row.row_type !== "G") continue;
+    if (row.row_type !== "I" && row.row_type !== "G" && row.row_type !== "IG") continue;
     const tickMs = parseInt(row.tick_ms, 10);
     if (!Number.isFinite(tickMs)) continue;
     const item = {
@@ -1016,7 +1016,7 @@ function buildFixedTelemetryRows(rows) {
     };
     const index = dataRows.length;
     dataRows.push(item);
-    if (row.row_type === "G" && item.lat != null && item.lon != null) {
+    if ((row.row_type === "G" || row.row_type === "IG") && item.lat != null && item.lon != null) {
       gpsIndices.push(index);
       gpsRows.push({ tickMs, lat: item.lat, lon: item.lon, speedKmh: item.speedKmh ?? 0, sats: item.sats });
     }
@@ -1435,7 +1435,11 @@ export const processors = {
       { key: "calibratedLeanGain", label: "Lean Gain", type: "number", default: 1.0, step: 0.05 },
       { key: "leanOffsetDeg", label: "Lean Offset Deg", type: "number", default: 0.0, step: 0.1 },
       { key: "longitudinalGain", label: "Longitudinal Gain", type: "number", default: 1.0, step: 0.05 },
+      { key: "autoGpsLag", label: "Auto GPS Lag (0/1)", type: "number", default: 0, step: 1 },
       { key: "gpsLagMs", label: "GPS Lag Ms", type: "number", default: 0, step: 25 },
+      { key: "autoLagMinMs", label: "Auto Lag Min Ms", type: "number", default: -800, step: 25 },
+      { key: "autoLagMaxMs", label: "Auto Lag Max Ms", type: "number", default: 2200, step: 25 },
+      { key: "autoLagStepMs", label: "Auto Lag Step Ms", type: "number", default: 25, step: 25 },
     ],
     process(session, config) {
       return calibratedV2Processor(session, config, { name: "calibratedV2Raw" });
@@ -1454,7 +1458,11 @@ export const processors = {
       { key: "calibratedLeanGain", label: "Lean Gain", type: "number", default: 1.1, step: 0.05 },
       { key: "leanOffsetDeg", label: "Lean Offset Deg", type: "number", default: 0.0, step: 0.1 },
       { key: "longitudinalGain", label: "Longitudinal Gain", type: "number", default: 0.65, step: 0.05 },
+      { key: "autoGpsLag", label: "Auto GPS Lag (0/1)", type: "number", default: 0, step: 1 },
       { key: "gpsLagMs", label: "GPS Lag Ms", type: "number", default: 250, step: 25 },
+      { key: "autoLagMinMs", label: "Auto Lag Min Ms", type: "number", default: -800, step: 25 },
+      { key: "autoLagMaxMs", label: "Auto Lag Max Ms", type: "number", default: 2200, step: 25 },
+      { key: "autoLagStepMs", label: "Auto Lag Step Ms", type: "number", default: 25, step: 25 },
     ],
     process(session, config) {
       return calibratedV2Processor(session, config, { name: "calibratedV2" });
@@ -1479,6 +1487,310 @@ export const processors = {
     },
   },
 };
+
+function gpsOriginFromRows(gpsRows) {
+  if (!gpsRows.length) return null;
+  const originLat = gpsRows[0].lat;
+  const originLon = gpsRows[0].lon;
+  return {
+    originLat,
+    originLon,
+    latScale: 111320,
+    lonScale: 111320 * Math.cos((originLat * Math.PI) / 180),
+  };
+}
+
+function metersToLatLon(x, y, origin) {
+  return {
+    lat: origin.originLat - (y / origin.latScale),
+    lon: origin.originLon + (x / origin.lonScale),
+  };
+}
+
+function estimateHermiteTangents(points) {
+  return points.map((point, index) => {
+    if (index === 0) {
+      const next = points[1];
+      const dt = Math.max(1, next.tickMs - point.tickMs);
+      return { dx: (next.x - point.x) / dt, dy: (next.y - point.y) / dt };
+    }
+    if (index === points.length - 1) {
+      const prev = points[index - 1];
+      const dt = Math.max(1, point.tickMs - prev.tickMs);
+      return { dx: (point.x - prev.x) / dt, dy: (point.y - prev.y) / dt };
+    }
+    const prev = points[index - 1];
+    const next = points[index + 1];
+    const dt = Math.max(1, next.tickMs - prev.tickMs);
+    return { dx: (next.x - prev.x) / dt, dy: (next.y - prev.y) / dt };
+  });
+}
+
+function positiveTickStep(rows, fallback = 120) {
+  const dts = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const dt = rows[i].tickMs - rows[i - 1].tickMs;
+    if (dt > 0) dts.push(dt);
+  }
+  return Math.max(1, Math.round(median(dts.length ? dts : [fallback])));
+}
+
+function findSegmentIndex(rows, tickMs) {
+  if (tickMs <= rows[0].tickMs) return 0;
+  for (let index = 0; index < rows.length - 1; index += 1) {
+    if (tickMs <= rows[index + 1].tickMs) return index;
+  }
+  return rows.length - 2;
+}
+
+function interpolateScalar(rows, tickMs, key) {
+  if (tickMs <= rows[0].tickMs) return rows[0][key];
+  if (tickMs >= rows[rows.length - 1].tickMs) return rows[rows.length - 1][key];
+  const index = findSegmentIndex(rows, tickMs);
+  const a = rows[index];
+  const b = rows[index + 1];
+  const alpha = clamp((tickMs - a.tickMs) / Math.max(1e-9, b.tickMs - a.tickMs), 0, 1);
+  return a[key] + ((b[key] - a[key]) * alpha);
+}
+
+function hermiteBasis(u) {
+  return {
+    h00: (2 * u * u * u) - (3 * u * u) + 1,
+    h10: (u * u * u) - (2 * u * u) + u,
+    h01: (-2 * u * u * u) + (3 * u * u),
+    h11: (u * u * u) - (u * u),
+  };
+}
+
+function hermiteInterpolateGps(gpsRows, targetTicks = []) {
+  if (gpsRows.length < 2) {
+    return {
+      rows: gpsRows.map((row) => ({ ...row })),
+      stats: {
+        originalGpsPoints: gpsRows.length,
+        enrichedGpsPoints: gpsRows.length,
+        baseStepMs: 0,
+        enrichedStepMs: 0,
+      },
+    };
+  }
+
+  const origin = gpsOriginFromRows(gpsRows);
+  const points = latLonToMeters(gpsRows);
+  const tangents = estimateHermiteTangents(points);
+  const ticks = targetTicks.length ? targetTicks : gpsRows.map((row) => row.tickMs);
+  const stepMs = positiveTickStep(ticks.map((tickMs) => ({ tickMs })), positiveTickStep(gpsRows, 120));
+  const baseStepMs = positiveTickStep(gpsRows, 120);
+  const rows = ticks.map((tickMs) => {
+    const segmentIndex = findSegmentIndex(points, tickMs);
+    const a = points[segmentIndex];
+    const b = points[Math.min(segmentIndex + 1, points.length - 1)];
+    const tangentA = tangents[segmentIndex];
+    const tangentB = tangents[Math.min(segmentIndex + 1, tangents.length - 1)];
+    const dt = Math.max(1, b.tickMs - a.tickMs);
+    const u = clamp((tickMs - a.tickMs) / dt, 0, 1);
+    const { h00, h10, h01, h11 } = hermiteBasis(u);
+    const x = (h00 * a.x) + (h10 * dt * tangentA.dx) + (h01 * b.x) + (h11 * dt * tangentB.dx);
+    const y = (h00 * a.y) + (h10 * dt * tangentA.dy) + (h01 * b.y) + (h11 * dt * tangentB.dy);
+    const { lat, lon } = metersToLatLon(x, y, origin);
+    return {
+      tickMs,
+      lat,
+      lon,
+      speedKmh: interpolateScalar(gpsRows, tickMs, "speedKmh"),
+      sats: Math.round(interpolateScalar(gpsRows, tickMs, "sats")),
+    };
+  });
+
+  return {
+    rows,
+    stats: {
+      originalGpsPoints: gpsRows.length,
+      enrichedGpsPoints: rows.length,
+      baseStepMs,
+      enrichedStepMs: stepMs,
+    },
+  };
+}
+
+function rowTypeOrder(rowType) {
+  if (rowType === "M") return 0;
+  if (rowType === "G") return 1;
+  if (rowType === "IG") return 2;
+  if (rowType === "I") return 3;
+  return 3;
+}
+
+function gpsAnchorRows(rows) {
+  return rows.filter((row) => row.row_type === "G");
+}
+
+function imuOnlyRows(rows) {
+  return rows.filter((row) => row.row_type === "I");
+}
+
+function selectPromotionTicks(rows, factor = 3) {
+  const anchors = gpsAnchorRows(rows)
+    .map((row) => ({
+      tickMs: parseInt(row.tick_ms, 10),
+      lat: parseNumber(row.lat),
+      lon: parseNumber(row.lon),
+      speedKmh: parseNumber(row.speed) ?? 0,
+      sats: parseNumber(row.sats) ?? 0,
+    }))
+    .filter((row) => Number.isFinite(row.tickMs) && row.lat != null && row.lon != null);
+  if (anchors.length < 2) {
+    return {
+      ticks: [],
+      requestedFactor: factor,
+      appliedFactor: 1,
+      originalGpsPoints: anchors.length,
+      promotedRows: 0,
+      totalGpsPoints: anchors.length,
+      maxFactor: 1,
+    };
+  }
+
+  const imuRows = imuOnlyRows(rows)
+    .map((row) => parseInt(row.tick_ms, 10))
+    .filter((tickMs) => Number.isFinite(tickMs));
+  const imuTickSet = new Set(imuRows);
+  const availablePromotions = [];
+  for (let index = 0; index < anchors.length - 1; index += 1) {
+    const start = anchors[index].tickMs;
+    const end = anchors[index + 1].tickMs;
+    availablePromotions.push(imuRows.filter((tickMs) => tickMs > start && tickMs < end));
+  }
+
+  const originalGpsPoints = anchors.length;
+  const totalAvailablePromotions = availablePromotions.reduce((sum, ticks) => sum + ticks.length, 0);
+  const maxFactor = Math.max(1, Math.floor((originalGpsPoints + totalAvailablePromotions) / originalGpsPoints));
+  const appliedFactor = clamp(Math.max(1, Math.round(Number(factor) || 1)), 1, maxFactor);
+  const extraPerInterval = Math.max(0, appliedFactor - 1);
+  const selectedTicks = [];
+
+  for (let index = 0; index < anchors.length - 1; index += 1) {
+    const start = anchors[index].tickMs;
+    const end = anchors[index + 1].tickMs;
+    const candidates = availablePromotions[index];
+    if (!candidates.length || extraPerInterval === 0) continue;
+    const picks = [];
+    for (let sampleIndex = 1; sampleIndex <= extraPerInterval; sampleIndex += 1) {
+      const targetTickMs = start + (((end - start) * sampleIndex) / appliedFactor);
+      let bestTickMs = null;
+      let bestDistance = Infinity;
+      for (const candidateTickMs of candidates) {
+        if (picks.includes(candidateTickMs)) continue;
+        const distance = Math.abs(candidateTickMs - targetTickMs);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestTickMs = candidateTickMs;
+        }
+      }
+      if (bestTickMs != null) picks.push(bestTickMs);
+    }
+    picks.sort((a, b) => a - b);
+    selectedTicks.push(...picks.filter((tickMs) => imuTickSet.has(tickMs)));
+  }
+
+  return {
+    ticks: selectedTicks,
+    requestedFactor: factor,
+    appliedFactor,
+    originalGpsPoints,
+    promotedRows: selectedTicks.length,
+    totalGpsPoints: originalGpsPoints + selectedTicks.length,
+    maxFactor,
+  };
+}
+
+export function enrichSessionWithHermite(session, options = {}) {
+  const requestedFactor = Math.max(1, Math.round(Number(options.factor) || 3));
+  const anchors = buildGpsRows(session.rows.filter((row) => row.row_type === "G"));
+  if (anchors.length < 2) {
+    return {
+      session,
+      stats: {
+        error: "Need at least two original G rows for Hermite enrichment.",
+        requestedFactor,
+        appliedFactor: 1,
+        originalGpsPoints: anchors.length,
+        promotedRows: 0,
+        totalGpsPoints: anchors.length,
+        maxFactor: 1,
+      },
+    };
+  }
+
+  const target = selectPromotionTicks(session.rows, requestedFactor);
+  const enriched = hermiteInterpolateGps(anchors, target.ticks);
+  const enrichedByTick = new Map(enriched.rows.map((row) => [Math.round(row.tickMs), row]));
+  const mergedRows = session.rows.map((row) => {
+      if (row.row_type !== "I") return { ...row };
+      const tickMs = parseInt(row.tick_ms, 10);
+      const enrichedRow = enrichedByTick.get(tickMs);
+      if (!enrichedRow) {
+        return {
+          ...row,
+          row_type: "I",
+          lat: "",
+          lon: "",
+          alt: "",
+          speed: "",
+          sats: "",
+          gps_epoch: "",
+        };
+      }
+      return {
+        ...row,
+        row_type: "IG",
+        lat: enrichedRow.lat.toFixed(7),
+        lon: enrichedRow.lon.toFixed(7),
+        alt: row.alt || "",
+        speed: enrichedRow.speedKmh.toFixed(1),
+        sats: String(Math.max(0, enrichedRow.sats || 0)),
+        gps_epoch: "",
+      };
+    })
+    .sort((a, b) => {
+      const tickDelta = (parseInt(a.tick_ms, 10) || 0) - (parseInt(b.tick_ms, 10) || 0);
+      if (tickDelta !== 0) return tickDelta;
+      return rowTypeOrder(a.row_type) - rowTypeOrder(b.row_type);
+    });
+
+  return {
+    session: {
+      header: session.header?.length ? session.header.slice() : Object.keys(mergedRows[0] || {}),
+      rows: mergedRows,
+    },
+    stats: {
+      requestedFactor: target.requestedFactor,
+      appliedFactor: target.appliedFactor,
+      originalGpsPoints: target.originalGpsPoints,
+      promotedRows: target.promotedRows,
+      totalGpsPoints: target.totalGpsPoints,
+      maxFactor: target.maxFactor,
+      enrichedStepMs: enriched.stats.enrichedStepMs,
+      baseStepMs: enriched.stats.baseStepMs,
+      mode: "ig_rows",
+    },
+  };
+}
+
+function escapeCsvValue(value) {
+  const text = value == null ? "" : String(value);
+  if (!/[",\n\r]/.test(text)) return text;
+  return `"${text.replace(/"/g, "\"\"")}"`;
+}
+
+export function serializeSessionCsv(session) {
+  const header = session.header?.length ? session.header : Object.keys(session.rows[0] || {});
+  const lines = [header.join(",")];
+  for (const row of session.rows) {
+    lines.push(header.map((key) => escapeCsvValue(row[key] ?? "")).join(","));
+  }
+  return `${lines.join("\n")}\n`;
+}
 
 export function parseSessionCsv(text) {
   const lines = text.replace(/\r/g, "").split("\n").filter((line) => line.length);

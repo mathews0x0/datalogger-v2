@@ -1,23 +1,48 @@
-import { parseSessionCsv, processors } from "./processor.js";
+import { enrichSessionWithHermite, parseSessionCsv, processors, serializeSessionCsv } from "./processor.js";
 
 const el = {
   csvFile: document.getElementById("csvFile"),
   csvFileName: document.getElementById("csvFileName"),
+  tuningTabBtn: document.getElementById("tuningTabBtn"),
+  hermiteTabBtn: document.getElementById("hermiteTabBtn"),
+  tuningPane: document.getElementById("tuningPane"),
+  hermitePane: document.getElementById("hermitePane"),
   algorithmSelect: document.getElementById("algorithmSelect"),
   paramFields: document.getElementById("paramFields"),
+  liveTuningMeta: document.getElementById("liveTuningMeta"),
   processBtn: document.getElementById("processBtn"),
   resetParamsBtn: document.getElementById("resetParamsBtn"),
   loadDemoBtn: document.getElementById("loadDemoBtn"),
+  hermiteFactor: document.getElementById("hermiteFactor"),
+  processHermiteBtn: document.getElementById("processHermiteBtn"),
+  reloadOriginalBtn: document.getElementById("reloadOriginalBtn"),
+  sessionDatasetMeta: document.getElementById("sessionDatasetMeta"),
   profileSelect: document.getElementById("profileSelect"),
   profileName: document.getElementById("profileName"),
   saveProfileBtn: document.getElementById("saveProfileBtn"),
   loadProfileBtn: document.getElementById("loadProfileBtn"),
   deleteProfileBtn: document.getElementById("deleteProfileBtn"),
   lapSelect: document.getElementById("lapSelect"),
+  graphZoom: document.getElementById("graphZoom"),
+  graphZoomValue: document.getElementById("graphZoomValue"),
+  showGpsSeries: document.getElementById("showGpsSeries"),
+  showImuSeries: document.getElementById("showImuSeries"),
+  seekBackBtn: document.getElementById("seekBackBtn"),
+  playPauseBtn: document.getElementById("playPauseBtn"),
+  seekForwardBtn: document.getElementById("seekForwardBtn"),
+  playbackMeta: document.getElementById("playbackMeta"),
+  trackZoom: document.getElementById("trackZoom"),
+  trackZoomValue: document.getElementById("trackZoomValue"),
   timeline: document.getElementById("timeline"),
   frameMeta: document.getElementById("frameMeta"),
+  leanGauge: document.getElementById("leanGauge"),
   leanValue: document.getElementById("leanValue"),
+  leanDirection: document.getElementById("leanDirection"),
   speedValue: document.getElementById("speedValue"),
+  driveValue: document.getElementById("driveValue"),
+  driveBar: document.getElementById("driveBar"),
+  driveBrakeFill: document.getElementById("driveBrakeFill"),
+  driveThrottleFill: document.getElementById("driveThrottleFill"),
   algorithmNotes: document.getElementById("algorithmNotes"),
   status: document.getElementById("status"),
   stage: document.getElementById("stage"),
@@ -28,16 +53,89 @@ const ctx = el.stage.getContext("2d");
 const state = {
   rawText: "",
   session: null,
+  sourceSession: null,
+  sourceName: "",
+  activeSessionName: "",
+  sessionVariant: "source",
+  hermiteStats: null,
   processed: null,
-  viewFrames: [],
   laps: [],
   selectedLap: "all",
   frameIndex: 0,
   graphHitZones: [],
   profiles: [],
+  expandedParamHelp: null,
+  isPlaying: false,
+  playbackStartTs: 0,
+  playbackStartTickMs: 0,
+  rafId: 0,
+  liveProcessTimer: 0,
+  trackZoom: 1.4,
+  graphZoomLaps: 1,
+  showGpsSeries: true,
+  showImuSeries: true,
+  activeTab: "tuning",
+  isApplyingProfile: false,
 };
 
 const PROFILE_STORAGE_KEY = "imuReplayTuningProfiles.v1";
+const LAST_PROFILE_STORAGE_KEY = "imuReplayLastProfileId.v1";
+const LIVE_TUNING_DELAY_MS = 120;
+
+const PARAM_HELP = {
+  gyroScale: {
+    technical: "Multiplies gyro readings before integration. Use it to correct a sensor range or unit mismatch so the integrated lean rate matches real motion.",
+    simple: "Makes the gyro motion stronger or weaker. If lean grows too fast, reduce it. If lean feels lazy, increase it.",
+  },
+  smoothingSamples: {
+    technical: "Moving-average window applied to the estimator output or comparison samples. Higher values reduce jitter but add lag and soften peaks.",
+    simple: "Smooths the graph. Higher means cleaner but slower response.",
+  },
+  accelBlendMode: {
+    technical: "Chooses how accelerometer correction is blended into the gyro estimate. `hard` uses thresholded correction, `soft` scales correction continuously by confidence.",
+    simple: "Changes how aggressively the accelerometer helps straighten the lean estimate.",
+  },
+  accelCorrectionStrong: {
+    technical: "High-confidence accelerometer correction gain used when the bike looks dynamically stable and gravity is trustworthy.",
+    simple: "How strongly to trust the accelerometer when conditions look clean.",
+  },
+  accelCorrectionWeak: {
+    technical: "Low-confidence accelerometer correction gain used when the bike is moving in a less trustworthy state.",
+    simple: "How much accelerometer correction to keep even when conditions are messy.",
+  },
+  calibratedLeanGain: {
+    technical: "Final scale factor applied to the calibrated lean estimate after filtering.",
+    simple: "Stretches or shrinks the IMU lean curve.",
+  },
+  leanOffsetDeg: {
+    technical: "Constant angular bias added to the output lean estimate, in degrees.",
+    simple: "Shifts the whole lean curve left or right.",
+  },
+  longitudinalGain: {
+    technical: "Scale factor applied to the chosen longitudinal IMU acceleration axis before splitting accel versus brake.",
+    simple: "Makes the IMU accel/brake graph stronger or weaker.",
+  },
+  autoGpsLag: {
+    technical: "When set to 1, scans a lag range and picks the GPS delay that maximizes the comparison score against the IMU estimate.",
+    simple: "Lets the app auto-align GPS timing to IMU timing.",
+  },
+  gpsLagMs: {
+    technical: "Manual GPS time shift applied during comparison, in milliseconds.",
+    simple: "Moves the GPS graph earlier or later to line it up with IMU.",
+  },
+  autoLagMinMs: {
+    technical: "Minimum GPS lag checked during auto-alignment scan.",
+    simple: "The earliest timing offset the auto-aligner is allowed to test.",
+  },
+  autoLagMaxMs: {
+    technical: "Maximum GPS lag checked during auto-alignment scan.",
+    simple: "The latest timing offset the auto-aligner is allowed to test.",
+  },
+  autoLagStepMs: {
+    technical: "Step size for the GPS lag scan. Smaller values search more precisely but cost more processing time.",
+    simple: "How finely the auto-aligner searches for timing.",
+  },
+};
 
 const visibleProcessors = () => Object.values(processors).filter((processor) => processor.visible !== false);
 
@@ -69,11 +167,20 @@ function saveProfilesToStorage() {
   }
 }
 
+function lastUsedProfileId() {
+  return localStorage.getItem(LAST_PROFILE_STORAGE_KEY) || "";
+}
+
+function rememberLastUsedProfile(profileId = "") {
+  if (profileId) localStorage.setItem(LAST_PROFILE_STORAGE_KEY, profileId);
+  else localStorage.removeItem(LAST_PROFILE_STORAGE_KEY);
+}
+
 function processorLabel(id) {
   return processors[id]?.label || id || "Unknown";
 }
 
-function populateProfileSelect(selectedId = el.profileSelect.value) {
+function populateProfileSelect(selectedId = el.profileSelect.value || lastUsedProfileId()) {
   el.profileSelect.innerHTML = "";
   const empty = document.createElement("option");
   empty.value = "";
@@ -91,13 +198,69 @@ function populateProfileSelect(selectedId = el.profileSelect.value) {
   syncProfileName();
 }
 
+function selectedProfile() {
+  return state.profiles.find((profile) => profile.id === el.profileSelect.value) || null;
+}
+
 function syncProfileName() {
-  const selected = state.profiles.find((profile) => profile.id === el.profileSelect.value);
+  const selected = selectedProfile();
   if (selected) {
     el.profileName.value = selected.name;
   } else {
     el.profileName.value = "";
   }
+}
+
+function setActiveTab(tab) {
+  state.activeTab = tab === "hermite" ? "hermite" : "tuning";
+  const tuningActive = state.activeTab === "tuning";
+  el.tuningTabBtn.classList.toggle("active", tuningActive);
+  el.hermiteTabBtn.classList.toggle("active", !tuningActive);
+  el.tuningPane.classList.toggle("hidden-pane", !tuningActive);
+  el.hermitePane.classList.toggle("hidden-pane", tuningActive);
+}
+
+function datasetMetaText() {
+  const sessionLabel = state.activeSessionName || "No session loaded";
+  if (state.sessionVariant !== "hermite" || !state.hermiteStats) {
+    return `${sessionLabel}\nOriginal session data is active.`;
+  }
+  return `${sessionLabel}\nHermite enrichment: requested ${state.hermiteStats.requestedFactor}x, applied ${state.hermiteStats.appliedFactor}x, GPS ${state.hermiteStats.originalGpsPoints} -> ${state.hermiteStats.totalGpsPoints}, promoted IG rows ${state.hermiteStats.promotedRows}, max ${state.hermiteStats.maxFactor}x.`;
+}
+
+function syncSessionMeta() {
+  el.csvFileName.textContent = state.activeSessionName || "No file selected";
+  el.sessionDatasetMeta.textContent = datasetMetaText();
+}
+
+function applyProfile(profile, { autoProcess = false, quiet = false } = {}) {
+  if (!profile || !processors[profile.algorithmId]) return false;
+  state.isApplyingProfile = true;
+  el.profileSelect.value = profile.id;
+  el.algorithmSelect.value = profile.algorithmId;
+  renderParamFields();
+  setParamValues(profile.params);
+  el.profileName.value = profile.name;
+  state.isApplyingProfile = false;
+  rememberLastUsedProfile(profile.id);
+  if (autoProcess && state.session) {
+    processSession();
+  } else if (!quiet) {
+    render();
+    setStatus(`Loaded profile "${profile.name}". Click Process to re-run if you change values.`);
+  }
+  return true;
+}
+
+function preferredProfile() {
+  const remembered = lastUsedProfileId();
+  return state.profiles.find((profile) => profile.id === remembered) || selectedProfile();
+}
+
+function applyPreferredProfile({ autoProcess = false, quiet = false } = {}) {
+  const profile = preferredProfile();
+  if (!profile) return false;
+  return applyProfile(profile, { autoProcess, quiet });
 }
 
 function currentParamValues() {
@@ -132,31 +295,77 @@ function initAlgorithms() {
   renderParamFields();
 }
 
-function renderParamFields() {
+function renderParamFields({ preserveExisting = false } = {}) {
   const processor = activeProcessor();
+  const existingValues = preserveExisting ? currentParamValues() : {};
   el.paramFields.innerHTML = "";
   for (const param of processor.params || []) {
     const label = document.createElement("label");
     label.className = "field";
     label.dataset.param = param.key;
 
+    const header = document.createElement("div");
+    header.className = "field-header";
+
     const caption = document.createElement("span");
     caption.textContent = param.label;
-    label.appendChild(caption);
+    header.appendChild(caption);
+
+    const infoBtn = document.createElement("button");
+    infoBtn.type = "button";
+    infoBtn.className = "info-btn";
+    infoBtn.textContent = "i";
+    infoBtn.setAttribute("aria-label", `Explain ${param.label}`);
+    infoBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      state.expandedParamHelp = state.expandedParamHelp === param.key ? null : param.key;
+      renderParamFields({ preserveExisting: true });
+    });
+    header.appendChild(infoBtn);
+    label.appendChild(header);
 
     const input = document.createElement("input");
     input.id = `param-${param.key}`;
     input.dataset.key = param.key;
     input.type = param.type || "number";
     input.step = param.step ?? "any";
-    input.value = param.default;
+    input.value = existingValues[param.key] ?? param.default;
     input.addEventListener("input", () => {
-      if (state.session) processSession();
-      else render();
+      scheduleLiveProcess();
     });
     label.appendChild(input);
+
+    if (state.expandedParamHelp === param.key) {
+      const help = document.createElement("div");
+      help.className = "param-help";
+      const tech = PARAM_HELP[param.key]?.technical || `${param.label} is passed directly into the active processor configuration.`;
+      const simple = PARAM_HELP[param.key]?.simple || `This changes how ${param.label.toLowerCase()} influences the output.`;
+      help.innerHTML = `<strong>Technical</strong>${tech}<strong>Simple</strong>${simple}`;
+      label.appendChild(help);
+    }
     el.paramFields.appendChild(label);
   }
+}
+
+function cancelLiveProcess() {
+  if (state.liveProcessTimer) {
+    clearTimeout(state.liveProcessTimer);
+    state.liveProcessTimer = 0;
+  }
+}
+
+function scheduleLiveProcess() {
+  el.liveTuningMeta.textContent = `Live tuning is on. Reprocessing ${state.activeSessionName || "active session"}...`;
+  cancelLiveProcess();
+  if (!state.session) {
+    setStatus("Parameters changed. Load a session CSV to process it.");
+    render();
+    return;
+  }
+  state.liveProcessTimer = window.setTimeout(() => {
+    state.liveProcessTimer = 0;
+    processSession();
+  }, LIVE_TUNING_DELAY_MS);
 }
 
 function saveProfile() {
@@ -181,41 +390,30 @@ function saveProfile() {
   else state.profiles.push(profile);
 
   if (!saveProfilesToStorage()) return;
+  rememberLastUsedProfile(profile.id);
   populateProfileSelect(profile.id);
   setStatus(`Saved profile "${profile.name}" for ${processorLabel(profile.algorithmId)}.`);
 }
 
 function loadSelectedProfile() {
-  const profile = state.profiles.find((item) => item.id === el.profileSelect.value);
+  const profile = selectedProfile();
   if (!profile) {
     setStatus("Select a saved profile to load.");
     return;
   }
-  if (!processors[profile.algorithmId]) {
-    setStatus(`Profile "${profile.name}" references a missing algorithm: ${profile.algorithmId}`);
-    return;
-  }
-
-  el.algorithmSelect.value = profile.algorithmId;
-  renderParamFields();
-  setParamValues(profile.params);
-  el.profileName.value = profile.name;
-  if (state.session) {
-    processSession();
-  } else {
-    render();
-    setStatus(`Loaded profile "${profile.name}". Load a session CSV to process it.`);
-  }
+  applyProfile(profile, { autoProcess: Boolean(state.session), quiet: !state.session });
+  if (!state.session) setStatus(`Loaded profile "${profile.name}". Load a session CSV to process it.`);
 }
 
 function deleteSelectedProfile() {
-  const profile = state.profiles.find((item) => item.id === el.profileSelect.value);
+  const profile = selectedProfile();
   if (!profile) {
     setStatus("Select a saved profile to delete.");
     return;
   }
   state.profiles = state.profiles.filter((item) => item.id !== profile.id);
   if (!saveProfilesToStorage()) return;
+  if (lastUsedProfileId() === profile.id) rememberLastUsedProfile("");
   populateProfileSelect("");
   el.profileName.value = "";
   setStatus(`Deleted profile "${profile.name}".`);
@@ -223,7 +421,7 @@ function deleteSelectedProfile() {
 
 function resetParams() {
   renderParamFields();
-  if (state.session) processSession();
+  scheduleLiveProcess();
 }
 
 function currentConfig() {
@@ -272,14 +470,66 @@ function setNotes(message) {
   el.algorithmNotes.textContent = message;
 }
 
-function loadText(name, text) {
-  state.rawText = text;
-  state.session = parseSessionCsv(text);
-  el.csvFileName.textContent = name;
+function activateSession(session, name, { rawText = "", variant = "source", hermiteStats = null, autoProcess = false } = {}) {
+  state.rawText = rawText || serializeSessionCsv(session);
+  state.session = session;
+  state.activeSessionName = name;
+  state.sessionVariant = variant;
+  state.hermiteStats = hermiteStats;
   state.processed = null;
-  state.viewFrames = [];
+  state.laps = [];
+  state.selectedLap = "all";
+  state.frameIndex = 0;
+  state.graphHitZones = [];
+  syncSessionMeta();
   setStatus(`Loaded ${name}\nRows: ${state.session.rows.length}`);
+  if (autoProcess) {
+    processSession();
+    return;
+  }
   render();
+}
+
+function processHermiteSession() {
+  if (!state.session) {
+    setStatus("Load a session CSV first.");
+    return;
+  }
+  const factor = Math.max(1, Math.round(Number(el.hermiteFactor.value) || 3));
+  const enriched = enrichSessionWithHermite(state.sessionVariant === "source" && state.sourceSession ? state.sourceSession : state.session, { factor });
+  if (enriched.stats?.error) {
+    setStatus(enriched.stats.error);
+    return;
+  }
+  const baseName = (state.sourceName || state.activeSessionName || "session.csv").replace(/\.csv$/i, "");
+  const enrichedName = `${baseName}.hermite${enriched.stats.appliedFactor}x.csv`;
+  activateSession(enriched.session, enrichedName, {
+    rawText: serializeSessionCsv(enriched.session),
+    variant: "hermite",
+    hermiteStats: enriched.stats,
+    autoProcess: true,
+  });
+}
+
+function reloadOriginalSession() {
+  if (!state.sourceSession) {
+    setStatus("Load a session CSV first.");
+    return;
+  }
+  activateSession(state.sourceSession, state.sourceName || "original.csv", {
+    variant: "source",
+    hermiteStats: null,
+    autoProcess: true,
+  });
+}
+
+function loadText(name, text) {
+  stopPlayback();
+  const parsed = parseSessionCsv(text);
+  state.sourceSession = parsed;
+  state.sourceName = name;
+  applyPreferredProfile({ quiet: true });
+  activateSession(parsed, name, { rawText: text, variant: "source", hermiteStats: null, autoProcess: true });
 }
 
 async function readFile(file) {
@@ -302,21 +552,61 @@ function processSession() {
     setStatus("Load a session CSV first.");
     return;
   }
+  cancelLiveProcess();
+  const previousFrames = currentFrames();
+  const previousTickMs = frameAt(state.frameIndex)?.tickMs || previousFrames[0]?.tickMs || 0;
+  const previousLapSelection = state.selectedLap;
+  const previousGraphZoom = state.graphZoomLaps;
 
   const processor = activeProcessor();
   const config = currentConfig();
   const result = processor.process(state.session, config);
+  stopPlayback();
   state.processed = result;
   state.laps = detectLaps(result.frames);
   populateLapSelect(state.laps);
-  const defaultLap = state.laps.length >= 3 ? "lap-3" : state.laps.length ? "lap-1" : "all";
-  el.lapSelect.value = defaultLap;
-  applyLapSelection(defaultLap);
+  syncGraphZoomBounds(previousFrames.length ? previousGraphZoom : state.laps.length || 1);
+  el.timeline.min = 0;
+  el.timeline.max = Math.max(0, currentFrames().length - 1);
+  state.frameIndex = frameIndexForTick(currentFrames(), previousTickMs);
+  const hasPreviousLap = previousLapSelection !== "all" && state.laps.some((lap) => lap.id === previousLapSelection);
+  state.selectedLap = hasPreviousLap ? previousLapSelection : "all";
+  el.lapSelect.value = state.selectedLap;
+  el.timeline.value = String(state.frameIndex);
+  syncPlaybackUi();
 
-  const scores = scoreFrames(currentFrames(), config.gpsLagMs || 0);
-  setStatus(formatStats(result, scores));
-  setNotes(formatNotes(processor, result, config, scores));
+  refreshScores();
+  el.liveTuningMeta.textContent = `Live tuning is on. Editing now reprocesses ${state.sessionVariant === "hermite" ? "Hermite-enriched" : "active"} session data immediately.`;
   render();
+}
+
+function refreshScores() {
+  if (!state.processed) return;
+  const config = state.processed.config || currentConfig();
+  const frames = currentFrames();
+  applyAutoGpsLag(config, state.processed, frames);
+  const scores = scoreFrames(frames, effectiveGpsLagMs(state.processed));
+  setStatus(formatStats(state.processed, scores));
+  setNotes(formatNotes(activeProcessor(), state.processed, config, scores));
+}
+
+function effectiveGpsLagMs(result = state.processed) {
+  return Number(result?.config?.effectiveGpsLagMs ?? result?.config?.gpsLagMs ?? 0);
+}
+
+function applyAutoGpsLag(config, result, frames) {
+  const requested = Number(config.autoGpsLag) === 1;
+  result.config = { ...result.config, effectiveGpsLagMs: Number(config.gpsLagMs) || 0, autoGpsLag: requested };
+  if (!requested || result.stats?.error || !frames?.length) {
+    return;
+  }
+
+  const scan = findBestGpsLag(frames, config);
+  result.config.effectiveGpsLagMs = scan.lagMs;
+  result.stats.autoGpsLagMs = scan.lagMs;
+  result.stats.autoGpsLagScore = Number(scan.score.toFixed(3));
+  result.stats.autoGpsLagLeanCorr = Number(scan.scores.lean.corr.toFixed(3));
+  result.stats.autoGpsLagLongCorr = Number(scan.scores.long.corr.toFixed(3));
 }
 
 function formatNotes(processor, result, config, scores) {
@@ -326,7 +616,7 @@ function formatNotes(processor, result, config, scores) {
     processor.description,
     "",
     `Algorithm: ${result.algorithm}`,
-    `GPS lag: ${config.gpsLagMs || 0} ms`,
+    `GPS lag: ${effectiveGpsLagMs(result)} ms${result.config?.autoGpsLag ? " (auto)" : ""}`,
     `Lean MAE: ${scores.lean.mae.toFixed(2)} deg, corr ${scores.lean.corr.toFixed(3)}`,
     `Longitudinal MAE: ${scores.long.mae.toFixed(3)} g, corr ${scores.long.corr.toFixed(3)}`,
     `Gyro scale: ${result.stats.gyroScale ?? config.gyroScale ?? "n/a"}`,
@@ -355,6 +645,7 @@ function formatStats(result, scores) {
     `Gyro scale: ${result.stats.gyroScale ?? "n/a"}`,
     `Smoothing samples: ${result.stats.smoothingSamples ?? "n/a"}`,
     `Lean offset: ${result.stats.leanOffsetDeg ?? "n/a"} deg`,
+    `GPS lag: ${effectiveGpsLagMs(result)} ms${result.config?.autoGpsLag ? " (auto)" : ""}`,
     `Profile static offset: ${result.stats.profileStaticLeanOffsetDeg ?? "n/a"} deg`,
     `Accel blend: ${result.stats.accelBlendMode ?? "n/a"} (${result.stats.accelCorrectionStrong ?? "n/a"} / ${result.stats.accelCorrectionWeak ?? "n/a"})`,
     `Lean score: ${scores.lean.mae.toFixed(2)} deg MAE, ${scores.lean.corr.toFixed(3)} corr`,
@@ -384,11 +675,172 @@ function formatRepairs(repairs) {
 }
 
 function currentFrames() {
-  return state.viewFrames || [];
+  return state.processed?.frames || [];
 }
 
 function frameAt(index) {
   return currentFrames()[index] || null;
+}
+
+function graphWindowLapCount() {
+  if (!state.laps.length) return 1;
+  return Math.max(1, Math.min(state.laps.length, Math.round(state.graphZoomLaps || state.laps.length)));
+}
+
+function averageLapDurationMs() {
+  if (!state.laps.length) return totalDurationMs();
+  const total = state.laps.reduce((sum, lap) => sum + ((lap.durationSec || 0) * 1000), 0);
+  return total > 0 ? total / state.laps.length : totalDurationMs();
+}
+
+function graphWindowRange() {
+  const frames = currentFrames();
+  if (!frames.length) return { start: 0, end: 0, frames };
+  if (!state.laps.length || graphWindowLapCount() >= state.laps.length) {
+    return { start: 0, end: frames.length - 1, frames };
+  }
+
+  const windowDurationMs = averageLapDurationMs() * graphWindowLapCount();
+  const centerTickMs = frameAt(state.frameIndex)?.tickMs || frames[0].tickMs;
+  const firstTickMs = frames[0].tickMs;
+  const lastTickMs = frames[frames.length - 1].tickMs;
+  let startTickMs = centerTickMs - (windowDurationMs / 2);
+  let endTickMs = centerTickMs + (windowDurationMs / 2);
+  if (startTickMs < firstTickMs) {
+    endTickMs += firstTickMs - startTickMs;
+    startTickMs = firstTickMs;
+  }
+  if (endTickMs > lastTickMs) {
+    startTickMs -= endTickMs - lastTickMs;
+    endTickMs = lastTickMs;
+  }
+  startTickMs = Math.max(firstTickMs, startTickMs);
+  endTickMs = Math.min(lastTickMs, endTickMs);
+  return {
+    start: frameIndexForTick(frames, startTickMs),
+    end: frameIndexForTick(frames, endTickMs),
+    frames,
+  };
+}
+
+function frameIndexForTick(frames, tickMs) {
+  if (!frames.length) return 0;
+  if (tickMs <= frames[0].tickMs) return 0;
+  if (tickMs >= frames[frames.length - 1].tickMs) return frames.length - 1;
+  let lo = 0;
+  let hi = frames.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (frames[mid].tickMs <= tickMs) lo = mid;
+    else hi = mid;
+  }
+  return (tickMs - frames[lo].tickMs) <= (frames[hi].tickMs - tickMs) ? lo : hi;
+}
+
+function currentFrameElapsedMs() {
+  const frames = currentFrames();
+  if (!frames.length) return 0;
+  return Math.max(0, (frameAt(state.frameIndex)?.tickMs || frames[0].tickMs) - frames[0].tickMs);
+}
+
+function totalDurationMs() {
+  const frames = currentFrames();
+  if (!frames.length) return 0;
+  return Math.max(0, frames[frames.length - 1].tickMs - frames[0].tickMs);
+}
+
+function formatPlaybackTime(ms) {
+  const totalTenths = Math.max(0, Math.round(ms / 100));
+  const minutes = Math.floor(totalTenths / 600);
+  const seconds = Math.floor((totalTenths % 600) / 10);
+  const tenths = totalTenths % 10;
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`;
+}
+
+function seekByMs(deltaMs) {
+  const frames = currentFrames();
+  if (!frames.length) return;
+  const currentTickMs = frameAt(state.frameIndex)?.tickMs || frames[0].tickMs;
+  const targetTickMs = Math.max(frames[0].tickMs, Math.min(frames[frames.length - 1].tickMs, currentTickMs + deltaMs));
+  state.frameIndex = frameIndexForTick(frames, targetTickMs);
+  el.timeline.value = String(state.frameIndex);
+  if (state.isPlaying) startPlayback();
+  render();
+}
+
+function syncPlaybackUi() {
+  el.playPauseBtn.textContent = state.isPlaying ? "Pause" : "Play";
+  el.playPauseBtn.disabled = currentFrames().length === 0;
+  el.seekBackBtn.disabled = currentFrames().length === 0;
+  el.seekForwardBtn.disabled = currentFrames().length === 0;
+  el.playbackMeta.textContent = `${formatPlaybackTime(currentFrameElapsedMs())} / ${formatPlaybackTime(totalDurationMs())}`;
+  el.trackZoomValue.textContent = `${state.trackZoom.toFixed(1)}x`;
+  const lapCount = graphWindowLapCount();
+  el.graphZoomValue.textContent = state.laps.length && lapCount >= state.laps.length ? `All ${state.laps.length} laps` : `${lapCount} lap${lapCount === 1 ? "" : "s"} view`;
+}
+
+function cancelPlaybackFrame() {
+  if (state.rafId) {
+    cancelAnimationFrame(state.rafId);
+    state.rafId = 0;
+  }
+}
+
+function stopPlayback() {
+  state.isPlaying = false;
+  state.playbackStartTs = 0;
+  state.playbackStartTickMs = 0;
+  cancelPlaybackFrame();
+  syncPlaybackUi();
+}
+
+function startPlayback() {
+  const frames = currentFrames();
+  if (!frames.length) return;
+  if (state.frameIndex >= frames.length - 1) {
+    state.frameIndex = 0;
+    el.timeline.value = "0";
+  }
+  state.isPlaying = true;
+  state.playbackStartTs = 0;
+  state.playbackStartTickMs = frameAt(state.frameIndex)?.tickMs || frames[0].tickMs;
+  syncPlaybackUi();
+  cancelPlaybackFrame();
+  state.rafId = requestAnimationFrame(stepPlayback);
+}
+
+function togglePlayback() {
+  if (state.isPlaying) {
+    stopPlayback();
+    render();
+    return;
+  }
+  startPlayback();
+}
+
+function stepPlayback(timestamp) {
+  if (!state.isPlaying) return;
+  const frames = currentFrames();
+  if (!frames.length) {
+    stopPlayback();
+    render();
+    return;
+  }
+  if (!state.playbackStartTs) state.playbackStartTs = timestamp;
+  const elapsedMs = timestamp - state.playbackStartTs;
+  const targetTickMs = state.playbackStartTickMs + elapsedMs;
+  const lastTickMs = frames[frames.length - 1].tickMs;
+  if (targetTickMs >= lastTickMs) {
+    state.frameIndex = frames.length - 1;
+    el.timeline.value = String(state.frameIndex);
+    stopPlayback();
+    render();
+    return;
+  }
+  state.frameIndex = frameIndexForTick(frames, targetTickMs);
+  el.timeline.value = String(state.frameIndex);
+  render();
+  state.rafId = requestAnimationFrame(stepPlayback);
 }
 
 function valueAt(frames, getter, targetTickMs) {
@@ -410,7 +862,7 @@ function valueAt(frames, getter, targetTickMs) {
 }
 
 function shiftedGpsValue(frames, frame, getter) {
-  const lagMs = Number(state.processed?.config?.gpsLagMs || 0);
+  const lagMs = effectiveGpsLagMs();
   return valueAt(frames, getter, frame.tickMs + lagMs);
 }
 
@@ -451,6 +903,36 @@ function scoreFrames(frames, lagMs) {
     if ((frame.speedKmh || 0) > 15 && Math.abs(gpsLong) > 0.025) longPairs.push([imuLong, gpsLong]);
   }
   return { lean: scorePairs(leanPairs), long: scorePairs(longPairs) };
+}
+
+function lagScore(scores) {
+  const leanCorr = Math.max(0, scores.lean.corr);
+  const longCorr = Math.max(0, scores.long.corr);
+  const leanMaeScore = Math.max(0, 1 - (scores.lean.mae / 18));
+  const longMaeScore = Math.max(0, 1 - (scores.long.mae / 0.22));
+  const leanWeight = scores.lean.n > 20 ? 0.55 : 0;
+  const longWeight = scores.long.n > 20 ? 0.45 : 0;
+  const totalWeight = Math.max(1e-9, leanWeight + longWeight);
+  const leanScore = (0.7 * leanCorr) + (0.3 * leanMaeScore);
+  const longScore = (0.7 * longCorr) + (0.3 * longMaeScore);
+  return ((leanScore * leanWeight) + (longScore * longWeight)) / totalWeight;
+}
+
+function findBestGpsLag(frames, config) {
+  let minLag = Number.isFinite(config.autoLagMinMs) ? config.autoLagMinMs : -800;
+  let maxLag = Number.isFinite(config.autoLagMaxMs) ? config.autoLagMaxMs : 2200;
+  const step = Math.max(1, Math.abs(Math.round(Number(config.autoLagStepMs) || 25)));
+  if (minLag > maxLag) [minLag, maxLag] = [maxLag, minLag];
+
+  let best = null;
+  for (let lag = minLag; lag <= maxLag; lag += step) {
+    const scores = scoreFrames(frames, lag);
+    const score = lagScore(scores);
+    if (!best || score > best.score) {
+      best = { lagMs: lag, score, scores };
+    }
+  }
+  return best || { lagMs: Number(config.gpsLagMs) || 0, score: 0, scores: scoreFrames(frames, Number(config.gpsLagMs) || 0) };
 }
 
 function angularDiffDeg(a, b) {
@@ -557,18 +1039,25 @@ function populateLapSelect(laps) {
 
 function applyLapSelection(selection) {
   state.selectedLap = selection;
-  const allFrames = state.processed?.frames || [];
-  if (selection === "all" || !state.laps.length) {
-    state.viewFrames = allFrames;
-  } else {
+  if (selection !== "all" && state.laps.length) {
     const lap = state.laps.find((entry) => entry.id === selection);
-    state.viewFrames = lap ? allFrames.slice(lap.start, lap.end + 1) : allFrames;
+    if (lap) {
+      state.frameIndex = Math.round((lap.start + lap.end) / 2);
+      el.timeline.value = String(state.frameIndex);
+    }
   }
-  state.frameIndex = 0;
   state.graphHitZones = [];
-  el.timeline.min = 0;
-  el.timeline.max = Math.max(0, currentFrames().length - 1);
-  el.timeline.value = "0";
+  syncPlaybackUi();
+}
+
+function syncGraphZoomBounds(preferredLapCount = state.graphZoomLaps) {
+  const maxLaps = Math.max(1, state.laps.length || 1);
+  el.graphZoom.min = "1";
+  el.graphZoom.max = String(maxLaps);
+  el.graphZoom.step = "1";
+  state.graphZoomLaps = Math.max(1, Math.min(maxLaps, Math.round(preferredLapCount || maxLaps)));
+  el.graphZoom.value = String(state.graphZoomLaps);
+  syncPlaybackUi();
 }
 
 function render() {
@@ -609,10 +1098,32 @@ function drawHud(frame) {
   const gpsLean = shiftedGpsValue(frames, frame, (item) => item.gpsLeanDeg || 0);
   const gpsLong = shiftedGpsValue(frames, frame, (item) => item.gpsAccelG || 0);
   const imuLong = (frame.accelG || 0) - (frame.brakeG || 0);
+  const leanDeg = frame.leanDeg || 0;
+  const leanAbs = Math.abs(leanDeg);
+  const leanRatio = Math.max(-1, Math.min(1, leanDeg / 60));
+  const leanFill = (Math.abs(leanRatio) * 100).toFixed(2);
+  const accelPct = Math.max(0, Math.min(1, frame.accelG || 0));
+  const brakePct = Math.max(0, Math.min(1, frame.brakeG || 0));
   el.leanValue.textContent = `${frame.leanDeg.toFixed(1)} deg`;
+  el.leanDirection.textContent = leanAbs < 1.5 ? "Upright" : `${leanDeg < 0 ? "Left" : "Right"} lean`;
   el.speedValue.textContent = `${frame.speedKmh.toFixed(1)} km/h`;
-  const lapLabel = state.selectedLap === "all" ? "Full Session" : (state.laps.find((lap) => lap.id === state.selectedLap)?.label || "Lap");
-  el.frameMeta.textContent = `${lapLabel} | Tick ${frame.tickMs} | Lean IMU/GPS ${frame.leanDeg.toFixed(1)} / ${gpsLean.toFixed(1)} deg | Long IMU/GPS ${imuLong.toFixed(3)} / ${gpsLong.toFixed(3)} g`;
+  el.leanGauge?.style.setProperty("--lean-ratio", String(leanRatio));
+  el.leanGauge?.style.setProperty("--lean-fill-left", leanRatio < 0 ? leanFill : "0");
+  el.leanGauge?.style.setProperty("--lean-fill-right", leanRatio > 0 ? leanFill : "0");
+  el.driveThrottleFill.style.width = `${accelPct * 50}%`;
+  el.driveBrakeFill.style.width = `${brakePct * 50}%`;
+  if (accelPct > brakePct && accelPct > 0.02) {
+    el.driveValue.textContent = `${(accelPct * 100).toFixed(0)}% throttle`;
+  } else if (brakePct > accelPct && brakePct > 0.02) {
+    el.driveValue.textContent = `${(brakePct * 100).toFixed(0)}% brake`;
+  } else {
+    el.driveValue.textContent = "Coast";
+  }
+  syncPlaybackUi();
+  const activeLap = state.laps.find((lap) => frame.tickMs >= frames[lap.start]?.tickMs && frame.tickMs <= frames[lap.end]?.tickMs);
+  const lapLabel = activeLap?.label || "Session";
+  const focusLabel = state.selectedLap === "all" ? "Free scroll" : (state.laps.find((lap) => lap.id === state.selectedLap)?.label || "Free scroll");
+  el.frameMeta.textContent = `${lapLabel} | Focus ${focusLabel} | Tick ${frame.tickMs} | Lean IMU/GPS ${frame.leanDeg.toFixed(1)} / ${gpsLean.toFixed(1)} deg | Long IMU/GPS ${imuLong.toFixed(3)} / ${gpsLong.toFixed(3)} g`;
 }
 
 function graphDefinitions(frames) {
@@ -648,22 +1159,25 @@ function graphDefinitions(frames) {
 
 function drawTelemetryGraphs() {
   const frames = currentFrames();
+  const windowRange = graphWindowRange();
+  const visibleFrames = frames.slice(windowRange.start, windowRange.end + 1);
   const dpr = window.devicePixelRatio;
   const margin = 32 * dpr;
   const gap = 20 * dpr;
-  const trackH = Math.max(130 * dpr, Math.min(210 * dpr, el.stage.height * 0.22));
-  const hudReserve = 78 * dpr;
-  const graphW = el.stage.width - (margin * 2);
+  const trackH = Math.max(170 * dpr, Math.min(260 * dpr, el.stage.height * 0.29));
+  const hudReserve = 132 * dpr;
+  const overlayReserve = 260 * dpr;
+  const graphW = Math.max(320 * dpr, el.stage.width - (margin * 2) - overlayReserve);
   const graphH = (el.stage.height - (margin * 2) - (gap * 2) - hudReserve - trackH) / 2;
   state.graphHitZones = [];
   graphDefinitions(frames).forEach((graph, index) => {
     const y = margin + index * (graphH + gap);
-    const zone = drawComparisonGraph(frames, graph, margin, y, graphW, graphH);
+    const zone = drawComparisonGraph(frames, visibleFrames, windowRange.start, graph, margin, y, graphW, graphH);
     state.graphHitZones.push(zone);
   });
 }
 
-function drawComparisonGraph(frames, graph, x, y, w, h) {
+function drawComparisonGraph(allFrames, visibleFrames, startIndex, graph, x, y, w, h) {
   const dpr = window.devicePixelRatio;
   const padLeft = 52 * dpr;
   const padRight = 18 * dpr;
@@ -675,9 +1189,9 @@ function drawComparisonGraph(frames, graph, x, y, w, h) {
   const bottom = y + h - padBottom;
   const chartW = Math.max(1, right - left);
   const chartH = Math.max(1, bottom - top);
-  const values = frames.flatMap((frame) => [graph.gpsValue(frame), graph.imuValue(frame)]);
+  const values = visibleFrames.flatMap((frame) => [graph.gpsValue(frame), graph.imuValue(frame)]);
   const maxValue = Math.max(graph.minScale, ...values.map((value) => Math.abs(value)));
-  const xFor = (index) => left + (index / Math.max(1, frames.length - 1)) * chartW;
+  const xFor = (index) => left + (index / Math.max(1, visibleFrames.length - 1)) * chartW;
   const yFor = (value) => top + ((maxValue - value) / (maxValue * 2)) * chartH;
 
   ctx.fillStyle = "rgba(255, 250, 240, 0.94)";
@@ -702,10 +1216,11 @@ function drawComparisonGraph(frames, graph, x, y, w, h) {
   ctx.lineTo(right, yFor(0));
   ctx.stroke();
 
-  drawSeries(frames, xFor, yFor, graph.gpsValue, graph.gpsColor, 2.0 * dpr);
-  drawSeries(frames, xFor, yFor, graph.imuValue, graph.imuColor, 1.7 * dpr);
+  if (state.showGpsSeries) drawSeries(visibleFrames, xFor, yFor, graph.gpsValue, graph.gpsColor, 2.0 * dpr);
+  if (state.showImuSeries) drawSeries(visibleFrames, xFor, yFor, graph.imuValue, graph.imuColor, 1.7 * dpr);
 
-  const markerX = xFor(state.frameIndex);
+  const markerWindowIndex = Math.max(0, Math.min(visibleFrames.length - 1, state.frameIndex - startIndex));
+  const markerX = xFor(markerWindowIndex);
   ctx.strokeStyle = "rgba(20, 20, 20, 0.55)";
   ctx.lineWidth = 1 * dpr;
   ctx.beginPath();
@@ -716,16 +1231,16 @@ function drawComparisonGraph(frames, graph, x, y, w, h) {
   ctx.fillStyle = "#29251f";
   ctx.font = `${14 * dpr}px sans-serif`;
   ctx.fillText(graph.title, x + 18 * dpr, y + 24 * dpr);
-  ctx.fillStyle = graph.gpsColor;
+  ctx.fillStyle = state.showGpsSeries ? graph.gpsColor : "rgba(11, 92, 173, 0.35)";
   ctx.fillText(graph.gpsLabel, x + 330 * dpr, y + 24 * dpr);
-  ctx.fillStyle = graph.imuColor;
+  ctx.fillStyle = state.showImuSeries ? graph.imuColor : "rgba(41, 37, 31, 0.35)";
   ctx.fillText(graph.imuLabel, x + 386 * dpr, y + 24 * dpr);
   ctx.fillStyle = "rgba(41, 37, 31, 0.72)";
   ctx.fillText(`+${maxValue.toFixed(graph.unit === "g" ? 2 : 0)} ${graph.unit}`, x + 10 * dpr, top + 8 * dpr);
   ctx.fillText(`-${maxValue.toFixed(graph.unit === "g" ? 2 : 0)} ${graph.unit}`, x + 10 * dpr, bottom);
   ctx.fillText(graph.positiveLabel, right - 60 * dpr, top + 12 * dpr);
   ctx.fillText(graph.negativeLabel, right - 60 * dpr, bottom - 6 * dpr);
-  return { left, right, top, bottom };
+  return { left, right, top, bottom, startIndex, visibleCount: visibleFrames.length };
 }
 
 function trackBounds(frames) {
@@ -747,16 +1262,17 @@ function drawTrackContext() {
   if (!frames.length) return;
   const dpr = window.devicePixelRatio;
   const margin = 32 * dpr;
-  const trackH = Math.max(130 * dpr, Math.min(210 * dpr, el.stage.height * 0.22));
+  const trackH = Math.max(170 * dpr, Math.min(260 * dpr, el.stage.height * 0.29));
   const w = el.stage.width - (margin * 2);
   const h = trackH;
   const x = margin;
-  const y = el.stage.height - margin - trackH;
-  const pad = 18 * dpr;
+  const bottomOverlayReserve = 132 * dpr;
+  const y = el.stage.height - margin - bottomOverlayReserve - trackH;
+  const pad = 22 * dpr;
   const bounds = trackBounds(frames);
   const spanX = Math.max(1, bounds.maxX - bounds.minX);
   const spanY = Math.max(1, bounds.maxY - bounds.minY);
-  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY) * state.trackZoom;
   const mapX = (frame) => x + (w / 2) + ((frame.x - ((bounds.minX + bounds.maxX) / 2)) * scale);
   const mapY = (frame) => y + (h / 2) + ((frame.y - ((bounds.minY + bounds.maxY) / 2)) * scale);
 
@@ -765,6 +1281,13 @@ function drawTrackContext() {
   ctx.strokeStyle = "rgba(41, 37, 31, 0.14)";
   ctx.lineWidth = 1 * dpr;
   ctx.strokeRect(x, y, w, h);
+
+  ctx.fillStyle = "rgba(13, 108, 116, 0.28)";
+  frames.forEach((frame) => {
+    ctx.beginPath();
+    ctx.arc(mapX(frame), mapY(frame), 2.4 * dpr, 0, Math.PI * 2);
+    ctx.fill();
+  });
 
   ctx.strokeStyle = "rgba(45, 42, 38, 0.70)";
   ctx.lineWidth = 2 * dpr;
@@ -789,7 +1312,7 @@ function drawTrackContext() {
 
 function drawTrackArrow(x, y, headingDeg, leanDeg) {
   const dpr = window.devicePixelRatio;
-  const size = 15 * dpr;
+  const size = 18 * dpr;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate((headingDeg * Math.PI) / 180);
@@ -824,6 +1347,7 @@ function drawSeries(frames, xFor, yFor, getter, color, lineWidth) {
 }
 
 function drawEmptyState() {
+  syncPlaybackUi();
   ctx.fillStyle = "rgba(41, 37, 31, 0.62)";
   ctx.font = `${24 * window.devicePixelRatio}px sans-serif`;
   ctx.fillText("Load and process a session CSV to inspect tuning graphs.", 80 * window.devicePixelRatio, 100 * window.devicePixelRatio);
@@ -847,22 +1371,56 @@ el.csvFile.addEventListener("change", async (event) => {
 el.loadDemoBtn.addEventListener("click", () => {
   loadDemo().catch((err) => setStatus(`Demo load failed: ${err.message}`));
 });
+el.tuningTabBtn.addEventListener("click", () => setActiveTab("tuning"));
+el.hermiteTabBtn.addEventListener("click", () => setActiveTab("hermite"));
 el.processBtn.addEventListener("click", processSession);
 el.resetParamsBtn.addEventListener("click", resetParams);
 el.profileSelect.addEventListener("change", syncProfileName);
 el.saveProfileBtn.addEventListener("click", saveProfile);
 el.loadProfileBtn.addEventListener("click", loadSelectedProfile);
 el.deleteProfileBtn.addEventListener("click", deleteSelectedProfile);
+el.processHermiteBtn.addEventListener("click", processHermiteSession);
+el.reloadOriginalBtn.addEventListener("click", reloadOriginalSession);
 el.algorithmSelect.addEventListener("change", () => {
   renderParamFields();
+  if (!state.isApplyingProfile) {
+    el.profileSelect.value = "";
+    syncProfileName();
+  }
   if (state.session) processSession();
+  else {
+    setStatus("Algorithm changed. Load a session CSV to process it.");
+    render();
+  }
 });
 el.lapSelect.addEventListener("change", () => {
   applyLapSelection(el.lapSelect.value);
   render();
 });
+el.graphZoom.addEventListener("input", () => {
+  state.graphZoomLaps = Math.max(1, Number(el.graphZoom.value) || 1);
+  syncPlaybackUi();
+  render();
+});
+el.showGpsSeries.addEventListener("change", () => {
+  state.showGpsSeries = el.showGpsSeries.checked;
+  render();
+});
+el.showImuSeries.addEventListener("change", () => {
+  state.showImuSeries = el.showImuSeries.checked;
+  render();
+});
+el.seekBackBtn.addEventListener("click", () => seekByMs(-5000));
+el.playPauseBtn.addEventListener("click", togglePlayback);
+el.seekForwardBtn.addEventListener("click", () => seekByMs(5000));
+el.trackZoom.addEventListener("input", () => {
+  state.trackZoom = Math.max(1, Number(el.trackZoom.value) || 1);
+  syncPlaybackUi();
+  render();
+});
 el.timeline.addEventListener("input", () => {
   state.frameIndex = Number(el.timeline.value) || 0;
+  if (state.isPlaying) startPlayback();
   render();
 });
 el.stage.addEventListener("click", (event) => {
@@ -874,13 +1432,24 @@ el.stage.addEventListener("click", (event) => {
   const zone = state.graphHitZones.find((item) => x >= item.left && x <= item.right && y >= item.top && y <= item.bottom);
   if (!zone) return;
   const ratio = (x - zone.left) / Math.max(1, zone.right - zone.left);
-  state.frameIndex = Math.max(0, Math.min(frames.length - 1, Math.round(ratio * (frames.length - 1))));
+  const localIndex = Math.max(0, Math.min(zone.visibleCount - 1, Math.round(ratio * Math.max(0, zone.visibleCount - 1))));
+  state.frameIndex = Math.max(0, Math.min(frames.length - 1, zone.startIndex + localIndex));
   el.timeline.value = String(state.frameIndex);
+  if (state.isPlaying) startPlayback();
   render();
+});
+window.addEventListener("keydown", (event) => {
+  if (event.code !== "Space") return;
+  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLButtonElement) return;
+  event.preventDefault();
+  togglePlayback();
 });
 window.addEventListener("resize", render);
 
 initAlgorithms();
 loadProfilesFromStorage();
 populateProfileSelect();
+applyPreferredProfile({ quiet: true });
+setActiveTab("tuning");
+syncSessionMeta();
 render();
