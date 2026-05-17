@@ -5086,3 +5086,136 @@ If any mesh remains, the next likely causes are now display-layer concerns rathe
 - connector lines bridging intentionally missing GPS gaps
 - diagnostic rendering overemphasizing sparse gaps
 - need for a display-specific geometry path separate from the processing timeline
+
+## 2026-05-18 - Raw GPS Timing Truth, Playback Dataset Split, And Playback Tuning Tools
+
+**Objective:** Separate official session timing from playback presentation data, then stabilize and inspect the playback experience without allowing enriched playback data to pollute rider-facing lap and sector truth.
+
+### Processing Architecture Change
+
+The production session pipeline was split into two explicit branches after CSV load and chronological sorting:
+
+- **Timing branch:** raw true-GPS-only data used for official track matching/generation, lap detection, sector detection, best lap, and session timing summaries.
+- **Playback branch:** enriched/promoted GPS plus IMU-derived rider-facing values used to build a playback-ready dataset.
+
+This changed the product contract:
+
+- official session timing is single-source and raw GPS based
+- playback is a separate product surface with its own prepared artifact
+- enriched playback data is no longer allowed to change official lap count, lap times, sector times, or best-lap summaries
+- generic telemetry export remains useful for analysis/debug, but it is no longer the playback source of truth
+
+The exporter now writes a dedicated `_playback.json` artifact with rows that are already prepared for UI playback. Rows include timing context, lap/sector markers, GPS validity markers, rider-facing display values, and optional GPS reference channels for diagnostics.
+
+### Playback Dataset Fields
+
+The playback artifact now carries both diagnostic/raw-ish fields and rider-facing display fields.
+
+Raw/reference fields retained:
+
+- `lat`, `lon`, `speed_kmh`
+- `lean_deg`, `long_g`, `lat_g`
+- `gps_is_fix`, `gps_is_valid`
+- `gps_lean_ref_deg`, `gps_long_ref_g`
+
+Display fields added:
+
+- `display_lat`, `display_lon`
+- `display_speed_kmh`
+- `display_heading_deg`
+- `display_lean_deg`
+- `display_long_g`, `display_lat_g`
+
+The UI now treats `display_*` as the normal playback contract while preserving raw/reference fields for diagnostics.
+
+### Playback Stability Fixes
+
+Several playback-specific issues were addressed:
+
+- speed flicker was fixed by exporting gap-free `display_speed_kmh`
+- marker stalls/jitter were reduced by exporting continuous `display_lat/lon`
+- display path generation uses Hermite interpolation over valid GPS anchors
+- display speed is lightly rate-limited to avoid one-sample spikes/drops
+- the moving marker interpolates by playback time instead of only jumping by integer sample index
+- speed and G-force heatmaps now use display fields for normal playback coloring
+
+Lean smoothing/rate-limit experiments were added briefly and then removed after review. The playback lean path returned to the older simple smoothing behavior rather than applying physical sign-change restrictions.
+
+### Playback Timing Table
+
+The playback modal now has an enriched timing table available from a button in the sectors card.
+
+This table:
+
+- is scoped to playback only
+- uses enriched playback timing
+- shows the delta against official raw-GPS session timing
+- is displayed in a popup rather than as another main session timing table
+
+This keeps official session timing clean while still allowing playback-specific timing inspection.
+
+### IMU vs GPS Graph Popup
+
+A `Graph` button was added next to `Timing Table` in the playback sectors card.
+
+The graph popup overlays:
+
+- IMU lean vs GPS curvature lean
+- IMU longitudinal force vs GPS speed-derived longitudinal force
+
+This mirrors the practical comparison view from `imu-replay` but uses the production playback artifact instead of rebuilding the session in the browser.
+
+Graph-specific behavior:
+
+- clicking the graph seeks playback to that point
+- GPS reference lag and sign metadata are shown in the popup
+- the lean graph has a graph-only display transform so its left/right visual convention can be corrected without changing timing or map geometry
+
+### GPS Lag And Sign Tuning
+
+Playback GPS lag was moved from a hardcoded assumption into playback metadata/tuning.
+
+Current tuning after manual review:
+
+- configured GPS lag: `1800 ms`
+- GPS lean reference sign: normal in exported metadata
+- GPS longitudinal reference sign: inverted for comparison
+- graph-only lean display transform is applied in the UI
+
+An auto lag/scoring path was added, but constrained to a plausible lag window because whole-session correlation can overfit repeated laps and incorrectly prefer zero lag. For now, the configured value remains the practical baseline while the graph helps manual review.
+
+### Files Touched
+
+- `server/core/core/session_processor.py`
+- `server/core/core/session_exporter.py`
+- `server/core/tests/test_playback_pipeline.py`
+- `server/ui/app.js`
+- `server/ui/index.html`
+- `server/ui/styles.css`
+
+### Verification
+
+Regression checks were run:
+
+- `PYTHONPATH=server python3 -m unittest server.core.tests.test_loader server.core.tests.test_stats server.core.tests.test_track_generator server.core.tests.test_playback_pipeline`
+- `node --check server/ui/app.js`
+- `python3 -m py_compile server/core/core/session_processor.py server/core/core/session_exporter.py`
+
+Sanity was repeatedly run against `/Users/mj/Desktop/sess_009.csv`.
+
+Important sanity observations:
+
+- playback export completes successfully
+- playback rows remain dense
+- `display_speed_kmh` has no nulls
+- `display_lat/lon` have no nulls
+- configured playback GPS lag is exported as `1800 ms`
+
+### Product State
+
+The important architectural boundary is now in place:
+
+- official session data answers "what was the lap/sector truth?"
+- playback data answers "how should the session be animated and inspected?"
+
+This separation should make future work safer because playback smoothness, graph tuning, GPS lag, and diagnostic overlays can evolve without risking official lap and sector timing.

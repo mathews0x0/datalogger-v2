@@ -30,8 +30,16 @@ class SessionProcessor:
         "accelCorrectionStrong": 0.0,
         "accelCorrectionWeak": 0.009,
         "leanOffsetDeg": 0.0,
+        "leanSign": -1,
         "longitudinalGain": 0.85,
-        "gpsLagMs": 175,
+        "gpsLagMs": 1800,
+        "gpsLagAutoEnabled": True,
+        "gpsLagMinMs": 1200,
+        "gpsLagMaxMs": 2200,
+        "gpsLagStepMs": 50,
+        "gpsLagMinImprovement": 0.2,
+        "gpsLeanRefSign": 1,
+        "gpsLongRefSign": -1,
     }
 
     def __init__(self, output_dir=None, tracks_dir=None):
@@ -131,7 +139,7 @@ class SessionProcessor:
         return out
 
     @classmethod
-    def _build_playback_signal_bundle(cls, imu_results):
+    def _build_playback_signal_bundle(cls, imu_results, session=None):
         playback_signals = dict(imu_results.get("playback_signals") or {})
         if not playback_signals:
             playback_signals = {
@@ -143,23 +151,35 @@ class SessionProcessor:
             }
 
         smoothing = int(cls.PLAYBACK_TUNE["smoothingSamples"])
-        lean = cls._moving_average(playback_signals.get("lean_deg", []), smoothing)
+        lean_sign = -1.0 if float(cls.PLAYBACK_TUNE.get("leanSign", 1) or 1) < 0 else 1.0
+        raw_lean = [
+            (float(value or 0.0) * lean_sign) + float(cls.PLAYBACK_TUNE["leanOffsetDeg"])
+            for value in playback_signals.get("lean_deg", [])
+        ]
+        lean = cls._moving_average(raw_lean, smoothing)
         long_g = cls._moving_average(playback_signals.get("long_g", []), smoothing)
         lat_g = cls._moving_average(playback_signals.get("lat_g", []), smoothing)
         long_gain = float(cls.PLAYBACK_TUNE["longitudinalGain"])
         long_g = [round(value * long_gain, 3) for value in long_g]
         accel_g = [round(max(value, 0.0), 3) for value in long_g]
         brake_g = [round(abs(min(value, 0.0)), 3) for value in long_g]
+        lean = [round(value, 1) for value in lean]
+        lat_g = [round(value, 3) for value in lat_g]
 
         gps_references = imu_results.get("gps_references") or {}
         return {
             "config": dict(cls.PLAYBACK_TUNE),
             "signals": {
-                "lean_deg": [round(value + float(cls.PLAYBACK_TUNE["leanOffsetDeg"]), 1) for value in lean],
+                "lean_deg": lean,
                 "long_g": long_g,
-                "lat_g": [round(value, 3) for value in lat_g],
+                "lat_g": lat_g,
                 "accel_g": accel_g,
                 "brake_g": brake_g,
+            },
+            "display_signals": {
+                "display_lean_deg": lean,
+                "display_long_g": long_g,
+                "display_lat_g": lat_g,
             },
             "gps_references": {
                 "gps_lean_deg": list(gps_references.get("gps_lean_deg", [])),
@@ -597,7 +617,7 @@ class SessionProcessor:
                 met_engine = SensorMetricsEngine()
                 metrics = met_engine.compute(session)
                 session.sensor_metrics = metrics
-                session.playback_dataset = self._build_playback_signal_bundle(imu_results)
+                session.playback_dataset = self._build_playback_signal_bundle(imu_results, session)
                 session.playback_laps = self._build_playback_laps(session, track_info, laps)
                 
             except Exception as e:
@@ -612,6 +632,11 @@ class SessionProcessor:
                         "lat_g": [0.0] * len(session.samples),
                         "accel_g": [0.0] * len(session.samples),
                         "brake_g": [0.0] * len(session.samples),
+                    },
+                    "display_signals": {
+                        "display_lean_deg": [0.0] * len(session.samples),
+                        "display_long_g": [0.0] * len(session.samples),
+                        "display_lat_g": [0.0] * len(session.samples),
                     },
                     "gps_references": {
                         "gps_lean_deg": [],

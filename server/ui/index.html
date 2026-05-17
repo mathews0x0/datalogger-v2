@@ -1173,7 +1173,10 @@
           <div class="card playback-card playback-sectors-card">
             <div class="playback-card-head">
               <div class="stat-label">Sectors</div>
-              <button class="btn secondary btn-sm" onclick="showPlaybackTimingModal()">Timing Table</button>
+              <div class="playback-card-actions">
+                <button class="btn secondary btn-sm" onclick="showPlaybackGraphModal()">Graph</button>
+                <button class="btn secondary btn-sm" onclick="showPlaybackTimingModal()">Timing Table</button>
+              </div>
             </div>
             <div class="playback-sector-grid">
               <div id="pbS1" class="sector-box playback-sector-box">
@@ -1303,6 +1306,19 @@
       <h3 style="margin-top: 0;">Playback Timing</h3>
       <p class="help-text" style="margin-top: 0;">Enriched playback timing and delta against official GPS-only timing.</p>
       <div id="playbackTimingBody"></div>
+    </div>
+  </div>
+
+  <div class="modal" id="playbackGraphModal">
+    <div class="modal-content playback-graph-shell">
+      <span class="modal-close" onclick="closePlaybackGraphModal()">&times;</span>
+      <h3 style="margin-top: 0;">Playback IMU vs GPS Graph</h3>
+      <p id="playbackGraphMeta" class="help-text" style="margin-top: 0;">IMU and GPS reference comparison for playback lag tuning.</p>
+      <div class="playback-graph-legend">
+        <span><i class="legend-swatch imu"></i>IMU</span>
+        <span><i class="legend-swatch gps"></i>GPS reference</span>
+      </div>
+      <canvas id="playbackGraphCanvas" class="playback-graph-canvas" width="1200" height="620"></canvas>
     </div>
   </div>
 

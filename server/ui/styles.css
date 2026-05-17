@@ -901,8 +901,57 @@ h2::before {
   font-size: 0.85rem;
 }
 
+.playback-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .playback-timing-shell {
   max-width: 980px;
+}
+
+.playback-graph-shell {
+  max-width: 1120px;
+}
+
+.playback-graph-canvas {
+  width: 100%;
+  height: min(64vh, 620px);
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(255, 102, 51, 0.10), transparent 26%),
+    linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+}
+
+.playback-graph-legend {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.legend-swatch {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 999px;
+  margin-right: 0.35rem;
+  vertical-align: -0.08rem;
+}
+
+.legend-swatch.imu {
+  background: #ff6b3a;
+}
+
+.legend-swatch.gps {
+  background: #4da3ff;
 }
 
 .playback-timing-table-wrap {

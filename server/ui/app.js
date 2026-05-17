@@ -6586,6 +6586,7 @@ let pbState = {
     canonicalLayout: null,
     layoutImage: null,
     projectedPoints: null,
+    displayProjectedPoints: null,
     renderedLapKey: null
 };
 
@@ -6603,6 +6604,13 @@ function normalizePlaybackData(playbackPayload, fallbackLaps = []) {
         lat_g: rows.map(row => row.lat_g),
         accel_g: rows.map(row => row.accel_g),
         brake_g: rows.map(row => row.brake_g),
+        display_lat: rows.map(row => row.display_lat ?? row.lat),
+        display_lon: rows.map(row => row.display_lon ?? row.lon),
+        display_speed: rows.map(row => row.display_speed_kmh ?? row.speed_kmh),
+        display_heading_deg: rows.map(row => row.display_heading_deg ?? row.heading_deg),
+        display_lean_deg: rows.map(row => row.display_lean_deg ?? row.lean_deg),
+        display_long_g: rows.map(row => row.display_long_g ?? row.long_g),
+        display_lat_g: rows.map(row => row.display_lat_g ?? row.lat_g),
         lap_number: rows.map(row => row.lap_number),
         lap_start: rows.map(row => Boolean(row.lap_start)),
         lap_end: rows.map(row => Boolean(row.lap_end)),
@@ -6614,6 +6622,11 @@ function normalizePlaybackData(playbackPayload, fallbackLaps = []) {
         gps_lean_ref_deg: rows.map(row => row.gps_lean_ref_deg),
         gps_long_ref_g: rows.map(row => row.gps_long_ref_g),
         gps_lag_ms_applied: playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+        gps_lag_source: playbackPayload?.meta?.gps_lag_source ?? 'configured',
+        gps_lag_score: playbackPayload?.meta?.gps_lag_score ?? null,
+        gps_lag_configured_ms: playbackPayload?.meta?.gps_lag_configured_ms ?? playbackPayload?.config?.gpsLagMs ?? 0,
+        gps_lean_ref_sign: playbackPayload?.meta?.gps_lean_ref_sign ?? 1,
+        gps_long_ref_sign: playbackPayload?.meta?.gps_long_ref_sign ?? 1,
         laps,
         rowCount: rows.length,
     };
@@ -6634,6 +6647,13 @@ function buildPlaybackFromTelemetry(telemetry, fallbackLaps = []) {
             lat_g: telemetry.ay?.[i] ?? telemetry.raw_ay?.[i] ?? null,
             accel_g: telemetry.ax?.[i] != null ? Math.max(Number(telemetry.ax[i]), 0) : null,
             brake_g: telemetry.ax?.[i] != null ? Math.abs(Math.min(Number(telemetry.ax[i]), 0)) : null,
+            display_lat: telemetry.lat?.[i],
+            display_lon: telemetry.lon?.[i],
+            display_speed_kmh: telemetry.speed?.[i],
+            display_heading_deg: null,
+            display_lean_deg: telemetry.lean_angle?.[i] ?? null,
+            display_long_g: telemetry.ax?.[i] ?? telemetry.raw_ax?.[i] ?? null,
+            display_lat_g: telemetry.ay?.[i] ?? telemetry.raw_ay?.[i] ?? null,
             lap_number: null,
             lap_start: false,
             lap_end: false,
@@ -6670,6 +6690,7 @@ async function openPlayback(sessionId, shareToken = null) {
         canonicalLayout: null,
         layoutImage: null,
         projectedPoints: null,
+        displayProjectedPoints: null,
         renderedLapKey: null
     };
 
@@ -6715,10 +6736,15 @@ async function openPlayback(sessionId, shareToken = null) {
                     lats: pbState.data.lat || [],
                     lons: pbState.data.lon || []
                 });
+                pbState.displayProjectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
+                    lats: pbState.data.display_lat || pbState.data.lat || [],
+                    lons: pbState.data.display_lon || pbState.data.lon || []
+                });
             } catch (error) {
                 pbState.canonicalLayout = null;
                 pbState.layoutImage = null;
                 pbState.projectedPoints = null;
+                pbState.displayProjectedPoints = null;
             }
         }
 
@@ -6766,6 +6792,7 @@ function closePlaybackModal() {
     }
     document.getElementById('playbackModal').classList.remove('active');
     closePlaybackTimingModal();
+    closePlaybackGraphModal();
 }
 
 function showPlaybackTimingModal() {
@@ -6825,6 +6852,223 @@ function closePlaybackTimingModal() {
     if (modal) modal.classList.remove('active');
 }
 
+function showPlaybackGraphModal() {
+    const modal = document.getElementById('playbackGraphModal');
+    const canvas = document.getElementById('playbackGraphCanvas');
+    const meta = document.getElementById('playbackGraphMeta');
+    if (!modal || !canvas || !pbState.data) return;
+    const lagMs = pbState.data.gps_lag_ms_applied ?? 0;
+    const lagSource = pbState.data.gps_lag_source || 'configured';
+    const score = pbState.data.gps_lag_score == null ? '' : `, score ${Number(pbState.data.gps_lag_score).toFixed(3)}`;
+    const signNote = `Lean sign ${pbState.data.gps_lean_ref_sign || 1}, Long sign ${pbState.data.gps_long_ref_sign || 1}`;
+    const scope = pbState.selectedLap && pbState.selectedLap !== 'all' ? `Lap ${pbState.selectedLap}` : 'Session';
+    if (meta) meta.textContent = `${scope} comparison. GPS reference alignment: ${lagMs} ms (${lagSource}${score}). ${signNote}.`;
+    modal.classList.add('active');
+    drawPlaybackComparisonGraph();
+    canvas.onclick = (event) => seekPlaybackFromGraphClick(event);
+}
+
+function closePlaybackGraphModal() {
+    const modal = document.getElementById('playbackGraphModal');
+    if (modal) modal.classList.remove('active');
+}
+
+function playbackGraphRows() {
+    const data = pbState.data;
+    if (!data?.time?.length) return [];
+    const { startIndex, endIndex } = currentPlaybackLapBounds();
+    const rows = [];
+    for (let index = startIndex; index < endIndex; index += 1) {
+        rows.push({
+            index,
+            time: data.time[index],
+            imuLean: finiteOrNull(data.display_lean_deg?.[index] ?? data.lean_deg?.[index]),
+            gpsLean: finiteOrNull(data.gps_lean_ref_deg?.[index]),
+            imuLong: finiteOrNull(data.display_long_g?.[index] ?? data.long_g?.[index]),
+            gpsLong: finiteOrNull(data.gps_long_ref_g?.[index]),
+        });
+    }
+    return rows;
+}
+
+function playbackLeanGraphValue(value) {
+    const number = finiteOrNull(value);
+    return number == null ? null : -number;
+}
+
+function finiteOrNull(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+}
+
+function drawPlaybackComparisonGraph() {
+    const canvas = document.getElementById('playbackGraphCanvas');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(640, Math.round(rect.width * dpr));
+    canvas.height = Math.max(420, Math.round(rect.height * dpr));
+    const ctx = canvas.getContext('2d');
+    const rows = playbackGraphRows();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!rows.length) {
+        ctx.fillStyle = 'rgba(255,255,255,0.7)';
+        ctx.font = `${16 * dpr}px sans-serif`;
+        ctx.fillText('No playback graph data available.', 28 * dpr, 48 * dpr);
+        return;
+    }
+    const margin = 26 * dpr;
+    const gap = 22 * dpr;
+    const graphH = (canvas.height - margin * 2 - gap) / 2;
+    const graphW = canvas.width - margin * 2;
+    drawPlaybackSeriesGraph(ctx, rows, {
+        x: margin,
+        y: margin,
+        w: graphW,
+        h: graphH,
+        title: 'Lean: IMU attitude vs GPS curvature',
+        imuKey: 'imuLean',
+        gpsKey: 'gpsLean',
+        valueTransform: playbackLeanGraphValue,
+        unit: 'deg',
+        minScale: 20,
+        positiveLabel: 'right',
+        negativeLabel: 'left',
+    }, dpr);
+    drawPlaybackSeriesGraph(ctx, rows, {
+        x: margin,
+        y: margin + graphH + gap,
+        w: graphW,
+        h: graphH,
+        title: 'Longitudinal force: acceleration up, braking down',
+        imuKey: 'imuLong',
+        gpsKey: 'gpsLong',
+        unit: 'g',
+        minScale: 0.35,
+        positiveLabel: 'accel',
+        negativeLabel: 'brake',
+    }, dpr);
+}
+
+function fillRoundedRect(ctx, x, y, w, h, r) {
+    const radius = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + w - radius, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + radius);
+    ctx.lineTo(x + w, y + h - radius);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - radius, y + h);
+    ctx.lineTo(x + radius, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    ctx.fill();
+}
+
+function drawPlaybackSeriesGraph(ctx, rows, graph, dpr) {
+    const padLeft = 54 * dpr;
+    const padRight = 20 * dpr;
+    const padTop = 36 * dpr;
+    const padBottom = 28 * dpr;
+    const left = graph.x + padLeft;
+    const right = graph.x + graph.w - padRight;
+    const top = graph.y + padTop;
+    const bottom = graph.y + graph.h - padBottom;
+    const graphValue = (value) => graph.valueTransform ? graph.valueTransform(value) : value;
+    const values = rows.flatMap(row => [graphValue(row[graph.imuKey]), graphValue(row[graph.gpsKey])]).filter(Number.isFinite);
+    const maxValue = Math.max(graph.minScale, ...values.map(value => Math.abs(value)));
+    const xFor = (offset) => left + (offset / Math.max(1, rows.length - 1)) * (right - left);
+    const yFor = (value) => top + ((maxValue - value) / (maxValue * 2)) * (bottom - top);
+
+    ctx.fillStyle = 'rgba(16, 16, 16, 0.82)';
+    fillRoundedRect(ctx, graph.x, graph.y, graph.w, graph.h, 18 * dpr);
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.strokeRect(graph.x, graph.y, graph.w, graph.h);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    [-0.5, 0, 0.5].forEach(mark => {
+        const gy = yFor(maxValue * mark);
+        ctx.beginPath();
+        ctx.moveTo(left, gy);
+        ctx.lineTo(right, gy);
+        ctx.stroke();
+    });
+    ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+    ctx.beginPath();
+    ctx.moveTo(left, yFor(0));
+    ctx.lineTo(right, yFor(0));
+    ctx.stroke();
+
+    drawPlaybackGraphLine(ctx, rows, graph.gpsKey, xFor, yFor, '#4da3ff', 2.0 * dpr, graph.valueTransform);
+    drawPlaybackGraphLine(ctx, rows, graph.imuKey, xFor, yFor, '#ff6b3a', 1.8 * dpr, graph.valueTransform);
+
+    const markerIndex = Math.max(0, rows.findIndex(row => row.index >= pbState.currentIndex));
+    const markerX = xFor(markerIndex === -1 ? rows.length - 1 : markerIndex);
+    ctx.strokeStyle = 'rgba(255,255,255,0.58)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(markerX, top);
+    ctx.lineTo(markerX, bottom);
+    ctx.stroke();
+
+    ctx.fillStyle = '#f5f5f5';
+    ctx.font = `${14 * dpr}px sans-serif`;
+    ctx.fillText(graph.title, graph.x + 18 * dpr, graph.y + 24 * dpr);
+    ctx.fillStyle = '#4da3ff';
+    ctx.fillText('GPS', graph.x + 360 * dpr, graph.y + 24 * dpr);
+    ctx.fillStyle = '#ff6b3a';
+    ctx.fillText('IMU', graph.x + 410 * dpr, graph.y + 24 * dpr);
+    ctx.fillStyle = 'rgba(255,255,255,0.68)';
+    ctx.font = `${12 * dpr}px sans-serif`;
+    ctx.fillText(`+${maxValue.toFixed(graph.unit === 'g' ? 2 : 0)} ${graph.unit}`, graph.x + 10 * dpr, top + 8 * dpr);
+    ctx.fillText(`-${maxValue.toFixed(graph.unit === 'g' ? 2 : 0)} ${graph.unit}`, graph.x + 10 * dpr, bottom);
+    ctx.fillText(graph.positiveLabel, right - 58 * dpr, top + 12 * dpr);
+    ctx.fillText(graph.negativeLabel, right - 58 * dpr, bottom - 6 * dpr);
+}
+
+function drawPlaybackGraphLine(ctx, rows, key, xFor, yFor, color, width, valueTransform = null) {
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    let drawing = false;
+    ctx.beginPath();
+    rows.forEach((row, offset) => {
+        const value = valueTransform ? valueTransform(row[key]) : row[key];
+        if (!Number.isFinite(value)) {
+            drawing = false;
+            return;
+        }
+        const x = xFor(offset);
+        const y = yFor(value);
+        if (!drawing) {
+            ctx.moveTo(x, y);
+            drawing = true;
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+    ctx.stroke();
+}
+
+function seekPlaybackFromGraphClick(event) {
+    const canvas = document.getElementById('playbackGraphCanvas');
+    const rows = playbackGraphRows();
+    if (!canvas || !rows.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const xRatio = Math.max(0, Math.min(1, (event.clientX - rect.left) / Math.max(1, rect.width)));
+    const row = rows[Math.round(xRatio * (rows.length - 1))];
+    if (!row) return;
+    pbState.currentIndex = row.index;
+    pbState.playbackTime = pbState.data.time[row.index];
+    const slider = document.getElementById('pbSeek');
+    if (slider) slider.value = row.index;
+    drawFrame();
+    drawPlaybackComparisonGraph();
+}
+
 function initPlaybackUI() {
     // Canvas
     const container = document.getElementById('pbTrackCanvas').parentElement;
@@ -6864,7 +7108,7 @@ function fitTrackMap() {
     pbState.width = w;
     pbState.height = h;
 
-    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
+    if (pbState.canonicalLayout && (pbState.displayProjectedPoints?.length || pbState.projectedPoints?.length)) {
         const padding = 20;
         const availW = w - padding * 2;
         const availH = h - padding * 2;
@@ -6881,8 +7125,8 @@ function fitTrackMap() {
     }
 
     // Calculate Bounds
-    const lats = pbState.data.lat;
-    const lons = pbState.data.lon;
+    const lats = pbState.data.display_lat || pbState.data.lat;
+    const lons = pbState.data.display_lon || pbState.data.lon;
     if (!lats || !lons || lats.length === 0) return;
 
     let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
@@ -6969,12 +7213,13 @@ function projectPlaybackPoint(index) {
         return leftPoint || rightPoint || null;
     };
 
-    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
-        let clamped = Math.max(0, Math.min(pbState.projectedPoints.length - 1, index));
-        let point = pbState.projectedPoints[clamped];
+    const projected = pbState.displayProjectedPoints || pbState.projectedPoints;
+    if (pbState.canonicalLayout && projected?.length) {
+        let clamped = Math.max(0, Math.min(projected.length - 1, index));
+        let point = projected[clamped];
         if (!point) {
             return interpolateMissingPoint((candidateIndex) => {
-                const candidate = pbState.projectedPoints[candidateIndex];
+                const candidate = projected[candidateIndex];
                 if (!candidate) return null;
                 return {
                     x: candidate.x * pbState.scale + pbState.offsetX,
@@ -6988,17 +7233,57 @@ function projectPlaybackPoint(index) {
             y: point.y * pbState.scale + pbState.offsetY
         };
     }
-    const lat = pbState.data.lat[index];
-    const lon = pbState.data.lon[index];
+    const lat = pbState.data.display_lat?.[index] ?? pbState.data.lat[index];
+    const lon = pbState.data.display_lon?.[index] ?? pbState.data.lon[index];
     if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
         return interpolateMissingPoint((candidateIndex) => {
-            const candidateLat = pbState.data.lat[candidateIndex];
-            const candidateLon = pbState.data.lon[candidateIndex];
+            const candidateLat = pbState.data.display_lat?.[candidateIndex] ?? pbState.data.lat[candidateIndex];
+            const candidateLon = pbState.data.display_lon?.[candidateIndex] ?? pbState.data.lon[candidateIndex];
             if (candidateLat == null || candidateLon == null || !Number.isFinite(candidateLat) || !Number.isFinite(candidateLon)) return null;
             return project(candidateLat, candidateLon);
         });
     }
     return project(lat, lon);
+}
+
+function projectRawPlaybackPoint(index) {
+    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
+        const point = pbState.projectedPoints[Math.max(0, Math.min(pbState.projectedPoints.length - 1, index))];
+        if (!point) return null;
+        return {
+            x: point.x * pbState.scale + pbState.offsetX,
+            y: point.y * pbState.scale + pbState.offsetY
+        };
+    }
+    const lat = pbState.data.lat[index];
+    const lon = pbState.data.lon[index];
+    if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return project(lat, lon);
+}
+
+function playbackTimeWindow(timeSec) {
+    const times = pbState.data?.time || [];
+    if (!times.length) return { left: 0, right: 0, alpha: 0 };
+    const right = playbackIndexForTime(timeSec);
+    const left = Math.max(0, right - 1);
+    const leftTime = times[left];
+    const rightTime = times[right];
+    const span = Math.max(1e-9, rightTime - leftTime);
+    const alpha = left === right ? 0 : Math.max(0, Math.min(1, (timeSec - leftTime) / span));
+    return { left, right, alpha };
+}
+
+function projectPlaybackPointAtTime(timeSec) {
+    const { left, right, alpha } = playbackTimeWindow(timeSec);
+    const a = projectPlaybackPoint(left);
+    const b = projectPlaybackPoint(right);
+    if (a && b) {
+        return {
+            x: a.x + (b.x - a.x) * alpha,
+            y: a.y + (b.y - a.y) * alpha,
+        };
+    }
+    return a || b || null;
 }
 
 function playbackLapByNumber(lapNumber) {
@@ -7057,7 +7342,7 @@ function renderStaticMap() {
     const { startIndex, endIndex, lapKey } = currentPlaybackLapBounds();
     pbState.renderedLapKey = lapKey;
 
-    if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
+    if (pbState.canonicalLayout && (pbState.displayProjectedPoints?.length || pbState.projectedPoints?.length)) {
         if (pbState.layoutImage) {
             ctx.drawImage(
                 pbState.layoutImage,
@@ -7068,7 +7353,7 @@ function renderStaticMap() {
             );
         }
 
-        drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), (index) => projectPlaybackPoint(index));
+        drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), (index) => projectRawPlaybackPoint(index));
         return;
     }
 
@@ -7103,18 +7388,19 @@ function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectInde
         const next = points[i];
         let strokeStyle = 'rgba(150, 150, 150, 0.72)';
         if (pbState.mapMode === 'speed') {
-            const speeds = (data.speed || []).filter(Number.isFinite);
+            const speedSeries = data.display_speed || data.speed || [];
+            const speeds = speedSeries.filter(Number.isFinite);
             const minSpeed = speeds.length ? Math.min(...speeds) : 0;
             const maxSpeed = speeds.length ? Math.max(...speeds) : 1;
-            const a = Number(data.speed?.[prev.index]);
-            const b = Number(data.speed?.[next.index]);
+            const a = Number(speedSeries?.[prev.index]);
+            const b = Number(speedSeries?.[next.index]);
             const avg = [a, b].filter(Number.isFinite).reduce((sum, value) => sum + value, 0) / Math.max(1, [a, b].filter(Number.isFinite).length);
             strokeStyle = getHeatmapColor(avg || 0, minSpeed, maxSpeed || minSpeed + 1);
         } else if (pbState.mapMode === 'accel') {
-            const axPrev = Number(data.long_g?.[prev.index] ?? data.ax?.[prev.index] ?? data.raw_ax?.[prev.index]);
-            const ayPrev = Number(data.lat_g?.[prev.index] ?? data.ay?.[prev.index] ?? data.raw_ay?.[prev.index]);
-            const axNext = Number(data.long_g?.[next.index] ?? data.ax?.[next.index] ?? data.raw_ax?.[next.index]);
-            const ayNext = Number(data.lat_g?.[next.index] ?? data.ay?.[next.index] ?? data.raw_ay?.[next.index]);
+            const axPrev = Number(data.display_long_g?.[prev.index] ?? data.long_g?.[prev.index] ?? data.ax?.[prev.index] ?? data.raw_ax?.[prev.index]);
+            const ayPrev = Number(data.display_lat_g?.[prev.index] ?? data.lat_g?.[prev.index] ?? data.ay?.[prev.index] ?? data.raw_ay?.[prev.index]);
+            const axNext = Number(data.display_long_g?.[next.index] ?? data.long_g?.[next.index] ?? data.ax?.[next.index] ?? data.raw_ax?.[next.index]);
+            const ayNext = Number(data.display_lat_g?.[next.index] ?? data.lat_g?.[next.index] ?? data.ay?.[next.index] ?? data.raw_ay?.[next.index]);
             const magPrev = Number.isFinite(axPrev) && Number.isFinite(ayPrev) ? Math.sqrt(axPrev * axPrev + ayPrev * ayPrev) : 0;
             const magNext = Number.isFinite(axNext) && Number.isFinite(ayNext) ? Math.sqrt(axNext * axNext + ayNext * ayNext) : 0;
             strokeStyle = getHeatmapColor((magPrev + magNext) / 2, 0, 1.5);
@@ -7297,7 +7583,7 @@ function drawFrame() {
         ctx.drawImage(pbState.pathCache, 0, 0);
     }
 
-    const p = projectPlaybackPoint(i);
+    const p = projectPlaybackPointAtTime(pbState.playbackTime ?? data.time[i]);
     if (!p) return;
 
     // Dot
@@ -7450,7 +7736,7 @@ function drawFrame() {
     }
 
     // Speed
-    const speed = data.speed[i] || 0;
+    const speed = data.display_speed?.[i] ?? data.speed[i] ?? 0;
     const speedVal = Math.round(speed);
     const speedEl = document.getElementById('pbSpeed');
     if (speedEl) speedEl.textContent = speedVal;
@@ -7460,7 +7746,9 @@ function drawFrame() {
     // Lean Angle
     // Priority: Explicit Lean > Roll > Derived from Gyro/Speed > 0
     let lean = 0;
-    if (data.lean_deg && data.lean_deg[i] !== undefined && data.lean_deg[i] !== null) {
+    if (data.display_lean_deg && data.display_lean_deg[i] !== undefined && data.display_lean_deg[i] !== null) {
+        lean = data.display_lean_deg[i];
+    } else if (data.lean_deg && data.lean_deg[i] !== undefined && data.lean_deg[i] !== null) {
         lean = data.lean_deg[i];
     } else if (data.lean_angle && data.lean_angle[i] !== undefined) {
         lean = data.lean_angle[i];
@@ -7513,11 +7801,13 @@ function drawFrame() {
     // Raw X = Long (usually), Raw Y = Lat (usually).
     let gx = 0, gy = 0;
 
-    if (data.long_g && data.long_g[i] !== undefined && data.long_g[i] !== null) gx = data.long_g[i];
+    if (data.display_long_g && data.display_long_g[i] !== undefined && data.display_long_g[i] !== null) gx = data.display_long_g[i];
+    else if (data.long_g && data.long_g[i] !== undefined && data.long_g[i] !== null) gx = data.long_g[i];
     else if (data.ax && data.ax[i] !== undefined) gx = data.ax[i];
     else if (data.raw_ax && data.raw_ax[i] !== undefined) gx = data.raw_ax[i];
 
-    if (data.lat_g && data.lat_g[i] !== undefined && data.lat_g[i] !== null) gy = data.lat_g[i];
+    if (data.display_lat_g && data.display_lat_g[i] !== undefined && data.display_lat_g[i] !== null) gy = data.display_lat_g[i];
+    else if (data.lat_g && data.lat_g[i] !== undefined && data.lat_g[i] !== null) gy = data.lat_g[i];
     else if (data.ay && data.ay[i] !== undefined) gy = data.ay[i];
     else if (data.raw_ay && data.raw_ay[i] !== undefined) gy = data.raw_ay[i];
 

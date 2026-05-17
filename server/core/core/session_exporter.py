@@ -226,14 +226,20 @@ class SessionExporter:
         t0 = session.samples[0].timestamp
         playback_dataset = getattr(session, "playback_dataset", {}) or {}
         playback_signals = playback_dataset.get("signals", {}) or {}
+        display_signals = playback_dataset.get("display_signals", {}) or {}
         gps_references = playback_dataset.get("gps_references", {}) or {}
         playback_config = playback_dataset.get("config", {}) or {}
         playback_laps = self._build_laps_list(session, track_info, laps_override=getattr(session, "playback_laps", None), reference_laps=getattr(session, "laps", None))
-        rows = self._build_playback_rows(session, playback_laps, t0, playback_signals, gps_references, playback_config)
+        rows, reference_alignment = self._build_playback_rows(session, playback_laps, t0, playback_signals, display_signals, gps_references, playback_config)
         payload = {
             "meta": {
                 "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
-                "gps_lag_ms_applied": playback_config.get("gpsLagMs", 0),
+                "gps_lag_ms_applied": reference_alignment.get("gps_lag_ms_applied", playback_config.get("gpsLagMs", 0)),
+                "gps_lag_source": reference_alignment.get("gps_lag_source", "configured"),
+                "gps_lean_ref_sign": reference_alignment.get("gps_lean_ref_sign", 1),
+                "gps_long_ref_sign": reference_alignment.get("gps_long_ref_sign", 1),
+                "gps_lag_score": reference_alignment.get("gps_lag_score"),
+                "gps_lag_configured_ms": playback_config.get("gpsLagMs", 0),
                 "row_count": len(rows),
             },
             "config": playback_config,
@@ -252,14 +258,30 @@ class SessionExporter:
         laps: List[Dict[str, Any]],
         t0: float,
         playback_signals: Dict[str, List[float]],
+        display_signals: Dict[str, List[float]],
         gps_references: Dict[str, List[float]],
         playback_config: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+    ) -> tuple:
         times = [round(sample.timestamp - t0, 3) for sample in session.samples]
         headings = self._build_heading_series(session)
-        gps_lag_ms = int(playback_config.get("gpsLagMs", 0) or 0)
-        gps_lean_ref = self._shift_series_by_lag(times, gps_references.get("gps_lean_deg", []), gps_lag_ms)
-        gps_long_ref = self._shift_series_by_lag(times, gps_references.get("gps_long_g", []), gps_lag_ms)
+        reference_alignment = self._estimate_playback_reference_alignment(
+            times,
+            display_signals.get("display_lean_deg") or playback_signals.get("lean_deg") or [],
+            display_signals.get("display_long_g") or playback_signals.get("long_g") or [],
+            gps_references.get("gps_lean_deg", []),
+            gps_references.get("gps_long_g", []),
+            playback_config,
+        )
+        gps_lag_ms = int(reference_alignment.get("gps_lag_ms_applied", playback_config.get("gpsLagMs", 0) or 0))
+        display_gps = self._build_display_gps_series(session, times, gps_lag_ms)
+        gps_lean_ref = self._apply_reference_sign(
+            self._shift_series_by_lag(times, gps_references.get("gps_lean_deg", []), gps_lag_ms),
+            reference_alignment.get("gps_lean_ref_sign", 1),
+        )
+        gps_long_ref = self._apply_reference_sign(
+            self._shift_series_by_lag(times, gps_references.get("gps_long_g", []), gps_lag_ms),
+            reference_alignment.get("gps_long_ref_sign", 1),
+        )
         lap_start_indices = self._nearest_time_indices(times, [lap.get("start_time") for lap in laps])
         lap_end_indices = self._nearest_time_indices(times, [lap.get("end_time") for lap in laps])
         sector_boundary_times = []
@@ -296,6 +318,13 @@ class SessionExporter:
                 "lat_g": self._signal_value(playback_signals.get("lat_g"), index, 3),
                 "accel_g": self._signal_value(playback_signals.get("accel_g"), index, 3),
                 "brake_g": self._signal_value(playback_signals.get("brake_g"), index, 3),
+                "display_lat": self._series_value(display_gps["lat"], index, 6),
+                "display_lon": self._series_value(display_gps["lon"], index, 6),
+                "display_speed_kmh": self._series_value(display_gps["speed"], index, 1),
+                "display_heading_deg": self._series_value(display_gps["heading"], index, 1),
+                "display_lean_deg": self._signal_value(display_signals.get("display_lean_deg"), index, 1),
+                "display_long_g": self._signal_value(display_signals.get("display_long_g"), index, 3),
+                "display_lat_g": self._signal_value(display_signals.get("display_lat_g"), index, 3),
                 "lap_number": active_lap.get("lap_number") if active_lap else None,
                 "lap_start": index in lap_start_indices,
                 "lap_end": index in lap_end_indices,
@@ -307,9 +336,299 @@ class SessionExporter:
                 "gps_lean_ref_deg": self._signal_value(gps_lean_ref, index, 1),
                 "gps_long_ref_g": self._signal_value(gps_long_ref, index, 3),
                 "gps_lag_ms_applied": gps_lag_ms,
+                "gps_lean_ref_sign": reference_alignment.get("gps_lean_ref_sign", 1),
+                "gps_long_ref_sign": reference_alignment.get("gps_long_ref_sign", 1),
             }
             rows.append(row)
-        return rows
+        return rows, reference_alignment
+
+    def _estimate_playback_reference_alignment(
+        self,
+        times: List[float],
+        imu_lean: List[float],
+        imu_long: List[float],
+        gps_lean: List[float],
+        gps_long: List[float],
+        playback_config: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        configured_lag = int(playback_config.get("gpsLagMs", 0) or 0)
+        if not playback_config.get("gpsLagAutoEnabled", False):
+            return {
+                "gps_lag_ms_applied": configured_lag,
+                "gps_lag_source": "configured",
+                "gps_lean_ref_sign": 1,
+                "gps_long_ref_sign": 1,
+                "gps_lag_score": None,
+            }
+        if not times or len(times) < 3:
+            return {
+                "gps_lag_ms_applied": configured_lag,
+                "gps_lag_source": "configured",
+                "gps_lean_ref_sign": 1,
+                "gps_long_ref_sign": 1,
+                "gps_lag_score": None,
+            }
+
+        min_lag = int(playback_config.get("gpsLagMinMs", 0) or 0)
+        max_lag = int(playback_config.get("gpsLagMaxMs", 3000) or 3000)
+        step = max(10, int(playback_config.get("gpsLagStepMs", 50) or 50))
+        best = {
+            "gps_lag_ms_applied": configured_lag,
+            "gps_lag_source": "configured",
+            "gps_lean_ref_sign": 1,
+            "gps_long_ref_sign": 1,
+            "gps_lag_score": None,
+        }
+        configured = None
+        best_score = -1.0
+        for lag_ms in range(min_lag, max_lag + 1, step):
+            candidate = self._score_reference_alignment(times, imu_lean, imu_long, gps_lean, gps_long, lag_ms)
+            if candidate is None:
+                continue
+            if lag_ms == configured_lag:
+                configured = candidate
+            if candidate["score"] > best_score:
+                best_score = candidate["score"]
+                best = self._alignment_result(lag_ms, "auto", candidate)
+        if configured is None:
+            configured = self._score_reference_alignment(times, imu_lean, imu_long, gps_lean, gps_long, configured_lag)
+        min_improvement = float(playback_config.get("gpsLagMinImprovement", 0.0) or 0.0)
+        if configured is not None and best_score < configured["score"] + min_improvement:
+            return self._with_configured_sign_overrides(
+                self._alignment_result(configured_lag, "configured", configured),
+                playback_config,
+            )
+        return self._with_configured_sign_overrides(best, playback_config)
+
+    def _score_reference_alignment(
+        self,
+        times: List[float],
+        imu_lean: List[float],
+        imu_long: List[float],
+        gps_lean: List[float],
+        gps_long: List[float],
+        lag_ms: int,
+    ) -> Optional[Dict[str, Any]]:
+        shifted_lean = self._shift_series_by_lag(times, gps_lean, lag_ms)
+        shifted_long = self._shift_series_by_lag(times, gps_long, lag_ms)
+        lean_corr = self._series_correlation(imu_lean, shifted_lean, min_abs=3.0)
+        long_corr = self._series_correlation(imu_long, shifted_long, min_abs=0.03)
+        scores = []
+        if lean_corr is not None:
+            scores.append(abs(lean_corr) * 0.65)
+        if long_corr is not None:
+            scores.append(abs(long_corr) * 0.35)
+        if not scores:
+            return None
+        return {
+            "score": sum(scores),
+            "lean_corr": lean_corr,
+            "long_corr": long_corr,
+        }
+
+    def _alignment_result(self, lag_ms: int, source: str, candidate: Dict[str, Any]) -> Dict[str, Any]:
+        lean_corr = candidate.get("lean_corr")
+        long_corr = candidate.get("long_corr")
+        return {
+            "gps_lag_ms_applied": lag_ms,
+            "gps_lag_source": source,
+            "gps_lean_ref_sign": -1 if lean_corr is not None and lean_corr < 0 else 1,
+            "gps_long_ref_sign": -1 if long_corr is not None and long_corr < 0 else 1,
+            "gps_lag_score": round(float(candidate.get("score", 0.0)), 4),
+        }
+
+    def _with_configured_sign_overrides(self, alignment: Dict[str, Any], playback_config: Dict[str, Any]) -> Dict[str, Any]:
+        out = dict(alignment)
+        if "gpsLeanRefSign" in playback_config:
+            out["gps_lean_ref_sign"] = -1 if int(playback_config.get("gpsLeanRefSign") or 1) < 0 else 1
+        if "gpsLongRefSign" in playback_config:
+            out["gps_long_ref_sign"] = -1 if int(playback_config.get("gpsLongRefSign") or 1) < 0 else 1
+        return out
+
+    def _series_correlation(self, a_values: List[float], b_values: List[float], min_abs: float = 0.0) -> Optional[float]:
+        if not a_values or not b_values:
+            return None
+        pairs = []
+        for a_raw, b_raw in zip(a_values, b_values):
+            try:
+                a = float(a_raw)
+                b = float(b_raw)
+            except Exception:
+                continue
+            if not math.isfinite(a) or not math.isfinite(b):
+                continue
+            if max(abs(a), abs(b)) < min_abs:
+                continue
+            pairs.append((a, b))
+        if len(pairs) < 20:
+            return None
+        mean_a = sum(a for a, _ in pairs) / len(pairs)
+        mean_b = sum(b for _, b in pairs) / len(pairs)
+        num = sum((a - mean_a) * (b - mean_b) for a, b in pairs)
+        den_a = math.sqrt(sum((a - mean_a) ** 2 for a, _ in pairs))
+        den_b = math.sqrt(sum((b - mean_b) ** 2 for _, b in pairs))
+        if den_a <= 1e-9 or den_b <= 1e-9:
+            return None
+        return num / (den_a * den_b)
+
+    def _apply_reference_sign(self, values: List[Optional[float]], sign: int) -> List[Optional[float]]:
+        multiplier = -1.0 if sign == -1 else 1.0
+        out = []
+        for value in values:
+            if value is None:
+                out.append(None)
+                continue
+            try:
+                out.append(float(value) * multiplier)
+            except Exception:
+                out.append(None)
+        return out
+
+    def _build_display_gps_series(self, session: Session, times: List[float], gps_lag_ms: int) -> Dict[str, List[Optional[float]]]:
+        count = len(session.samples)
+        empty = [None] * count
+        valid = [
+            (sample.timestamp - session.samples[0].timestamp, float(sample.gps.lat), float(sample.gps.lon), float(sample.gps.speed))
+            for sample in session.samples
+            if getattr(sample, "gps_is_valid", True)
+            and sample.gps
+            and self._finite(sample.gps.lat)
+            and self._finite(sample.gps.lon)
+        ]
+        if not valid:
+            return {"lat": empty[:], "lon": empty[:], "speed": empty[:], "heading": empty[:]}
+        if len(valid) == 1:
+            lat, lon, speed = valid[0][1], valid[0][2], valid[0][3]
+            return {
+                "lat": [lat] * count,
+                "lon": [lon] * count,
+                "speed": [speed] * count,
+                "heading": [None] * count,
+            }
+
+        lag_sec = float(gps_lag_ms or 0) / 1000.0
+        targets = [time_rel + lag_sec for time_rel in times]
+        lat, lon, speed = self._hermite_display_gps(valid, targets)
+        lat, lon = self._smooth_display_path(lat, lon)
+        speed = self._rate_limit_series(speed, times, 120.0)
+        heading = self._heading_from_series(lat, lon)
+        return {"lat": lat, "lon": lon, "speed": speed, "heading": heading}
+
+    def _hermite_display_gps(self, anchors, targets):
+        origin_lat = anchors[0][1]
+        origin_lon = anchors[0][2]
+        lat_scale = 111320.0
+        lon_scale = 111320.0 * math.cos(math.radians(origin_lat))
+        lon_scale = lon_scale if abs(lon_scale) > 1e-9 else 1.0
+        points = []
+        for time_rel, lat, lon, speed in anchors:
+            points.append({
+                "time": float(time_rel),
+                "x": (lon - origin_lon) * lon_scale,
+                "y": (origin_lat - lat) * lat_scale,
+                "speed": float(speed),
+            })
+
+        tangents = []
+        for index, point in enumerate(points):
+            if index == 0:
+                other = points[1]
+                dt = max(1e-3, other["time"] - point["time"])
+                tangents.append({"dx": (other["x"] - point["x"]) / dt, "dy": (other["y"] - point["y"]) / dt})
+            elif index == len(points) - 1:
+                other = points[index - 1]
+                dt = max(1e-3, point["time"] - other["time"])
+                tangents.append({"dx": (point["x"] - other["x"]) / dt, "dy": (point["y"] - other["y"]) / dt})
+            else:
+                prev = points[index - 1]
+                nxt = points[index + 1]
+                dt = max(1e-3, nxt["time"] - prev["time"])
+                tangents.append({"dx": (nxt["x"] - prev["x"]) / dt, "dy": (nxt["y"] - prev["y"]) / dt})
+
+        lats = []
+        lons = []
+        speeds = []
+        segment_index = 0
+        last_segment = len(points) - 2
+        for target in targets:
+            while segment_index < last_segment and target > points[segment_index + 1]["time"]:
+                segment_index += 1
+            a = points[segment_index]
+            b = points[min(segment_index + 1, len(points) - 1)]
+            dt = max(1e-3, b["time"] - a["time"])
+            u = max(0.0, min(1.0, (target - a["time"]) / dt))
+            h00 = (2 * u * u * u) - (3 * u * u) + 1
+            h10 = (u * u * u) - (2 * u * u) + u
+            h01 = (-2 * u * u * u) + (3 * u * u)
+            h11 = (u * u * u) - (u * u)
+            tangent_a = tangents[segment_index]
+            tangent_b = tangents[min(segment_index + 1, len(tangents) - 1)]
+            x = (h00 * a["x"]) + (h10 * dt * tangent_a["dx"]) + (h01 * b["x"]) + (h11 * dt * tangent_b["dx"])
+            y = (h00 * a["y"]) + (h10 * dt * tangent_a["dy"]) + (h01 * b["y"]) + (h11 * dt * tangent_b["dy"])
+            speed = a["speed"] + ((b["speed"] - a["speed"]) * u)
+            lats.append(origin_lat - (y / lat_scale))
+            lons.append(origin_lon + (x / lon_scale))
+            speeds.append(speed)
+        return lats, lons, speeds
+
+    def _smooth_display_path(self, lats: List[Optional[float]], lons: List[Optional[float]]) -> tuple:
+        if len(lats) < 3:
+            return lats, lons
+        out_lat = []
+        out_lon = []
+        for index in range(len(lats)):
+            lo = max(0, index - 1)
+            hi = min(len(lats), index + 2)
+            lat_values = [lats[i] for i in range(lo, hi) if self._finite(lats[i])]
+            lon_values = [lons[i] for i in range(lo, hi) if self._finite(lons[i])]
+            out_lat.append(sum(lat_values) / len(lat_values) if lat_values else lats[index])
+            out_lon.append(sum(lon_values) / len(lon_values) if lon_values else lons[index])
+        return out_lat, out_lon
+
+    def _rate_limit_series(self, values: List[Optional[float]], times: List[float], max_delta_per_sec: float) -> List[Optional[float]]:
+        if not values:
+            return []
+        out = [float(values[0]) if values[0] is not None else None]
+        for index in range(1, len(values)):
+            value = values[index]
+            if value is None:
+                out.append(out[-1])
+                continue
+            value = float(value)
+            if out[-1] is None:
+                out.append(value)
+                continue
+            dt = max(0.001, float(times[index] - times[index - 1])) if index < len(times) else 0.01
+            limit = float(max_delta_per_sec) * dt
+            delta = value - out[-1]
+            if delta > limit:
+                out.append(out[-1] + limit)
+            elif delta < -limit:
+                out.append(out[-1] - limit)
+            else:
+                out.append(value)
+        return out
+
+    def _heading_from_series(self, lats: List[Optional[float]], lons: List[Optional[float]]) -> List[Optional[float]]:
+        headings: List[Optional[float]] = [None] * len(lats)
+        for index in range(len(lats)):
+            prev_index = max(0, index - 1)
+            next_index = min(len(lats) - 1, index + 1)
+            if prev_index == next_index:
+                continue
+            if not (self._finite(lats[prev_index]) and self._finite(lons[prev_index]) and self._finite(lats[next_index]) and self._finite(lons[next_index])):
+                continue
+            headings[index] = self._bearing_deg(lats[prev_index], lons[prev_index], lats[next_index], lons[next_index])
+        return headings
+
+    def _series_value(self, values: Optional[List[Any]], index: int, precision: int):
+        return self._signal_value(values, index, precision)
+
+    def _finite(self, value) -> bool:
+        try:
+            return value is not None and math.isfinite(float(value))
+        except Exception:
+            return False
 
     def _lap_for_time(self, laps: List[Dict[str, Any]], time_rel: float) -> Optional[Dict[str, Any]]:
         for lap in laps:
