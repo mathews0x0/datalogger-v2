@@ -1173,6 +1173,7 @@
           <div class="card playback-card playback-sectors-card">
             <div class="playback-card-head">
               <div class="stat-label">Sectors</div>
+              <button class="btn secondary btn-sm" onclick="showPlaybackTimingModal()">Timing Table</button>
             </div>
             <div class="playback-sector-grid">
               <div id="pbS1" class="sector-box playback-sector-box">
@@ -1293,6 +1294,15 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div class="modal" id="playbackTimingModal">
+    <div class="modal-content playback-timing-shell">
+      <span class="modal-close" onclick="closePlaybackTimingModal()">&times;</span>
+      <h3 style="margin-top: 0;">Playback Timing</h3>
+      <p class="help-text" style="margin-top: 0;">Enriched playback timing and delta against official GPS-only timing.</p>
+      <div id="playbackTimingBody"></div>
     </div>
   </div>
 

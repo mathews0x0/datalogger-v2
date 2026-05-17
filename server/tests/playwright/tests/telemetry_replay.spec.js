@@ -30,6 +30,18 @@ test.describe('Telemetry Replay', () => {
         await route.fulfill({ json });
     });
 
+    await page.route('**/api/sessions/1/playback', async route => {
+      const json = {
+        meta: { gps_lag_ms_applied: 175 },
+        laps: [],
+        rows: [
+          { time: 0, lat: 10.0, lon: 77.0, speed_kmh: 80, heading_deg: 180, lean_deg: 5, long_g: 0.1, lat_g: 0.2, accel_g: 0.1, brake_g: 0, lap_number: null, lap_start: false, lap_end: false, sector_index: null, sector_start: false, sector_end: false, gps_is_fix: true, gps_is_valid: true },
+          { time: 1, lat: 10.0001, lon: 77.0001, speed_kmh: 82, heading_deg: 182, lean_deg: 6, long_g: 0.2, lat_g: 0.25, accel_g: 0.2, brake_g: 0, lap_number: null, lap_start: false, lap_end: false, sector_index: null, sector_start: false, sector_end: false, gps_is_fix: false, gps_is_valid: true }
+        ]
+      };
+      await route.fulfill({ json });
+    });
+
     // Navigate to Home
     await page.goto('/');
 
@@ -96,6 +108,18 @@ test.describe('Telemetry Replay', () => {
               name: 'Test Session',
               meta: { session_id: '1', date: '2023-01-01' },
               laps: []
+          };
+          await route.fulfill({ json });
+      });
+
+      await page.route('**/api/sessions/1/playback', async route => {
+          const json = {
+              meta: { gps_lag_ms_applied: 175 },
+              laps: [],
+              rows: [
+                  { time: 0, lat: 10.0, lon: 77.0, speed_kmh: 80, heading_deg: 180, lean_deg: 5, long_g: 0.1, lat_g: 0.2, accel_g: 0.1, brake_g: 0, lap_number: null, lap_start: false, lap_end: false, sector_index: null, sector_start: false, sector_end: false, gps_is_fix: true, gps_is_valid: true },
+                  { time: 1, lat: 10.0001, lon: 77.0001, speed_kmh: 82, heading_deg: 182, lean_deg: 6, long_g: 0.2, lat_g: 0.25, accel_g: 0.2, brake_g: 0, lap_number: null, lap_start: false, lap_end: false, sector_index: null, sector_start: false, sector_end: false, gps_is_fix: false, gps_is_valid: true }
+              ]
           };
           await route.fulfill({ json });
       });

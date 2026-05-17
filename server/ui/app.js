@@ -4659,7 +4659,7 @@ async function viewLapDetail(sessionId, lapNumber, shareToken = null) {
         // Fetch Telemetry
         let telemetry = null;
         try {
-            let teleEndpoint = `/api/sessions/${sessionId}_telemetry`;
+            let teleEndpoint = `/api/sessions/${sessionId}/telemetry`;
             if (shareToken) {
                 teleEndpoint = `/api/shared/${shareToken}/telemetry`;
             }
@@ -6568,6 +6568,7 @@ let pbState = {
     startTime: 0,
     duration: 0,
     laps: [],
+    selectedLap: 'all',
 
     // Canvas
     canvas: null,
@@ -6588,6 +6589,64 @@ let pbState = {
     renderedLapKey: null
 };
 
+function normalizePlaybackData(playbackPayload, fallbackLaps = []) {
+    const rows = Array.isArray(playbackPayload?.rows) ? playbackPayload.rows : [];
+    const laps = Array.isArray(playbackPayload?.laps) ? playbackPayload.laps : fallbackLaps;
+    return {
+        time: rows.map(row => row.time),
+        lat: rows.map(row => row.lat),
+        lon: rows.map(row => row.lon),
+        speed: rows.map(row => row.speed_kmh),
+        heading_deg: rows.map(row => row.heading_deg),
+        lean_deg: rows.map(row => row.lean_deg),
+        long_g: rows.map(row => row.long_g),
+        lat_g: rows.map(row => row.lat_g),
+        accel_g: rows.map(row => row.accel_g),
+        brake_g: rows.map(row => row.brake_g),
+        lap_number: rows.map(row => row.lap_number),
+        lap_start: rows.map(row => Boolean(row.lap_start)),
+        lap_end: rows.map(row => Boolean(row.lap_end)),
+        sector_index: rows.map(row => row.sector_index),
+        sector_start: rows.map(row => Boolean(row.sector_start)),
+        sector_end: rows.map(row => Boolean(row.sector_end)),
+        gps_is_fix: rows.map(row => Boolean(row.gps_is_fix)),
+        gps_is_valid: rows.map(row => Boolean(row.gps_is_valid)),
+        gps_lean_ref_deg: rows.map(row => row.gps_lean_ref_deg),
+        gps_long_ref_g: rows.map(row => row.gps_long_ref_g),
+        gps_lag_ms_applied: playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+        laps,
+        rowCount: rows.length,
+    };
+}
+
+function buildPlaybackFromTelemetry(telemetry, fallbackLaps = []) {
+    const count = telemetry?.time?.length || 0;
+    const rows = [];
+    for (let i = 0; i < count; i += 1) {
+        rows.push({
+            time: telemetry.time?.[i],
+            lat: telemetry.lat?.[i],
+            lon: telemetry.lon?.[i],
+            speed_kmh: telemetry.speed?.[i],
+            heading_deg: null,
+            lean_deg: telemetry.lean_angle?.[i] ?? null,
+            long_g: telemetry.ax?.[i] ?? telemetry.raw_ax?.[i] ?? null,
+            lat_g: telemetry.ay?.[i] ?? telemetry.raw_ay?.[i] ?? null,
+            accel_g: telemetry.ax?.[i] != null ? Math.max(Number(telemetry.ax[i]), 0) : null,
+            brake_g: telemetry.ax?.[i] != null ? Math.abs(Math.min(Number(telemetry.ax[i]), 0)) : null,
+            lap_number: null,
+            lap_start: false,
+            lap_end: false,
+            sector_index: null,
+            sector_start: false,
+            sector_end: false,
+            gps_is_fix: telemetry.gps_is_fix?.[i] ?? true,
+            gps_is_valid: telemetry.gps_is_valid?.[i] ?? true,
+        });
+    }
+    return { meta: { gps_lag_ms_applied: 0 }, laps: fallbackLaps, rows };
+}
+
 function loadImageAsset(src) {
     return new Promise((resolve, reject) => {
         const img = new Image();
@@ -6607,6 +6666,7 @@ async function openPlayback(sessionId, shareToken = null) {
         playing: false,
         currentIndex: 0,
         mapMode: 'speed',
+        selectedLap: 'all',
         canonicalLayout: null,
         layoutImage: null,
         projectedPoints: null,
@@ -6620,21 +6680,29 @@ async function openPlayback(sessionId, shareToken = null) {
     try {
         // 3. Fetch Data
         let endpoint = `/api/sessions/${sessionId}`;
-        let teleEndpoint = `/api/sessions/${sessionId}/telemetry`;
+        let playbackEndpoint = `/api/sessions/${sessionId}/playback`;
 
         if (shareToken) {
             endpoint = `/api/shared/${shareToken}`;
-            teleEndpoint = `/api/shared/${shareToken}/telemetry`;
+            playbackEndpoint = `/api/shared/${shareToken}/playback`;
         }
 
-        const [session, telemetry] = await Promise.all([
-            apiCall(endpoint),
-            apiCall(teleEndpoint)
-        ]);
+        const session = await apiCall(endpoint);
+        let playback = null;
+        try {
+            playback = await apiCall(playbackEndpoint, { displayError: false });
+        } catch (playbackError) {
+            let telemetryEndpoint = `/api/sessions/${sessionId}/telemetry`;
+            if (shareToken) {
+                telemetryEndpoint = `/api/shared/${shareToken}/telemetry`;
+            }
+            const telemetry = await apiCall(telemetryEndpoint);
+            playback = buildPlaybackFromTelemetry(telemetry, session.laps || []);
+        }
 
         pbState.session = session;
-        pbState.data = telemetry;
-        pbState.laps = session.laps;
+        pbState.data = normalizePlaybackData(playback, session.laps || []);
+        pbState.laps = pbState.data.laps || session.laps || [];
 
         if (session.track?.track_scope === 'global' && session.track?.has_canonical_layout) {
             try {
@@ -6644,8 +6712,8 @@ async function openPlayback(sessionId, shareToken = null) {
                     pbState.layoutImage = await loadImageAsset(baseSvg);
                 }
                 pbState.projectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
-                    lats: telemetry.lat || [],
-                    lons: telemetry.lon || []
+                    lats: pbState.data.lat || [],
+                    lons: pbState.data.lon || []
                 });
             } catch (error) {
                 pbState.canonicalLayout = null;
@@ -6657,11 +6725,11 @@ async function openPlayback(sessionId, shareToken = null) {
         // Load Annotations
         loadAnnotations(sessionId);
 
-        if (telemetry.time && telemetry.time.length > 0) {
-            pbState.duration = telemetry.time[telemetry.time.length - 1] - telemetry.time[0];
-            pbState.startTime = telemetry.time[0];
+        if (pbState.data.time && pbState.data.time.length > 0) {
+            pbState.duration = pbState.data.time[pbState.data.time.length - 1] - pbState.data.time[0];
+            pbState.startTime = pbState.data.time[0];
         } else {
-            throw new Error("Telemetry data empty or format invalid");
+            throw new Error("Playback data empty or format invalid");
         }
 
         // 4. Init UI
@@ -6697,6 +6765,64 @@ function closePlaybackModal() {
         playbackResizeHandler = null;
     }
     document.getElementById('playbackModal').classList.remove('active');
+    closePlaybackTimingModal();
+}
+
+function showPlaybackTimingModal() {
+    const modal = document.getElementById('playbackTimingModal');
+    const body = document.getElementById('playbackTimingBody');
+    if (!modal || !body) return;
+    const laps = pbState.laps || [];
+    const officialLaps = pbState.session?.laps || [];
+    const sectorCount = Math.max(
+        ...[0, ...laps.map(lap => (lap.sector_times || []).length), ...officialLaps.map(lap => (lap.sector_times || []).length)]
+    );
+    if (!laps.length) {
+        body.innerHTML = '<div class="help-text">No enriched playback timing available for this session.</div>';
+        modal.classList.add('active');
+        return;
+    }
+
+    const officialByLap = new Map(officialLaps.map(lap => [lap.lap_number, lap]));
+    body.innerHTML = `
+        <div class="playback-timing-table-wrap">
+            <table class="modern-table playback-timing-table">
+                <thead>
+                    <tr>
+                        <th>Lap</th>
+                        <th>Enriched</th>
+                        <th>Delta vs GPS</th>
+                        ${Array.from({ length: sectorCount }, (_, index) => `<th style="text-align:center;">S${index + 1}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${laps.map(lap => {
+                        const official = officialByLap.get(lap.lap_number);
+                        const delta = lap.delta_to_gps_only ?? (official?.lap_time != null ? lap.lap_time - official.lap_time : null);
+                        const deltaClass = delta == null ? '' : (delta > 0 ? 'slower' : 'faster');
+                        const isBest = lap.is_session_best;
+                        return `
+                            <tr class="lap-row ${isBest ? 'best-lap' : ''}">
+                                <td class="lap-number">${lap.lap_number}</td>
+                                <td class="lap-time">${formatTime(lap.lap_time)}</td>
+                                <td class="lap-delta ${deltaClass}">${delta == null ? '--' : `${delta > 0 ? '+' : ''}${delta.toFixed(3)}`}</td>
+                                ${Array.from({ length: sectorCount }, (_, index) => {
+                                    const value = lap.sector_times?.[index];
+                                    return `<td style="text-align:center;">${value == null ? '--' : formatTime(value)}</td>`;
+                                }).join('')}
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    modal.classList.add('active');
+}
+
+function closePlaybackTimingModal() {
+    const modal = document.getElementById('playbackTimingModal');
+    if (modal) modal.classList.remove('active');
 }
 
 function initPlaybackUI() {
@@ -6720,6 +6846,7 @@ function initPlaybackUI() {
             sel.innerHTML += `<option value="${l.lap_number}">Lap ${l.lap_number} (${formatTime(l.lap_time)})</option>`;
         });
     }
+    sel.value = pbState.selectedLap;
 
     // Buttons
     document.getElementById('pbPlayPause').textContent = '▶';
@@ -6812,24 +6939,48 @@ function project(lat, lon) {
 }
 
 function projectPlaybackPoint(index) {
+    const interpolateMissingPoint = (lookup) => {
+        const times = pbState.data?.time || [];
+        let left = index;
+        let right = index;
+        let leftPoint = null;
+        let rightPoint = null;
+        while (left >= 0) {
+            leftPoint = lookup(left);
+            if (leftPoint) break;
+            left -= 1;
+        }
+        while (right < times.length) {
+            rightPoint = lookup(right);
+            if (rightPoint) break;
+            right += 1;
+        }
+        if (leftPoint && rightPoint && left !== right) {
+            const leftTime = times[left];
+            const rightTime = times[right];
+            const currentTime = times[index];
+            const span = Math.max(1e-9, rightTime - leftTime);
+            const alpha = Math.max(0, Math.min(1, (currentTime - leftTime) / span));
+            return {
+                x: leftPoint.x + (rightPoint.x - leftPoint.x) * alpha,
+                y: leftPoint.y + (rightPoint.y - leftPoint.y) * alpha,
+            };
+        }
+        return leftPoint || rightPoint || null;
+    };
+
     if (pbState.canonicalLayout && pbState.projectedPoints?.length) {
         let clamped = Math.max(0, Math.min(pbState.projectedPoints.length - 1, index));
         let point = pbState.projectedPoints[clamped];
         if (!point) {
-            let left = clamped - 1;
-            let right = clamped + 1;
-            while (left >= 0 || right < pbState.projectedPoints.length) {
-                if (left >= 0 && pbState.projectedPoints[left]) {
-                    point = pbState.projectedPoints[left];
-                    break;
-                }
-                if (right < pbState.projectedPoints.length && pbState.projectedPoints[right]) {
-                    point = pbState.projectedPoints[right];
-                    break;
-                }
-                left -= 1;
-                right += 1;
-            }
+            return interpolateMissingPoint((candidateIndex) => {
+                const candidate = pbState.projectedPoints[candidateIndex];
+                if (!candidate) return null;
+                return {
+                    x: candidate.x * pbState.scale + pbState.offsetX,
+                    y: candidate.y * pbState.scale + pbState.offsetY,
+                };
+            });
         }
         if (!point) return null;
         return {
@@ -6839,27 +6990,54 @@ function projectPlaybackPoint(index) {
     }
     const lat = pbState.data.lat[index];
     const lon = pbState.data.lon[index];
-    if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return interpolateMissingPoint((candidateIndex) => {
+            const candidateLat = pbState.data.lat[candidateIndex];
+            const candidateLon = pbState.data.lon[candidateIndex];
+            if (candidateLat == null || candidateLon == null || !Number.isFinite(candidateLat) || !Number.isFinite(candidateLon)) return null;
+            return project(candidateLat, candidateLon);
+        });
+    }
     return project(lat, lon);
+}
+
+function playbackLapByNumber(lapNumber) {
+    const laps = pbState.laps || [];
+    return laps.find(lap => String(lap.lap_number) === String(lapNumber)) || null;
+}
+
+function playbackLapForTime(timeSec) {
+    const laps = pbState.laps || [];
+    for (let i = 0; i < laps.length; i += 1) {
+        const lap = laps[i];
+        const lapEnd = Number.isFinite(lap.end_time) ? lap.end_time : (lap.start_time + (lap.lap_time || 0));
+        if (timeSec >= lap.start_time && timeSec <= lapEnd) return lap;
+    }
+    return null;
+}
+
+function playbackIndexForTime(timeSec) {
+    const times = pbState.data?.time || [];
+    if (!times.length) return 0;
+    for (let i = 0; i < times.length; i += 1) {
+        if (times[i] >= timeSec) return i;
+    }
+    return times.length - 1;
 }
 
 function currentPlaybackLapBounds() {
     const times = pbState.data?.time || [];
     if (!times.length) return { startIndex: 0, endIndex: 0, lapKey: 'empty' };
-    const currentTime = times[Math.max(0, Math.min(times.length - 1, Math.floor(pbState.currentIndex)))];
-    const laps = pbState.laps || [];
-    for (let i = 0; i < laps.length; i += 1) {
-        const lap = laps[i];
-        const lapEnd = Number.isFinite(lap.end_time) ? lap.end_time : (lap.start_time + (lap.lap_time || 0));
-        if (currentTime >= lap.start_time && currentTime <= lapEnd) {
-            let startIndex = times.findIndex(t => t >= lap.start_time);
-            if (startIndex < 0) startIndex = 0;
-            let endIndex = times.findIndex(t => t > lapEnd);
-            if (endIndex < 0) endIndex = times.length;
+    if (pbState.selectedLap && pbState.selectedLap !== 'all') {
+        const lap = playbackLapByNumber(pbState.selectedLap);
+        if (lap) {
+            const lapEnd = Number.isFinite(lap.end_time) ? lap.end_time : (lap.start_time + (lap.lap_time || 0));
+            const startIndex = playbackIndexForTime(lap.start_time);
+            const endIndex = Math.max(startIndex + 1, playbackIndexForTime(lapEnd) + 1);
             return {
                 startIndex,
-                endIndex: Math.max(startIndex + 1, endIndex),
-                lapKey: `lap-${lap.lap_number || i + 1}`,
+                endIndex,
+                lapKey: `lap-${lap.lap_number}`,
             };
         }
     }
@@ -6911,6 +7089,7 @@ function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectInde
         points.push({
             x: point.x,
             y: point.y,
+            index: i,
             isFix: Boolean(gpsFix[i]),
         });
     }
@@ -6919,14 +7098,34 @@ function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectInde
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.strokeStyle = 'rgba(150, 150, 150, 0.72)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length; i += 1) {
-        ctx.lineTo(points[i].x, points[i].y);
+        const prev = points[i - 1];
+        const next = points[i];
+        let strokeStyle = 'rgba(150, 150, 150, 0.72)';
+        if (pbState.mapMode === 'speed') {
+            const speeds = (data.speed || []).filter(Number.isFinite);
+            const minSpeed = speeds.length ? Math.min(...speeds) : 0;
+            const maxSpeed = speeds.length ? Math.max(...speeds) : 1;
+            const a = Number(data.speed?.[prev.index]);
+            const b = Number(data.speed?.[next.index]);
+            const avg = [a, b].filter(Number.isFinite).reduce((sum, value) => sum + value, 0) / Math.max(1, [a, b].filter(Number.isFinite).length);
+            strokeStyle = getHeatmapColor(avg || 0, minSpeed, maxSpeed || minSpeed + 1);
+        } else if (pbState.mapMode === 'accel') {
+            const axPrev = Number(data.long_g?.[prev.index] ?? data.ax?.[prev.index] ?? data.raw_ax?.[prev.index]);
+            const ayPrev = Number(data.lat_g?.[prev.index] ?? data.ay?.[prev.index] ?? data.raw_ay?.[prev.index]);
+            const axNext = Number(data.long_g?.[next.index] ?? data.ax?.[next.index] ?? data.raw_ax?.[next.index]);
+            const ayNext = Number(data.lat_g?.[next.index] ?? data.ay?.[next.index] ?? data.raw_ay?.[next.index]);
+            const magPrev = Number.isFinite(axPrev) && Number.isFinite(ayPrev) ? Math.sqrt(axPrev * axPrev + ayPrev * ayPrev) : 0;
+            const magNext = Number.isFinite(axNext) && Number.isFinite(ayNext) ? Math.sqrt(axNext * axNext + ayNext * ayNext) : 0;
+            strokeStyle = getHeatmapColor((magPrev + magNext) / 2, 0, 1.5);
+        }
+        ctx.strokeStyle = strokeStyle;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(next.x, next.y);
+        ctx.stroke();
     }
-    ctx.stroke();
 
     for (let i = 0; i < points.length; i += 1) {
         const point = points[i];
@@ -6992,6 +7191,7 @@ function seekPlayback(val) {
 }
 
 function jumpToLap(val) {
+    pbState.selectedLap = val;
     if (val === 'all') {
         pbState.currentIndex = 0;
     } else {
@@ -7013,15 +7213,17 @@ function jumpToLap(val) {
 
 function nextLapPlay() {
     const curTime = pbState.data.time[Math.floor(pbState.currentIndex)];
-    const curLap = pbState.laps.find(l => curTime >= l.start_time && curTime < (l.start_time + l.lap_time));
+    const curLap = playbackLapForTime(curTime);
 
     if (curLap) {
         const nextLapNum = curLap.lap_number + 1;
         const nextLap = pbState.laps.find(l => l.lap_number === nextLapNum);
         if (nextLap) {
+            pbState.selectedLap = String(nextLapNum);
             const idx = pbState.data.time.findIndex(t => t >= nextLap.start_time);
             if (idx !== -1) pbState.currentIndex = idx;
         } else {
+            pbState.selectedLap = 'all';
             pbState.currentIndex = 0;
             togglePlayback(false);
         }
@@ -7049,12 +7251,23 @@ function pbAnimationLoop() {
     pbState.playbackTime += dt;
 
     const times = pbState.data.time;
+    const selectedLap = pbState.selectedLap && pbState.selectedLap !== 'all'
+        ? playbackLapByNumber(pbState.selectedLap)
+        : null;
+    if (selectedLap) {
+        const lapEnd = Number.isFinite(selectedLap.end_time) ? selectedLap.end_time : (selectedLap.start_time + (selectedLap.lap_time || 0));
+        if (pbState.playbackTime > lapEnd) {
+            pbState.playbackTime = selectedLap.start_time;
+            pbState.currentIndex = playbackIndexForTime(selectedLap.start_time);
+        }
+    }
+
     // Advance index to match playbackTime
     while (pbState.currentIndex < times.length - 1 && times[pbState.currentIndex + 1] <= pbState.playbackTime) {
         pbState.currentIndex++;
     }
 
-    if (pbState.currentIndex >= times.length - 1) {
+    if (!selectedLap && pbState.currentIndex >= times.length - 1) {
         pbState.currentIndex = 0;
         pbState.playbackTime = times[0];
     }
@@ -7105,27 +7318,27 @@ function drawFrame() {
     if (timeEl) timeEl.textContent = formatDuration(t);
 
     // ===== LAP TIME & DELTA =====
-    // Find current lap
-    let currentLapNum = 1;
+    let currentLapNum = 0;
     let lapStartTime = pbState.startTime;
     let lapEndTime = null;
     let bestLapTime = null;
+    let activeLap = null;
+    let bestLap = null;
 
     if (pbState.laps && pbState.laps.length > 0) {
-        for (let li = 0; li < pbState.laps.length; li++) {
-            const lap = pbState.laps[li];
-            if (data.time[i] >= lap.start_time && (!lap.end_time || data.time[i] <= lap.end_time)) {
-                currentLapNum = lap.lap_number || (li + 1);
-                lapStartTime = lap.start_time;
-                lapEndTime = lap.end_time;
-                break;
-            }
+        const rowLapNumber = data.lap_number?.[i];
+        activeLap = rowLapNumber ? playbackLapByNumber(rowLapNumber) : playbackLapForTime(data.time[i]);
+        if (activeLap) {
+            currentLapNum = activeLap.lap_number || 1;
+            lapStartTime = activeLap.start_time;
+            lapEndTime = activeLap.end_time;
         }
 
         // Find best lap time
         const validLaps = pbState.laps.filter(l => l.lap_time && l.lap_time > 0);
         if (validLaps.length > 0) {
             bestLapTime = Math.min(...validLaps.map(l => l.lap_time));
+            bestLap = validLaps.reduce((best, lap) => (best == null || lap.lap_time < best.lap_time ? lap : best), null);
         }
     }
 
@@ -7140,21 +7353,43 @@ function drawFrame() {
     const lapNumEl = document.getElementById('pbLapNumber');
     if (lapNumEl) {
         const totalLaps = pbState.laps ? pbState.laps.length : 1;
-        lapNumEl.textContent = `${currentLapNum}/${totalLaps}`;
+        lapNumEl.textContent = currentLapNum > 0 ? `${currentLapNum}/${totalLaps}` : `--/${totalLaps}`;
     }
 
-    // Delta calculation (vs best lap at same distance progress)
+    // Delta calculation aligned by actual sector timings when available.
     const deltaEl = document.getElementById('pbDeltaText');
     const deltaFillEl = document.getElementById('pbDeltaFill');
     if (deltaEl && deltaFillEl && bestLapTime) {
-        // Estimate progress through lap (0-1)
-        const lapProgress = lapEndTime ?
-            (data.time[i] - lapStartTime) / (lapEndTime - lapStartTime) :
-            Math.min(currentLapTime / bestLapTime, 1);
+        let delta = 0;
+        const currentSectorTimes = activeLap?.sector_times || [];
+        const bestSectorTimes = bestLap?.sector_times || [];
 
-        // Expected time at this progress
-        const expectedTime = lapProgress * bestLapTime;
-        const delta = currentLapTime - expectedTime;
+        if (currentSectorTimes.length && currentSectorTimes.length === bestSectorTimes.length) {
+            let currentAccum = 0;
+            let bestAccum = 0;
+            let expectedTime = currentLapTime;
+            for (let si = 0; si < currentSectorTimes.length; si += 1) {
+                const currentSector = Number(currentSectorTimes[si]);
+                const bestSector = Number(bestSectorTimes[si]);
+                if (!Number.isFinite(currentSector) || !Number.isFinite(bestSector) || currentSector <= 0 || bestSector <= 0) {
+                    continue;
+                }
+                if (currentLapTime <= currentAccum + currentSector) {
+                    const progress = (currentLapTime - currentAccum) / currentSector;
+                    expectedTime = bestAccum + progress * bestSector;
+                    break;
+                }
+                currentAccum += currentSector;
+                bestAccum += bestSector;
+                expectedTime = bestAccum;
+            }
+            delta = currentLapTime - expectedTime;
+        } else {
+            const lapProgress = lapEndTime ?
+                (data.time[i] - lapStartTime) / Math.max(1e-9, (lapEndTime - lapStartTime)) :
+                Math.min(currentLapTime / bestLapTime, 1);
+            delta = currentLapTime - (lapProgress * bestLapTime);
+        }
 
         // Update display
         deltaEl.textContent = (delta >= 0 ? '+' : '') + delta.toFixed(1) + 's';
@@ -7186,41 +7421,31 @@ function drawFrame() {
         sectorBoxes.push(document.getElementById(`pbS${s}`));
     }
 
-    if (sectorEls[0] && lapEndTime) {
-        const lapDuration = lapEndTime - lapStartTime;
-        const currentTime = data.time[i];
+    if (sectorEls[0]) {
+        const sectorTimes = activeLap?.sector_times || [];
+        sectorBoxes.forEach(box => { if (box) box.style.borderColor = 'transparent'; });
+        let activeSector = Number.isFinite(data.sector_index?.[i]) ? Number(data.sector_index[i]) - 1 : -1;
+        let sectorStart = 0;
 
-        // Clear all highlights
-        sectorBoxes.forEach(b => { if (b) b.style.borderColor = 'transparent'; });
-
-        // Determine sector boundaries (equal split)
-        const sectorFraction = 1.0 / SECTOR_COUNT;
-        let activeSector = SECTOR_COUNT - 1; // default to last
         for (let s = 0; s < SECTOR_COUNT; s++) {
-            const sectorEnd = lapStartTime + lapDuration * sectorFraction * (s + 1);
-            if (currentTime < sectorEnd) {
-                activeSector = s;
-                break;
+            const sectorDuration = Number(sectorTimes[s]);
+            if (!Number.isFinite(sectorDuration) || sectorDuration <= 0) {
+                sectorEls[s].textContent = '--.-';
+                continue;
             }
-        }
-
-        // Update sector times
-        for (let s = 0; s < SECTOR_COUNT; s++) {
-            const sectorStart = lapStartTime + lapDuration * sectorFraction * s;
-            const sectorEnd = lapStartTime + lapDuration * sectorFraction * (s + 1);
-
-            if (s < activeSector) {
-                // Completed sector
-                sectorEls[s].textContent = (lapDuration * sectorFraction).toFixed(1);
+            const sectorEnd = sectorStart + sectorDuration;
+            if (activeSector === -1 && currentLapTime < sectorEnd) {
+                activeSector = s;
+            }
+            if (s < activeSector || (activeSector === -1 && currentLapTime >= sectorEnd)) {
+                sectorEls[s].textContent = sectorDuration.toFixed(1);
             } else if (s === activeSector) {
-                // Active sector
-                const elapsed = currentTime - sectorStart;
-                sectorEls[s].textContent = elapsed.toFixed(1);
+                sectorEls[s].textContent = Math.max(0, currentLapTime - sectorStart).toFixed(1);
                 if (sectorBoxes[s]) sectorBoxes[s].style.borderColor = '#fff';
             } else {
-                // Future sector
                 sectorEls[s].textContent = '--.-';
             }
+            sectorStart = sectorEnd;
         }
     }
 
@@ -7235,7 +7460,9 @@ function drawFrame() {
     // Lean Angle
     // Priority: Explicit Lean > Roll > Derived from Gyro/Speed > 0
     let lean = 0;
-    if (data.lean_angle && data.lean_angle[i] !== undefined) {
+    if (data.lean_deg && data.lean_deg[i] !== undefined && data.lean_deg[i] !== null) {
+        lean = data.lean_deg[i];
+    } else if (data.lean_angle && data.lean_angle[i] !== undefined) {
         lean = data.lean_angle[i];
     } else if (data.roll && data.roll[i] !== undefined) {
         lean = data.roll[i];
@@ -7286,10 +7513,12 @@ function drawFrame() {
     // Raw X = Long (usually), Raw Y = Lat (usually).
     let gx = 0, gy = 0;
 
-    if (data.ax && data.ax[i] !== undefined) gx = data.ax[i];
+    if (data.long_g && data.long_g[i] !== undefined && data.long_g[i] !== null) gx = data.long_g[i];
+    else if (data.ax && data.ax[i] !== undefined) gx = data.ax[i];
     else if (data.raw_ax && data.raw_ax[i] !== undefined) gx = data.raw_ax[i];
 
-    if (data.ay && data.ay[i] !== undefined) gy = data.ay[i];
+    if (data.lat_g && data.lat_g[i] !== undefined && data.lat_g[i] !== null) gy = data.lat_g[i];
+    else if (data.ay && data.ay[i] !== undefined) gy = data.ay[i];
     else if (data.raw_ay && data.raw_ay[i] !== undefined) gy = data.raw_ay[i];
 
     const gxEl = document.getElementById('pbGX');

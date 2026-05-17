@@ -23,6 +23,17 @@ class SessionProcessor:
     OUTPUT: Updated Artifacts (Tracks, TBL, Session JSON)
     """
 
+    PLAYBACK_TUNE = {
+        "gyroScale": 0.04,
+        "smoothingSamples": 5,
+        "accelBlendMode": "soft",
+        "accelCorrectionStrong": 0.0,
+        "accelCorrectionWeak": 0.009,
+        "leanOffsetDeg": 0.0,
+        "longitudinalGain": 0.85,
+        "gpsLagMs": 175,
+    }
+
     def __init__(self, output_dir=None, tracks_dir=None):
         self.log = get_logger("analysis")
         self.loader = CSVLoader()
@@ -94,6 +105,81 @@ class SessionProcessor:
     @staticmethod
     def _gps_valid_samples(session):
         return [sample for sample in session.samples if getattr(sample, "gps_is_valid", True)]
+
+    @staticmethod
+    def _build_timing_session(session):
+        return TrackGenerator._gps_only_session(session)
+
+    @staticmethod
+    def _tightened_playback_radius(radius_m):
+        radius = float(radius_m or 20.0)
+        return max(8.0, min(radius * 0.6, 15.0))
+
+    @staticmethod
+    def _moving_average(values, window):
+        if window <= 1 or not values:
+            return list(values)
+        out = []
+        total = 0.0
+        queue = []
+        for value in values:
+            queue.append(float(value))
+            total += float(value)
+            if len(queue) > window:
+                total -= queue.pop(0)
+            out.append(total / len(queue))
+        return out
+
+    @classmethod
+    def _build_playback_signal_bundle(cls, imu_results):
+        playback_signals = dict(imu_results.get("playback_signals") or {})
+        if not playback_signals:
+            playback_signals = {
+                "lean_deg": list(imu_results.get("lean_angle", [])),
+                "long_g": list(imu_results.get("ax_cg", [])),
+                "lat_g": list(imu_results.get("ay_cg", [])),
+                "accel_g": list(imu_results.get("acceleration_g", [])),
+                "brake_g": list(imu_results.get("braking_g", [])),
+            }
+
+        smoothing = int(cls.PLAYBACK_TUNE["smoothingSamples"])
+        lean = cls._moving_average(playback_signals.get("lean_deg", []), smoothing)
+        long_g = cls._moving_average(playback_signals.get("long_g", []), smoothing)
+        lat_g = cls._moving_average(playback_signals.get("lat_g", []), smoothing)
+        long_gain = float(cls.PLAYBACK_TUNE["longitudinalGain"])
+        long_g = [round(value * long_gain, 3) for value in long_g]
+        accel_g = [round(max(value, 0.0), 3) for value in long_g]
+        brake_g = [round(abs(min(value, 0.0)), 3) for value in long_g]
+
+        gps_references = imu_results.get("gps_references") or {}
+        return {
+            "config": dict(cls.PLAYBACK_TUNE),
+            "signals": {
+                "lean_deg": [round(value + float(cls.PLAYBACK_TUNE["leanOffsetDeg"]), 1) for value in lean],
+                "long_g": long_g,
+                "lat_g": [round(value, 3) for value in lat_g],
+                "accel_g": accel_g,
+                "brake_g": brake_g,
+            },
+            "gps_references": {
+                "gps_lean_deg": list(gps_references.get("gps_lean_deg", [])),
+                "gps_long_g": list(gps_references.get("gps_long_g", [])),
+            },
+        }
+
+    @classmethod
+    def _build_playback_laps(cls, session, track_info, official_laps):
+        sl_lat, sl_lon, sl_radius = cls._lap_boundary_target(track_info)
+        if sl_lat is None or sl_lon is None:
+            return []
+        detector = LapDetector(StartLine(sl_lat, sl_lon, cls._tightened_playback_radius(sl_radius)))
+        playback_laps = detector.detect(session)
+        StatsEngine.calculate_sectors(playback_laps, track_info)
+        official_by_number = {lap.lap_number: lap for lap in (official_laps or [])}
+        for lap in playback_laps:
+            official = official_by_number.get(lap.lap_number)
+            lap.delta_to_official = round(lap.duration - official.duration, 3) if official and official.duration else None
+        return playback_laps
 
     @staticmethod
     def _build_processing_gps_series(session):
@@ -366,6 +452,10 @@ class SessionProcessor:
                 if not session.samples:
                     self.log.warning("Session empty. Skipping.", data={"file": filename})
                     return False
+                timing_session = self._build_timing_session(session)
+                if not timing_session.samples:
+                    self.log.warning("Session has no true GPS fixes. Skipping.", data={"file": filename})
+                    return False
             except Exception as e:
                 self.log.error(f"Load failed: {e}", exc_info=True)
                 return False
@@ -379,9 +469,9 @@ class SessionProcessor:
                 if not track_info:
                     self.log.warning(f"Forced track '{force_track_id}' not found.")
             else:
-                global_candidate = self._identify_global_track(session)
+                global_candidate = self._identify_global_track(timing_session)
                 if global_candidate and self._is_global_track(global_candidate):
-                    if self._global_track_matches_package(session, global_candidate):
+                    if self._global_track_matches_package(timing_session, global_candidate):
                         track_info = global_candidate
                         track_info["id"] = track_info.get("track_id")
                         track_info["name"] = track_info.get("track_name")
@@ -392,7 +482,7 @@ class SessionProcessor:
                         track_info["folder_name"] = f"global_track_{track_info['track_id']}"
                         self._prepare_user_track_storage(track_info)
                 if not track_info:
-                    track_info = self.tm.identify_track(session)
+                    track_info = self.tm.identify_track(timing_session)
             
             # 3. Handle Unknown Track (Auto-Gen)
             if not track_info:
@@ -404,7 +494,7 @@ class SessionProcessor:
                 
                 new_name = f"track_{new_id}"  # Human name, will be sanitized to folder
                 
-                track_info = self.gen.generate_from_session(session, new_id, new_name)
+                track_info = self.gen.generate_from_session(timing_session, new_id, new_name)
                 if not track_info:
                     self.log.error("Auto-Generation failed. Aborting.")
                     return False
@@ -425,7 +515,7 @@ class SessionProcessor:
             start_line = StartLine(sl_lat, sl_lon, sl_radius)
             
             detector = LapDetector(start_line)
-            laps = detector.detect(session)
+            laps = detector.detect(timing_session)
             session.laps = laps # Attach to session for exporters
             
             self.log.info(f"Laps Detected: {len(laps)}")
@@ -507,11 +597,28 @@ class SessionProcessor:
                 met_engine = SensorMetricsEngine()
                 metrics = met_engine.compute(session)
                 session.sensor_metrics = metrics
+                session.playback_dataset = self._build_playback_signal_bundle(imu_results)
+                session.playback_laps = self._build_playback_laps(session, track_info, laps)
                 
             except Exception as e:
                 self.log.error(f"Advanced IMU Processing Failed: {e}", exc_info=True)
                 session.derived_signals = {}
                 session.calibration = {"calibrated": False, "reason": str(e)}
+                session.playback_dataset = {
+                    "config": dict(self.PLAYBACK_TUNE),
+                    "signals": {
+                        "lean_deg": [0.0] * len(session.samples),
+                        "long_g": [0.0] * len(session.samples),
+                        "lat_g": [0.0] * len(session.samples),
+                        "accel_g": [0.0] * len(session.samples),
+                        "brake_g": [0.0] * len(session.samples),
+                    },
+                    "gps_references": {
+                        "gps_lean_deg": [],
+                        "gps_long_g": [],
+                    },
+                }
+                session.playback_laps = []
 
             # 5. Sector Calculation
             StatsEngine.calculate_sectors(laps, track_info)

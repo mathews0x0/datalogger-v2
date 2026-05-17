@@ -418,6 +418,7 @@ class AdvancedIMUProcessor:
         self.config.sample_rate_est = 1.0 / dt if dt > 0 else 100.0
 
         gps_features = self._build_gps_features(timestamps, speeds, lats, lons)
+        gps_reference = self._build_gps_reference_payload(gps_features)
         if calibration_profile and calibration_profile.get("rotation_matrix"):
             calibrated = self._compute_calibrated_profile_outputs(
                 timestamps=timestamps,
@@ -448,6 +449,8 @@ class AdvancedIMUProcessor:
                 "candidate_scores": {"calibrated_profile": calibrated["validation"]["score"]},
                 "candidate_pass": {"calibrated_profile": calibrated["validation"]["passed"]},
             }
+            calibrated["playback_signals"] = self._build_playback_signal_payload(calibrated)
+            calibrated["gps_references"] = gps_reference
             if not calibrated["validation"]["passed"]:
                 gps_only = self._compute_gps_fallback(gps_features)
                 gps_only["mount_confidence"] = "LOW"
@@ -485,6 +488,8 @@ class AdvancedIMUProcessor:
                     },
                 }
                 gps_only["primary_validation"] = calibrated["validation"]
+                gps_only["playback_signals"] = self._build_playback_signal_payload(calibrated)
+                gps_only["gps_references"] = gps_reference
                 if gps_only["validation"]["score"] > calibrated["validation"]["score"]:
                     return gps_only
             return calibrated
@@ -503,6 +508,16 @@ class AdvancedIMUProcessor:
         self.rot_Y = mount["rotation_matrix"][1]
         self.rot_Z = mount["rotation_matrix"][2]
         self.gx_bias, self.gy_bias, self.gz_bias = mount["gyro_bias"]
+        playback_imu = self._compute_mount_locked_outputs(
+            timestamps=timestamps,
+            ax_raw=ax_raw,
+            ay_raw=ay_raw,
+            az_raw=az_raw,
+            gx_raw=gx_raw,
+            gy_raw=gy_raw,
+            gz_raw=gz_raw,
+            mount=mount,
+        )
 
         primary = self._compute_orientation_outputs(
             timestamps=timestamps,
@@ -573,9 +588,81 @@ class AdvancedIMUProcessor:
             "candidate_scores": {name: candidate["validation"]["score"] for name, candidate in evaluated},
             "candidate_pass": {name: candidate["validation"]["passed"] for name, candidate in evaluated},
         }
+        selected["playback_signals"] = self._build_playback_signal_payload(playback_imu)
+        selected["gps_references"] = gps_reference
         if selected_name != "orientation_solver":
             selected["primary_validation"] = primary["validation"]
         return selected
+
+    def _build_gps_reference_payload(self, gps_features: Dict[str, List[float]]) -> Dict[str, List[float]]:
+        speeds = gps_features.get("speeds", [])
+        return {
+            "gps_lean_deg": [round(self._lean_from_gps(i, gps_features), 1) for i in range(len(speeds))],
+            "gps_long_g": [round(value, 3) for value in gps_features.get("gps_accel_g", [])],
+        }
+
+    def _build_playback_signal_payload(self, outputs: Dict[str, Any]) -> Dict[str, List[float]]:
+        return {
+            "lean_deg": list(outputs.get("lean_angle", [])),
+            "long_g": list(outputs.get("ax_cg", [])),
+            "lat_g": list(outputs.get("ay_cg", [])),
+            "accel_g": list(outputs.get("acceleration_g", [])),
+            "brake_g": list(outputs.get("braking_g", [])),
+        }
+
+    def _build_runtime_validation_for_mount(self, mount_confidence: str) -> Dict[str, Any]:
+        if mount_confidence == "HIGH":
+            source_mode = "imu_trusted"
+        elif mount_confidence == "MEDIUM":
+            source_mode = "imu_warn"
+        else:
+            source_mode = "imu_low"
+        return {"source_mode": source_mode}
+
+    def _compute_mount_locked_outputs(
+        self,
+        timestamps: List[float],
+        ax_raw: List[float],
+        ay_raw: List[float],
+        az_raw: List[float],
+        gx_raw: List[float],
+        gy_raw: List[float],
+        gz_raw: List[float],
+        mount: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        synthetic_profile = {
+            "id": "resolved_mount",
+            "label": "resolved_mount",
+            "rotation_matrix": mount["rotation_matrix"],
+            "gyro_bias": list(mount["gyro_bias"]),
+            "accel_bias": [0.0, 0.0, 0.0],
+            "gravity_vector": list(mount["gravity_vector"]),
+            "quality_score": round(float(mount.get("confidence_score", 0.0)), 3),
+        }
+        outputs = self._compute_calibrated_profile_outputs(
+            timestamps=timestamps,
+            ax_raw=ax_raw,
+            ay_raw=ay_raw,
+            az_raw=az_raw,
+            gx_raw=gx_raw,
+            gy_raw=gy_raw,
+            gz_raw=gz_raw,
+            gps_features={"heading_quality": 0.0},
+            calibration_profile=synthetic_profile,
+            runtime_validation=self._build_runtime_validation_for_mount(mount.get("mount_confidence", "LOW")),
+        )
+        outputs["mount_confidence"] = mount.get("mount_confidence", "LOW")
+        outputs["mount_method"] = "resolved_mount_profile"
+        outputs["rotation_matrix"] = mount["rotation_matrix"]
+        outputs["gyro_bias"] = list(mount["gyro_bias"])
+        outputs["gravity_vector"] = list(mount["gravity_vector"])
+        outputs["confidence"] = mount.get("confidence_score", 0.0)
+        outputs["evidence_summary"] = {
+            "source": "resolved_mount",
+            "mount_method": mount.get("mount_method"),
+            "confidence_score": round(float(mount.get("confidence_score", 0.0)), 3),
+        }
+        return outputs
 
     def _resolve_mount(
         self,

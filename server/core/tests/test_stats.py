@@ -25,6 +25,19 @@ class TestStats(unittest.TestCase):
         self.assertEqual(best, l2)
         self.assertEqual(best.duration, 98.5)
 
+    def test_lap_duration_uses_boundary_crossing_sample(self):
+        session = Session()
+        session.add_sample(Sample(100.0, GPSSample(0, 0, 0, 0), IMUSample(0, 0, 0), EnvSample(0, 0)))
+        session.add_sample(Sample(109.5, GPSSample(0, 0, 0, 0), IMUSample(0, 0, 0), EnvSample(0, 0)))
+        session.add_sample(Sample(110.0, GPSSample(0, 0, 0, 0), IMUSample(0, 0, 0), EnvSample(0, 0)))
+
+        lap = Lap(session, 0, 2, number=1)
+
+        self.assertEqual(len(lap.samples), 2)
+        self.assertEqual(lap.start_time, 100.0)
+        self.assertEqual(lap.end_time, 110.0)
+        self.assertEqual(lap.duration, 10.0)
+
     def test_sectors(self):
         # 1. Define Track Info
         track_info = {

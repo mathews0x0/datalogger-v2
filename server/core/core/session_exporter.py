@@ -1,7 +1,8 @@
 import json
+import math
 import os
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 import datetime
 from datetime import timezone, timedelta
 
@@ -55,7 +56,7 @@ class SessionExporter:
                 "end_time": et_iso,
                 "duration_sec": round(dur, 2),
                 "logger_version": "v3.6",
-                "schema_version": "1.1",
+                "schema_version": "1.2",
                 "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
             },
             "environment": {
@@ -147,6 +148,7 @@ class SessionExporter:
             
             # 7.4.1 Separate Telemetry export
             self._export_telemetry(session, out_path)
+            self._export_playback(session, track_info, out_path)
             
             return out_path
         except Exception as e:
@@ -215,6 +217,202 @@ class SessionExporter:
                 json.dump(payload, f) # Minified (no indent)
         except Exception as e:
             print(f"  [!] Failed to save telemetry: {e}")
+
+    def _export_playback(self, session: Session, track_info: Dict, main_path: str):
+        if not session.samples:
+            return
+
+        playback_path = main_path.replace(".json", "_playback.json")
+        t0 = session.samples[0].timestamp
+        playback_dataset = getattr(session, "playback_dataset", {}) or {}
+        playback_signals = playback_dataset.get("signals", {}) or {}
+        gps_references = playback_dataset.get("gps_references", {}) or {}
+        playback_config = playback_dataset.get("config", {}) or {}
+        playback_laps = self._build_laps_list(session, track_info, laps_override=getattr(session, "playback_laps", None), reference_laps=getattr(session, "laps", None))
+        rows = self._build_playback_rows(session, playback_laps, t0, playback_signals, gps_references, playback_config)
+        payload = {
+            "meta": {
+                "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
+                "gps_lag_ms_applied": playback_config.get("gpsLagMs", 0),
+                "row_count": len(rows),
+            },
+            "config": playback_config,
+            "laps": playback_laps,
+            "rows": rows,
+        }
+        try:
+            with open(playback_path, "w") as f:
+                json.dump(payload, f)
+        except Exception as e:
+            print(f"  [!] Failed to save playback: {e}")
+
+    def _build_playback_rows(
+        self,
+        session: Session,
+        laps: List[Dict[str, Any]],
+        t0: float,
+        playback_signals: Dict[str, List[float]],
+        gps_references: Dict[str, List[float]],
+        playback_config: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        times = [round(sample.timestamp - t0, 3) for sample in session.samples]
+        headings = self._build_heading_series(session)
+        gps_lag_ms = int(playback_config.get("gpsLagMs", 0) or 0)
+        gps_lean_ref = self._shift_series_by_lag(times, gps_references.get("gps_lean_deg", []), gps_lag_ms)
+        gps_long_ref = self._shift_series_by_lag(times, gps_references.get("gps_long_g", []), gps_lag_ms)
+        lap_start_indices = self._nearest_time_indices(times, [lap.get("start_time") for lap in laps])
+        lap_end_indices = self._nearest_time_indices(times, [lap.get("end_time") for lap in laps])
+        sector_boundary_times = []
+        for lap in laps:
+            sector_elapsed = 0.0
+            for sector_duration in lap.get("sector_times", []):
+                if sector_duration is None:
+                    break
+                sector_elapsed += float(sector_duration)
+                sector_boundary_times.append(lap["start_time"] + sector_elapsed)
+        sector_end_indices = self._nearest_time_indices(times, sector_boundary_times)
+        sector_start_indices = set()
+        sector_start_indices.update(lap_start_indices)
+        for index in sector_end_indices:
+            next_index = min(index + 1, max(0, len(times) - 1))
+            sector_start_indices.add(next_index)
+
+        rows = []
+        for index, sample in enumerate(session.samples):
+            time_rel = times[index]
+            active_lap = self._lap_for_time(laps, time_rel)
+            active_sector = self._sector_for_time(active_lap, time_rel) if active_lap else None
+            lat = round(sample.gps.lat, 6) if getattr(sample, "gps_is_valid", True) else None
+            lon = round(sample.gps.lon, 6) if getattr(sample, "gps_is_valid", True) else None
+            speed = round(sample.gps.speed, 1) if getattr(sample, "gps_is_valid", True) else None
+            row = {
+                "time": time_rel,
+                "lat": lat,
+                "lon": lon,
+                "speed_kmh": speed,
+                "heading_deg": headings[index],
+                "lean_deg": self._signal_value(playback_signals.get("lean_deg"), index, 1),
+                "long_g": self._signal_value(playback_signals.get("long_g"), index, 3),
+                "lat_g": self._signal_value(playback_signals.get("lat_g"), index, 3),
+                "accel_g": self._signal_value(playback_signals.get("accel_g"), index, 3),
+                "brake_g": self._signal_value(playback_signals.get("brake_g"), index, 3),
+                "lap_number": active_lap.get("lap_number") if active_lap else None,
+                "lap_start": index in lap_start_indices,
+                "lap_end": index in lap_end_indices,
+                "sector_index": active_sector.get("sector_index") if active_sector else None,
+                "sector_start": index in sector_start_indices,
+                "sector_end": index in sector_end_indices,
+                "gps_is_fix": bool(getattr(sample, "gps_is_fix", True)),
+                "gps_is_valid": bool(getattr(sample, "gps_is_valid", True)),
+                "gps_lean_ref_deg": self._signal_value(gps_lean_ref, index, 1),
+                "gps_long_ref_g": self._signal_value(gps_long_ref, index, 3),
+                "gps_lag_ms_applied": gps_lag_ms,
+            }
+            rows.append(row)
+        return rows
+
+    def _lap_for_time(self, laps: List[Dict[str, Any]], time_rel: float) -> Optional[Dict[str, Any]]:
+        for lap in laps:
+            if time_rel < lap.get("start_time", 0.0):
+                continue
+            if time_rel <= lap.get("end_time", lap.get("start_time", 0.0)):
+                return lap
+        return None
+
+    def _sector_for_time(self, lap: Dict[str, Any], time_rel: float) -> Optional[Dict[str, Any]]:
+        sector_times = lap.get("sector_times", [])
+        elapsed = lap.get("start_time", 0.0)
+        for offset, duration in enumerate(sector_times, start=1):
+            if duration is None:
+                continue
+            elapsed += float(duration)
+            if time_rel <= elapsed:
+                return {"sector_index": offset}
+        if sector_times:
+            return {"sector_index": len(sector_times)}
+        return None
+
+    def _nearest_time_indices(self, times: List[float], boundaries: List[Optional[float]]) -> set:
+        indices = set()
+        if not times:
+            return indices
+        for boundary in boundaries:
+            if boundary is None:
+                continue
+            closest = min(range(len(times)), key=lambda idx: abs(times[idx] - boundary))
+            indices.add(closest)
+        return indices
+
+    def _shift_series_by_lag(self, times: List[float], values: List[float], lag_ms: int) -> List[Optional[float]]:
+        if not values or len(values) != len(times):
+            return []
+        lag_sec = float(lag_ms) / 1000.0
+        shifted = []
+        source_index = 0
+        for current_time in times:
+            target = current_time - lag_sec
+            while source_index + 1 < len(times) and times[source_index + 1] <= target:
+                source_index += 1
+            if source_index + 1 < len(times):
+                left_distance = abs(times[source_index] - target)
+                right_distance = abs(times[source_index + 1] - target)
+                closest = source_index if left_distance <= right_distance else source_index + 1
+            else:
+                closest = source_index
+            shifted.append(values[closest])
+        return shifted
+
+    def _signal_value(self, values: Optional[List[Any]], index: int, precision: int):
+        if not values or index >= len(values):
+            return None
+        value = values[index]
+        if value is None:
+            return None
+        try:
+            return round(float(value), precision)
+        except Exception:
+            return None
+
+    def _build_heading_series(self, session: Session) -> List[Optional[float]]:
+        valid_points = []
+        for index, sample in enumerate(session.samples):
+            if not getattr(sample, "gps_is_valid", True):
+                continue
+            valid_points.append((index, sample.gps.lat, sample.gps.lon))
+        headings: List[Optional[float]] = [None] * len(session.samples)
+        if len(valid_points) < 2:
+            return headings
+
+        for point_index, (sample_index, lat, lon) in enumerate(valid_points):
+            if point_index < len(valid_points) - 1:
+                _, next_lat, next_lon = valid_points[point_index + 1]
+                heading = self._bearing_deg(lat, lon, next_lat, next_lon)
+            else:
+                _, prev_lat, prev_lon = valid_points[point_index - 1]
+                heading = self._bearing_deg(prev_lat, prev_lon, lat, lon)
+            headings[sample_index] = heading
+
+        last_heading = None
+        for index in range(len(headings)):
+            if headings[index] is not None:
+                last_heading = headings[index]
+            elif last_heading is not None:
+                headings[index] = last_heading
+        next_heading = None
+        for index in range(len(headings) - 1, -1, -1):
+            if headings[index] is not None:
+                next_heading = headings[index]
+            elif next_heading is not None:
+                headings[index] = next_heading
+        return [round(value, 1) if value is not None else None for value in headings]
+
+    def _bearing_deg(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        lat1_r = math.radians(lat1)
+        lat2_r = math.radians(lat2)
+        dlon = math.radians(lon2 - lon1)
+        x = math.sin(dlon) * math.cos(lat2_r)
+        y = math.cos(lat1_r) * math.sin(lat2_r) - math.sin(lat1_r) * math.cos(lat2_r) * math.cos(dlon)
+        return (math.degrees(math.atan2(x, y)) + 360.0) % 360.0
     
     def _generate_session_filename(self, session_timestamp: float, folder_name: str) -> str:
         """
@@ -285,29 +483,39 @@ class SessionExporter:
             
         return refs
 
-    def _build_laps_list(self, session: Session, track_info: Dict = None) -> List[Dict]:
+    def _build_laps_list(self, session: Session, track_info: Dict = None, laps_override: Optional[List[Lap]] = None, reference_laps: Optional[List[Lap]] = None) -> List[Dict]:
         laps_out = []
-        best_time = self._find_best_lap_time(session)
+        lap_source = laps_override if laps_override is not None else getattr(session, "laps", [])
+        best_time = self._find_best_lap_time_from_laps(lap_source)
+        reference_by_number = {lap.lap_number: lap for lap in (reference_laps or getattr(session, "laps", []) or [])}
         
         t0 = session.start_time
         
-        for lap in session.laps:
+        for lap in lap_source:
             # Calculate relative start time for syncing with telemetry
             start_rel = 0.0
+            end_rel = 0.0
             if lap.samples:
-                start_rel = round(lap.samples[0].timestamp - t0, 3)
+                start_rel = round(lap.start_time - t0, 3)
+                end_rel = round(lap.end_time - t0, 3)
 
             l_data = {
                 "lap_index": lap.lap_number - 1, # 0-indexed schema
                 "lap_number": lap.lap_number,    # Human readable
                 "start_time": start_rel,         # Relative to session start (seconds)
+                "end_time": end_rel,             # Relative to session start (seconds)
                 "lap_time": round(lap.duration, 3) if lap.duration else None,
                 "valid": getattr(lap, 'valid', True),
                 "reason_invalid": None, # Logic not yet present
                 "sector_times": [],
                 "delta_to_reference": round(lap.duration - best_time, 3) if (lap.duration and best_time) else 0.0,
-                "is_session_best": (lap.duration == best_time and lap.duration > 0)
+                "is_session_best": (lap.duration == best_time and lap.duration > 0),
+                "delta_to_gps_only": None,
             }
+
+            reference_lap = reference_by_number.get(lap.lap_number)
+            if reference_lap and lap.duration and reference_lap.duration:
+                l_data["delta_to_gps_only"] = round(lap.duration - reference_lap.duration, 3)
             
             # Sectors
             # Dict to List based on keys S1, S2...
@@ -363,6 +571,10 @@ class SessionExporter:
         # valid = [l.duration for l in session.laps if l.valid and l.duration > 0]
         # Assuming all present laps are valid for now
         valid = [l.duration for l in session.laps if l.duration > 0]
+        return min(valid) if valid else None
+
+    def _find_best_lap_time_from_laps(self, laps: List[Lap]) -> Optional[float]:
+        valid = [lap.duration for lap in laps if lap.duration > 0]
         return min(valid) if valid else None
 
     def _calc_gap_to_tbl(self, session, tbl_data) -> Optional[float]:

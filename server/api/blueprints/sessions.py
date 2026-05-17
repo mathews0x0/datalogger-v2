@@ -169,6 +169,30 @@ def get_session_telemetry(session_id):
     
     return jsonify({"error": "Telemetry data not found"}), 404
 
+@sessions_bp.route('/api/sessions/<path:session_id>/playback')
+def get_session_playback(session_id):
+    """Get playback-ready data for a session"""
+    try:
+        verify_jwt_in_request(optional=True)
+    except:
+        pass
+    user_id = get_current_user_id()
+
+    if not user_id:
+        return jsonify({"error": "Access denied"}), 401
+
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
+    playback_file = sessions_dir / f"{session_id}_playback.json"
+
+    if playback_file.exists():
+        return send_file(playback_file, mimetype='application/json')
+
+    return jsonify({"error": "Playback data not found"}), 404
+
 @sessions_bp.route('/api/sessions/<path:session_id>/privacy', methods=['PUT'])
 @jwt_required()
 def toggle_session_privacy(session_id):
@@ -252,6 +276,22 @@ def get_shared_telemetry(token):
         return send_file(telemetry_file, mimetype='application/json')
     
     return jsonify({"error": "Telemetry data not found"}), 404
+
+@sessions_bp.route('/api/shared/<token>/playback')
+def get_shared_playback(token):
+    """Get playback data via share token (NO AUTH REQUIRED)"""
+    s_meta = SessionMeta.query.filter_by(share_token=token).first()
+
+    if not s_meta:
+        return jsonify({"error": "Shared session not found"}), 404
+
+    sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
+    playback_file = sessions_dir / f"{s_meta.session_id}_playback.json"
+
+    if playback_file.exists():
+        return send_file(playback_file, mimetype='application/json')
+
+    return jsonify({"error": "Playback data not found"}), 404
 
 @sessions_bp.route('/api/public/sessions')
 def get_public_sessions():

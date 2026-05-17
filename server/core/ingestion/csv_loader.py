@@ -28,7 +28,7 @@ class CSVLoader:
         # Handle file paths vs file objects
         should_close = False
         if isinstance(file_source, str):
-            f = open(file_source, 'r', newline='')
+            f = open(file_source, 'r', encoding='utf-8', errors='replace', newline='')
             should_close = True
             source_name = os.path.basename(file_source)
         else:

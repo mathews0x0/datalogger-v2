@@ -82,10 +82,33 @@ class Lap(Session):
     A specific slice of a Session representing one circuit.
     """
     def __init__(self, session: Session, start_index: int, end_index: int, number: int):
+        subset_end = min(len(session.samples), max(start_index, end_index))
         # Initialize with the subset of samples
         super().__init__(
             description=f"Lap {number} of {session.description}",
-            samples=session.samples[start_index:end_index]
+            samples=session.samples[start_index:subset_end]
         )
         self.lap_number = number
         self.sector_times = {} # {'s1': 23.4, 's2': 45.1}
+        self.start_index = start_index
+        self.end_index = end_index
+        self.boundary_start_sample = session.samples[start_index] if 0 <= start_index < len(session.samples) else None
+        self.boundary_end_sample = session.samples[end_index] if 0 <= end_index < len(session.samples) else None
+
+    @property
+    def start_time(self) -> float:
+        if self.boundary_start_sample:
+            return self.boundary_start_sample.timestamp
+        return super().start_time
+
+    @property
+    def end_time(self) -> float:
+        if self.boundary_end_sample:
+            return self.boundary_end_sample.timestamp
+        return super().end_time
+
+    @property
+    def duration(self) -> float:
+        if self.boundary_start_sample and self.boundary_end_sample:
+            return self.boundary_end_sample.timestamp - self.boundary_start_sample.timestamp
+        return super().duration
