@@ -10,6 +10,13 @@ from datetime import timezone, timedelta
 IST = timezone(timedelta(hours=5, minutes=30))
 from src.analysis.core.models import Session, Lap
 import src.config as config
+from src.analysis.core.playback_tuner import (
+    apply_reference_sign,
+    build_aligned_gps_series_from_rows,
+    build_display_gps_series_from_rows,
+    estimate_playback_reference_alignment,
+    shift_series_by_lag,
+)
 from src.analysis.processing.diagnostics import DiagnosticsEngine
 from src.analysis.processing.stats import StatsEngine
 
@@ -225,12 +232,22 @@ class SessionExporter:
         playback_path = main_path.replace(".json", "_playback.json")
         t0 = session.samples[0].timestamp
         playback_dataset = getattr(session, "playback_dataset", {}) or {}
+        base_signals = playback_dataset.get("base_signals", {}) or {}
         playback_signals = playback_dataset.get("signals", {}) or {}
         display_signals = playback_dataset.get("display_signals", {}) or {}
         gps_references = playback_dataset.get("gps_references", {}) or {}
         playback_config = playback_dataset.get("config", {}) or {}
         playback_laps = self._build_laps_list(session, track_info, laps_override=getattr(session, "playback_laps", None), reference_laps=getattr(session, "laps", None))
-        rows, reference_alignment = self._build_playback_rows(session, playback_laps, t0, playback_signals, display_signals, gps_references, playback_config)
+        rows, reference_alignment = self._build_playback_rows(
+            session,
+            playback_laps,
+            t0,
+            base_signals,
+            playback_signals,
+            display_signals,
+            gps_references,
+            playback_config,
+        )
         payload = {
             "meta": {
                 "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
@@ -257,6 +274,7 @@ class SessionExporter:
         session: Session,
         laps: List[Dict[str, Any]],
         t0: float,
+        base_signals: Dict[str, List[float]],
         playback_signals: Dict[str, List[float]],
         display_signals: Dict[str, List[float]],
         gps_references: Dict[str, List[float]],
@@ -264,7 +282,7 @@ class SessionExporter:
     ) -> tuple:
         times = [round(sample.timestamp - t0, 3) for sample in session.samples]
         headings = self._build_heading_series(session)
-        reference_alignment = self._estimate_playback_reference_alignment(
+        reference_alignment = estimate_playback_reference_alignment(
             times,
             display_signals.get("display_lean_deg") or playback_signals.get("lean_deg") or [],
             display_signals.get("display_long_g") or playback_signals.get("long_g") or [],
@@ -273,13 +291,21 @@ class SessionExporter:
             playback_config,
         )
         gps_lag_ms = int(reference_alignment.get("gps_lag_ms_applied", playback_config.get("gpsLagMs", 0) or 0))
-        display_gps = self._build_display_gps_series(session, times, gps_lag_ms)
-        gps_lean_ref = self._apply_reference_sign(
-            self._shift_series_by_lag(times, gps_references.get("gps_lean_deg", []), gps_lag_ms),
+        path_trim_ms = int(playback_config.get("pathTrimMs", 0) or 0)
+        path_offset_ms = gps_lag_ms + path_trim_ms
+        raw_gps = {
+            "lat": [round(sample.gps.lat, 6) if getattr(sample, "gps_is_valid", True) else None for sample in session.samples],
+            "lon": [round(sample.gps.lon, 6) if getattr(sample, "gps_is_valid", True) else None for sample in session.samples],
+            "speed": [round(sample.gps.speed, 1) if getattr(sample, "gps_is_valid", True) else None for sample in session.samples],
+        }
+        aligned_gps = build_aligned_gps_series_from_rows(times, raw_gps, path_offset_ms)
+        display_gps = build_display_gps_series_from_rows(times, raw_gps, path_offset_ms)
+        gps_lean_ref = apply_reference_sign(
+            shift_series_by_lag(times, gps_references.get("gps_lean_deg", []), gps_lag_ms),
             reference_alignment.get("gps_lean_ref_sign", 1),
         )
-        gps_long_ref = self._apply_reference_sign(
-            self._shift_series_by_lag(times, gps_references.get("gps_long_g", []), gps_lag_ms),
+        gps_long_ref = apply_reference_sign(
+            shift_series_by_lag(times, gps_references.get("gps_long_g", []), gps_lag_ms),
             reference_alignment.get("gps_long_ref_sign", 1),
         )
         lap_start_indices = self._nearest_time_indices(times, [lap.get("start_time") for lap in laps])
@@ -313,6 +339,9 @@ class SessionExporter:
                 "lon": lon,
                 "speed_kmh": speed,
                 "heading_deg": headings[index],
+                "imu_lean_base_deg": self._signal_value(base_signals.get("lean_deg"), index, 1),
+                "imu_long_base_g": self._signal_value(base_signals.get("long_g"), index, 3),
+                "imu_lat_base_g": self._signal_value(base_signals.get("lat_g"), index, 3),
                 "lean_deg": self._signal_value(playback_signals.get("lean_deg"), index, 1),
                 "long_g": self._signal_value(playback_signals.get("long_g"), index, 3),
                 "lat_g": self._signal_value(playback_signals.get("lat_g"), index, 3),
@@ -322,6 +351,10 @@ class SessionExporter:
                 "display_lon": self._series_value(display_gps["lon"], index, 6),
                 "display_speed_kmh": self._series_value(display_gps["speed"], index, 1),
                 "display_heading_deg": self._series_value(display_gps["heading"], index, 1),
+                "aligned_lat": self._series_value(aligned_gps["lat"], index, 6),
+                "aligned_lon": self._series_value(aligned_gps["lon"], index, 6),
+                "aligned_speed_kmh": self._series_value(aligned_gps["speed"], index, 1),
+                "aligned_heading_deg": self._series_value(aligned_gps["heading"], index, 1),
                 "display_lean_deg": self._signal_value(display_signals.get("display_lean_deg"), index, 1),
                 "display_long_g": self._signal_value(display_signals.get("display_long_g"), index, 3),
                 "display_lat_g": self._signal_value(display_signals.get("display_lat_g"), index, 3),
@@ -333,6 +366,8 @@ class SessionExporter:
                 "sector_end": index in sector_end_indices,
                 "gps_is_fix": bool(getattr(sample, "gps_is_fix", True)),
                 "gps_is_valid": bool(getattr(sample, "gps_is_valid", True)),
+                "gps_lean_base_deg": self._signal_value(gps_references.get("gps_lean_deg"), index, 1),
+                "gps_long_base_g": self._signal_value(gps_references.get("gps_long_g"), index, 3),
                 "gps_lean_ref_deg": self._signal_value(gps_lean_ref, index, 1),
                 "gps_long_ref_g": self._signal_value(gps_long_ref, index, 3),
                 "gps_lag_ms_applied": gps_lag_ms,

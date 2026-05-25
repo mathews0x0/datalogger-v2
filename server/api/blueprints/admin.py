@@ -5,6 +5,7 @@ import shutil
 from api.models import db, User, SessionMeta, TrackMeta, Team, TeamMember, GlobalTrack, UnmatchedTrackReport, AppSetting
 from api.decorators import admin_required
 from api.track_catalog import TrackPackageError, upsert_global_track_package
+from api.playback_tuner_service import get_playback_tuner_state, preview_playback_patch, preview_playback_payload, save_playback_tuner_state
 import api.config as config
 
 admin_bp = Blueprint('admin', __name__, url_prefix='/api/admin')
@@ -280,6 +281,47 @@ def admin_update_default_sector_count():
         "success": True,
         "default_sector_count": value,
     })
+
+
+@admin_bp.route('/playback-tuner', methods=['GET'])
+@admin_required
+def admin_get_playback_tuner():
+    return jsonify(get_playback_tuner_state())
+
+
+@admin_bp.route('/playback-tuner', methods=['PUT'])
+@admin_required
+def admin_update_playback_tuner():
+    data = request.get_json() or {}
+    enabled = bool(data.get('enabled', False))
+    tune = data.get('active_tune') if isinstance(data.get('active_tune'), dict) else data.get('tune')
+    try:
+        return jsonify(save_playback_tuner_state(enabled, tune))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@admin_bp.route('/playback-tuner/preview', methods=['POST'])
+@admin_required
+def admin_preview_playback_tuner():
+    data = request.get_json() or {}
+    session_id = (data.get('session_id') or '').strip()
+    tune = data.get('tune') or {}
+    start_index = data.get('start_index')
+    end_index = data.get('end_index')
+    if not session_id:
+        return jsonify({"error": "session_id is required"}), 400
+    session_meta = SessionMeta.query.filter_by(session_id=session_id).first()
+    if not session_meta:
+        return jsonify({"error": "Session not found"}), 404
+    playback_path = config.get_user_sessions_dir(session_meta.user_id) / f"{session_id}_playback.json"
+    try:
+        payload = preview_playback_patch(playback_path, tune, start_index=start_index, end_index=end_index)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if payload is None:
+        return jsonify({"error": "Playback data not found"}), 404
+    return jsonify(payload)
 
 @admin_bp.route('/tracks/package', methods=['POST'])
 @admin_required

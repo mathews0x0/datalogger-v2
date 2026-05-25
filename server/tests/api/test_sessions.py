@@ -7,7 +7,7 @@ from flask_jwt_extended import create_access_token
 # Add server directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
 
-from api.models import db, User, SessionMeta, TrackMeta
+from api.models import db, User, SessionMeta, TrackMeta, AppSetting
 import api.config as config
 
 @pytest.fixture
@@ -42,6 +42,36 @@ def client(app):
             sessions_dir.mkdir(parents=True, exist_ok=True)
             with open(sessions_dir / 'test-session-123.json', 'w') as f:
                 json.dump({'meta': {'session_name': 'Test Session'}}, f)
+            with open(sessions_dir / 'test-session-123_playback.json', 'w') as f:
+                json.dump({
+                    'config': {'leanSign': -1, 'smoothingSamples': 5, 'longitudinalGain': 0.85, 'gpsLagMs': 1800, 'graphLeanDisplaySign': -1},
+                    'meta': {'gps_lag_ms_applied': 1800},
+                    'rows': [
+                        {
+                            'time': 0.0,
+                            'lat': 10.0,
+                            'lon': 77.0,
+                            'speed_kmh': 100.0,
+                            'lean_deg': -5.0,
+                            'long_g': 0.2,
+                            'lat_g': 0.1,
+                            'display_lean_deg': -5.0,
+                            'display_long_g': 0.2,
+                            'display_lat_g': 0.1,
+                            'display_lat': 10.0,
+                            'display_lon': 77.0,
+                            'display_speed_kmh': 100.0,
+                            'imu_lean_base_deg': -5.0,
+                            'imu_long_base_g': 0.2,
+                            'imu_lat_base_g': 0.1,
+                            'gps_lean_base_deg': 4.0,
+                            'gps_long_base_g': -0.2,
+                            'gps_is_valid': True,
+                            'gps_is_fix': True,
+                        }
+                    ],
+                    'laps': [],
+                }, f)
             tracks_dir = config.get_user_tracks_dir(user.id) / 'test_track_101'
             tracks_dir.mkdir(parents=True, exist_ok=True)
             with open(tracks_dir / 'tbl.json', 'w') as f:
@@ -112,3 +142,15 @@ def test_delete_last_session_resets_tbl(client, app):
     with app.app_context():
         tracks_dir = config.get_user_tracks_dir(1) / 'test_track_101'
         assert not (tracks_dir / 'tbl.json').exists()
+
+
+def test_get_playback_uses_saved_tune_only_when_enabled(client, app):
+    with app.app_context():
+        db.session.add(AppSetting(key='playback_tuner_enabled', value='true'))
+        db.session.add(AppSetting(key='playback_tuner_active_tune', value='{"leanSign":1,"leanOffsetDeg":2,"smoothingSamples":1,"longitudinalGain":1.5,"gpsLagMs":1800,"graphLeanDisplaySign":1}'))
+        db.session.commit()
+
+    resp = client.get('/api/sessions/test-session-123/playback')
+    assert resp.status_code == 200
+    assert resp.json['meta']['tune_source'] == 'saved'
+    assert resp.json['rows'][0]['display_lean_deg'] == -3.0

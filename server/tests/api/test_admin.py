@@ -31,6 +31,49 @@ def client(app):
             db.session.add(normal)
             
             db.session.commit()
+
+            session_meta = SessionMeta(
+                session_id='admin-playback-session',
+                user_id=normal.id,
+                session_name='Admin Playback Session',
+                is_public=False,
+                track_id=101,
+            )
+            db.session.add(session_meta)
+            db.session.commit()
+
+            sessions_dir = config.get_user_sessions_dir(normal.id)
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+            with open(sessions_dir / 'admin-playback-session_playback.json', 'w') as f:
+                json.dump({
+                    'config': {'leanSign': -1, 'smoothingSamples': 5, 'longitudinalGain': 0.85, 'gpsLagMs': 1800, 'graphLeanDisplaySign': -1},
+                    'meta': {'gps_lag_ms_applied': 1800},
+                    'rows': [
+                        {
+                            'time': 0.0,
+                            'lat': 10.0,
+                            'lon': 77.0,
+                            'speed_kmh': 100.0,
+                            'lean_deg': -5.0,
+                            'long_g': 0.2,
+                            'lat_g': 0.1,
+                            'display_lean_deg': -5.0,
+                            'display_long_g': 0.2,
+                            'display_lat_g': 0.1,
+                            'display_lat': 10.0,
+                            'display_lon': 77.0,
+                            'display_speed_kmh': 100.0,
+                            'imu_lean_base_deg': -5.0,
+                            'imu_long_base_g': 0.2,
+                            'imu_lat_base_g': 0.1,
+                            'gps_lean_base_deg': 4.0,
+                            'gps_long_base_g': -0.2,
+                            'gps_is_valid': True,
+                            'gps_is_fix': True,
+                        }
+                    ],
+                    'laps': [],
+                }, f)
             
             # Set jwt cookie on the client
             admin_token = create_access_token(identity=str(admin.id))
@@ -94,6 +137,66 @@ def test_admin_can_update_default_sector_count(client, app):
         setting = AppSetting.query.filter_by(key=config.DEFAULT_SECTOR_COUNT_SETTING_KEY).first()
         assert setting is not None
         assert setting.value == '5'
+
+
+def test_admin_can_manage_playback_tuner_settings(client, app):
+    resp = client.get('/api/admin/playback-tuner')
+    assert resp.status_code == 200
+    assert resp.json['enabled'] is False
+    assert resp.json['default_tune']['gpsLagMs'] == 1800
+
+    resp = client.put('/api/admin/playback-tuner', json={
+        'enabled': True,
+        'active_tune': {
+            'leanSign': 1,
+            'leanOffsetDeg': 2,
+            'smoothingSamples': 1,
+            'longitudinalGain': 1.5,
+            'gpsLagMs': 1700,
+            'graphLeanDisplaySign': 1,
+        }
+    })
+    assert resp.status_code == 200
+    assert resp.json['enabled'] is True
+    assert resp.json['active_tune']['gpsLagMs'] == 1700
+
+    preview = client.post('/api/admin/playback-tuner/preview', json={
+        'session_id': 'admin-playback-session',
+        'tune': {
+            'leanSign': 1,
+            'leanOffsetDeg': 2,
+            'smoothingSamples': 1,
+            'longitudinalGain': 1.5,
+            'gpsLagMs': 1700,
+            'graphLeanDisplaySign': 1,
+        }
+    })
+    assert preview.status_code == 200
+    assert preview.json['kind'] == 'playback_tune_patch'
+    assert preview.json['meta']['tune_source'] == 'preview'
+    assert preview.json['start_index'] == 0
+    assert preview.json['columns']['display_lean_deg'][0] == -3.0
+
+
+def test_admin_playback_tuner_save_ignores_stale_extra_keys(client, app):
+    resp = client.put('/api/admin/playback-tuner', json={
+        'enabled': True,
+        'active_tune': {
+            'leanSign': 1,
+            'leanOffsetDeg': 2,
+            'smoothingSamples': 1,
+            'longitudinalGain': 1.5,
+            'gpsLagMs': 1700,
+            'graphLeanDisplaySign': 1,
+            'gpsLeanLagMs': 2400,
+            'gpsLongLagMs': 2600,
+            'unexpectedMetaKey': 'stale',
+        }
+    })
+    assert resp.status_code == 200
+    assert resp.json['active_tune']['gpsLagMs'] == 1700
+    assert 'gpsLeanLagMs' not in resp.json['active_tune']
+    assert 'gpsLongLagMs' not in resp.json['active_tune']
 
 def test_admin_upload_track_package(client):
     package = {

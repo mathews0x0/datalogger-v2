@@ -488,7 +488,7 @@ class AdvancedIMUProcessor:
                     },
                 }
                 gps_only["primary_validation"] = calibrated["validation"]
-                gps_only["playback_signals"] = self._build_playback_signal_payload(calibrated)
+                gps_only["playback_signals"] = self._build_playback_signal_payload(gps_only)
                 gps_only["gps_references"] = gps_reference
                 if gps_only["validation"]["score"] > calibrated["validation"]["score"]:
                     return gps_only
@@ -508,17 +508,6 @@ class AdvancedIMUProcessor:
         self.rot_Y = mount["rotation_matrix"][1]
         self.rot_Z = mount["rotation_matrix"][2]
         self.gx_bias, self.gy_bias, self.gz_bias = mount["gyro_bias"]
-        playback_imu = self._compute_mount_locked_outputs(
-            timestamps=timestamps,
-            ax_raw=ax_raw,
-            ay_raw=ay_raw,
-            az_raw=az_raw,
-            gx_raw=gx_raw,
-            gy_raw=gy_raw,
-            gz_raw=gz_raw,
-            mount=mount,
-        )
-
         primary = self._compute_orientation_outputs(
             timestamps=timestamps,
             ax_raw=ax_raw,
@@ -588,7 +577,7 @@ class AdvancedIMUProcessor:
             "candidate_scores": {name: candidate["validation"]["score"] for name, candidate in evaluated},
             "candidate_pass": {name: candidate["validation"]["passed"] for name, candidate in evaluated},
         }
-        selected["playback_signals"] = self._build_playback_signal_payload(playback_imu)
+        selected["playback_signals"] = self._build_playback_signal_payload(selected)
         selected["gps_references"] = gps_reference
         if selected_name != "orientation_solver":
             selected["primary_validation"] = primary["validation"]

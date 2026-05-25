@@ -8,6 +8,7 @@ from src.analysis.core.track_manager import TrackManager
 from src.analysis.core.track_generator import TrackGenerator
 from src.analysis.core.tbl_manager import TBLManager
 from src.analysis.core.session_exporter import SessionExporter
+from src.analysis.core.playback_tuner import build_playback_dataset_from_imu, get_default_playback_tune
 from src.analysis.processing.laps import LapDetector, StartLine
 from src.analysis.processing.stats import StatsEngine
 from src.analysis.core.registry_manager import RegistryManager
@@ -23,24 +24,7 @@ class SessionProcessor:
     OUTPUT: Updated Artifacts (Tracks, TBL, Session JSON)
     """
 
-    PLAYBACK_TUNE = {
-        "gyroScale": 0.04,
-        "smoothingSamples": 5,
-        "accelBlendMode": "soft",
-        "accelCorrectionStrong": 0.0,
-        "accelCorrectionWeak": 0.009,
-        "leanOffsetDeg": 0.0,
-        "leanSign": -1,
-        "longitudinalGain": 0.85,
-        "gpsLagMs": 1800,
-        "gpsLagAutoEnabled": True,
-        "gpsLagMinMs": 1200,
-        "gpsLagMaxMs": 2200,
-        "gpsLagStepMs": 50,
-        "gpsLagMinImprovement": 0.2,
-        "gpsLeanRefSign": 1,
-        "gpsLongRefSign": -1,
-    }
+    PLAYBACK_TUNE = get_default_playback_tune()
 
     def __init__(self, output_dir=None, tracks_dir=None):
         self.log = get_logger("analysis")
@@ -150,42 +134,8 @@ class SessionProcessor:
                 "brake_g": list(imu_results.get("braking_g", [])),
             }
 
-        smoothing = int(cls.PLAYBACK_TUNE["smoothingSamples"])
-        lean_sign = -1.0 if float(cls.PLAYBACK_TUNE.get("leanSign", 1) or 1) < 0 else 1.0
-        raw_lean = [
-            (float(value or 0.0) * lean_sign) + float(cls.PLAYBACK_TUNE["leanOffsetDeg"])
-            for value in playback_signals.get("lean_deg", [])
-        ]
-        lean = cls._moving_average(raw_lean, smoothing)
-        long_g = cls._moving_average(playback_signals.get("long_g", []), smoothing)
-        lat_g = cls._moving_average(playback_signals.get("lat_g", []), smoothing)
-        long_gain = float(cls.PLAYBACK_TUNE["longitudinalGain"])
-        long_g = [round(value * long_gain, 3) for value in long_g]
-        accel_g = [round(max(value, 0.0), 3) for value in long_g]
-        brake_g = [round(abs(min(value, 0.0)), 3) for value in long_g]
-        lean = [round(value, 1) for value in lean]
-        lat_g = [round(value, 3) for value in lat_g]
-
         gps_references = imu_results.get("gps_references") or {}
-        return {
-            "config": dict(cls.PLAYBACK_TUNE),
-            "signals": {
-                "lean_deg": lean,
-                "long_g": long_g,
-                "lat_g": lat_g,
-                "accel_g": accel_g,
-                "brake_g": brake_g,
-            },
-            "display_signals": {
-                "display_lean_deg": lean,
-                "display_long_g": long_g,
-                "display_lat_g": lat_g,
-            },
-            "gps_references": {
-                "gps_lean_deg": list(gps_references.get("gps_lean_deg", [])),
-                "gps_long_g": list(gps_references.get("gps_long_g", [])),
-            },
-        }
+        return build_playback_dataset_from_imu(playback_signals, gps_references, cls.PLAYBACK_TUNE)
 
     @classmethod
     def _build_playback_laps(cls, session, track_info, official_laps):

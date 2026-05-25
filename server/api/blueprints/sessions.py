@@ -14,6 +14,7 @@ from api.models import db, User, SessionMeta, TrackMeta, TeamMember
 from api.decorators import require_tier, local_only
 import api.config as config
 from api.helpers import get_track_folder
+from api.playback_tuner_service import build_effective_playback_lap_chunk, build_effective_playback_payload, build_playback_manifest, compact_playback_payload, load_playback_payload
 from api.track_catalog import get_track_display_name, resolve_track
 from api.blueprints.tracks import clear_user_track_tbl_if_no_sessions
 
@@ -189,9 +190,62 @@ def get_session_playback(session_id):
     playback_file = sessions_dir / f"{session_id}_playback.json"
 
     if playback_file.exists():
-        return send_file(playback_file, mimetype='application/json')
+        if request.args.get('base') in {'1', 'true', 'yes'}:
+            if request.args.get('compact') in {'1', 'true', 'yes'}:
+                payload = load_playback_payload(playback_file)
+                if payload is None:
+                    return jsonify({"error": "Playback data not found"}), 404
+                return jsonify(compact_playback_payload(payload))
+            return send_file(playback_file, mimetype='application/json')
+        payload = build_effective_playback_payload(playback_file)
+        if payload is None:
+            return jsonify({"error": "Playback data not found"}), 404
+        return jsonify(payload)
 
     return jsonify({"error": "Playback data not found"}), 404
+
+
+@sessions_bp.route('/api/sessions/<path:session_id>/playback/manifest')
+def get_session_playback_manifest(session_id):
+    """Get lightweight playback manifest with downsampled overview path."""
+    try:
+        verify_jwt_in_request(optional=True)
+    except:
+        pass
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({"error": "Access denied"}), 401
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+    playback_file = config.get_user_sessions_dir(s_meta.user_id) / f"{session_id}_playback.json"
+    payload = load_playback_payload(playback_file)
+    if payload is None:
+        return jsonify({"error": "Playback data not found"}), 404
+    return jsonify(build_playback_manifest(payload))
+
+
+@sessions_bp.route('/api/sessions/<path:session_id>/playback/laps/<int:lap_number>')
+def get_session_playback_lap(session_id, lap_number):
+    """Get full-resolution playback rows for one lap."""
+    try:
+        verify_jwt_in_request(optional=True)
+    except:
+        pass
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({"error": "Access denied"}), 401
+    s_meta = SessionMeta.query.filter_by(session_id=session_id, user_id=int(user_id)).first()
+    if not s_meta:
+        return jsonify({"error": "Session not found"}), 404
+    playback_file = config.get_user_sessions_dir(s_meta.user_id) / f"{session_id}_playback.json"
+    payload = load_playback_payload(playback_file)
+    if payload is None:
+        return jsonify({"error": "Playback data not found"}), 404
+    chunk = build_effective_playback_lap_chunk(payload, lap_number)
+    if chunk is None:
+        return jsonify({"error": "Lap playback data not found"}), 404
+    return jsonify(chunk)
 
 @sessions_bp.route('/api/sessions/<path:session_id>/privacy', methods=['PUT'])
 @jwt_required()

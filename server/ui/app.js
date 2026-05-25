@@ -6563,7 +6563,12 @@ let pbState = {
     active: false,
     playing: false,
     data: null,
+    rawPlaybackPayload: null,
+    playbackManifest: null,
+    lapCache: {},
+    activeLapChunk: null,
     session: null,
+    sessionId: null,
     currentIndex: 0,
     startTime: 0,
     duration: 0,
@@ -6586,11 +6591,66 @@ let pbState = {
     canonicalLayout: null,
     layoutImage: null,
     projectedPoints: null,
+    alignedProjectedPoints: null,
     displayProjectedPoints: null,
-    renderedLapKey: null
+    renderedLapKey: null,
+    pathSource: 'aligned',
+    localLagDiagnostics: null,
+    tuner: {
+        visible: false,
+        enabled: false,
+        activeTune: null,
+        savedTune: null,
+        defaultTune: null,
+        previewSeq: 0,
+        previewTimer: null,
+        previewPending: false,
+    }
 };
 
 function normalizePlaybackData(playbackPayload, fallbackLaps = []) {
+    if (['playback_columns', 'playback_manifest', 'playback_lap_chunk'].includes(playbackPayload?.kind) && playbackPayload.columns) {
+        const columns = playbackPayload.columns;
+        const laps = Array.isArray(playbackPayload?.laps) ? playbackPayload.laps : fallbackLaps;
+        const hasSeriesValues = (series) => Array.isArray(series) && series.some(value => value != null && Number.isFinite(Number(value)));
+        const alignedLat = hasSeriesValues(columns.aligned_lat) ? columns.aligned_lat : (columns.display_lat || columns.lat || []);
+        const alignedLon = hasSeriesValues(columns.aligned_lon) ? columns.aligned_lon : (columns.display_lon || columns.lon || []);
+        const alignedSpeed = hasSeriesValues(columns.aligned_speed) ? columns.aligned_speed : (columns.display_speed || columns.speed || []);
+        const alignedHeading = hasSeriesValues(columns.aligned_heading_deg) ? columns.aligned_heading_deg : (columns.display_heading_deg || columns.heading_deg || []);
+        return {
+            ...columns,
+            aligned_lat: alignedLat,
+            aligned_lon: alignedLon,
+            aligned_speed: alignedSpeed,
+            aligned_heading_deg: alignedHeading,
+            gps_lag_ms_applied: playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+            gps_lean_lag_ms_applied: playbackPayload?.meta?.gps_lean_lag_ms_applied ?? playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+            gps_long_lag_ms_applied: playbackPayload?.meta?.gps_long_lag_ms_applied ?? playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+            gps_lag_source: playbackPayload?.meta?.gps_lag_source ?? 'configured',
+            gps_lag_score: playbackPayload?.meta?.gps_lag_score ?? null,
+            alignment_confidence: playbackPayload?.meta?.alignment_confidence ?? playbackPayload?.meta?.gps_lag_score ?? null,
+            alignment_lean_points: playbackPayload?.meta?.alignment_lean_points ?? null,
+            alignment_long_points: playbackPayload?.meta?.alignment_long_points ?? null,
+            alignment_frame_points: playbackPayload?.meta?.alignment_frame_points ?? null,
+            alignment_frame_laps: playbackPayload?.meta?.alignment_frame_laps ?? null,
+            alignment_frame_label: playbackPayload?.meta?.alignment_frame_label ?? null,
+            gps_lag_configured_ms: playbackPayload?.meta?.gps_lag_configured_ms ?? playbackPayload?.config?.gpsLagMs ?? 0,
+            alignment_mode: playbackPayload?.meta?.alignment_mode ?? playbackPayload?.config?.alignmentMode ?? 'single_lag',
+            path_trim_ms: playbackPayload?.meta?.path_trim_ms ?? playbackPayload?.config?.pathTrimMs ?? 0,
+            gps_lean_ref_sign: playbackPayload?.meta?.gps_lean_ref_sign ?? 1,
+            gps_long_ref_sign: playbackPayload?.meta?.gps_long_ref_sign ?? 1,
+            graph_lean_display_sign: playbackPayload?.meta?.graph_lean_display_sign ?? ((playbackPayload?.config?.flipLean ?? false) ? -1 : 1),
+            active_tune: playbackPayload?.meta?.active_tune ?? playbackPayload?.config ?? null,
+            tune_source: playbackPayload?.meta?.tune_source ?? 'default',
+            tuner_feature_enabled: Boolean(playbackPayload?.meta?.tuner_feature_enabled),
+            start_index: playbackPayload?.start_index ?? 0,
+            end_index: playbackPayload?.end_index ?? (columns.time?.length || 0),
+            global_row_count: playbackPayload?.row_count ?? columns.time?.length ?? 0,
+            row_index: columns.row_index || columns.time?.map((_, index) => index) || [],
+            laps,
+            rowCount: columns.time?.length || 0,
+        };
+    }
     const rows = Array.isArray(playbackPayload?.rows) ? playbackPayload.rows : [];
     const laps = Array.isArray(playbackPayload?.laps) ? playbackPayload.laps : fallbackLaps;
     return {
@@ -6608,6 +6668,10 @@ function normalizePlaybackData(playbackPayload, fallbackLaps = []) {
         display_lon: rows.map(row => row.display_lon ?? row.lon),
         display_speed: rows.map(row => row.display_speed_kmh ?? row.speed_kmh),
         display_heading_deg: rows.map(row => row.display_heading_deg ?? row.heading_deg),
+        aligned_lat: rows.map(row => row.aligned_lat ?? row.display_lat ?? row.lat),
+        aligned_lon: rows.map(row => row.aligned_lon ?? row.display_lon ?? row.lon),
+        aligned_speed: rows.map(row => row.aligned_speed_kmh ?? row.display_speed_kmh ?? row.speed_kmh),
+        aligned_heading_deg: rows.map(row => row.aligned_heading_deg ?? row.display_heading_deg ?? row.heading_deg),
         display_lean_deg: rows.map(row => row.display_lean_deg ?? row.lean_deg),
         display_long_g: rows.map(row => row.display_long_g ?? row.long_g),
         display_lat_g: rows.map(row => row.display_lat_g ?? row.lat_g),
@@ -6622,11 +6686,29 @@ function normalizePlaybackData(playbackPayload, fallbackLaps = []) {
         gps_lean_ref_deg: rows.map(row => row.gps_lean_ref_deg),
         gps_long_ref_g: rows.map(row => row.gps_long_ref_g),
         gps_lag_ms_applied: playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+        gps_lean_lag_ms_applied: playbackPayload?.meta?.gps_lean_lag_ms_applied ?? playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
+        gps_long_lag_ms_applied: playbackPayload?.meta?.gps_long_lag_ms_applied ?? playbackPayload?.meta?.gps_lag_ms_applied ?? playbackPayload?.config?.gpsLagMs ?? 0,
         gps_lag_source: playbackPayload?.meta?.gps_lag_source ?? 'configured',
         gps_lag_score: playbackPayload?.meta?.gps_lag_score ?? null,
+        alignment_confidence: playbackPayload?.meta?.alignment_confidence ?? playbackPayload?.meta?.gps_lag_score ?? null,
+        alignment_lean_points: playbackPayload?.meta?.alignment_lean_points ?? null,
+        alignment_long_points: playbackPayload?.meta?.alignment_long_points ?? null,
+        alignment_frame_points: playbackPayload?.meta?.alignment_frame_points ?? null,
+        alignment_frame_laps: playbackPayload?.meta?.alignment_frame_laps ?? null,
+        alignment_frame_label: playbackPayload?.meta?.alignment_frame_label ?? null,
         gps_lag_configured_ms: playbackPayload?.meta?.gps_lag_configured_ms ?? playbackPayload?.config?.gpsLagMs ?? 0,
+        alignment_mode: playbackPayload?.meta?.alignment_mode ?? playbackPayload?.config?.alignmentMode ?? 'single_lag',
+        path_trim_ms: playbackPayload?.meta?.path_trim_ms ?? playbackPayload?.config?.pathTrimMs ?? 0,
         gps_lean_ref_sign: playbackPayload?.meta?.gps_lean_ref_sign ?? 1,
         gps_long_ref_sign: playbackPayload?.meta?.gps_long_ref_sign ?? 1,
+        graph_lean_display_sign: playbackPayload?.meta?.graph_lean_display_sign ?? ((playbackPayload?.config?.flipLean ?? false) ? -1 : 1),
+        active_tune: playbackPayload?.meta?.active_tune ?? playbackPayload?.config ?? null,
+        tune_source: playbackPayload?.meta?.tune_source ?? 'default',
+        tuner_feature_enabled: Boolean(playbackPayload?.meta?.tuner_feature_enabled),
+        start_index: playbackPayload?.start_index ?? 0,
+        end_index: playbackPayload?.end_index ?? rows.length,
+        global_row_count: playbackPayload?.row_count ?? rows.length,
+        row_index: rows.map((row, index) => row.row_index ?? index),
         laps,
         rowCount: rows.length,
     };
@@ -6651,6 +6733,10 @@ function buildPlaybackFromTelemetry(telemetry, fallbackLaps = []) {
             display_lon: telemetry.lon?.[i],
             display_speed_kmh: telemetry.speed?.[i],
             display_heading_deg: null,
+            aligned_lat: telemetry.lat?.[i],
+            aligned_lon: telemetry.lon?.[i],
+            aligned_speed_kmh: telemetry.speed?.[i],
+            aligned_heading_deg: null,
             display_lean_deg: telemetry.lean_angle?.[i] ?? null,
             display_long_g: telemetry.ax?.[i] ?? telemetry.raw_ax?.[i] ?? null,
             display_lat_g: telemetry.ay?.[i] ?? telemetry.raw_ay?.[i] ?? null,
@@ -6686,12 +6772,30 @@ async function openPlayback(sessionId, shareToken = null) {
         playing: false,
         currentIndex: 0,
         mapMode: 'speed',
+        pathSource: 'aligned',
         selectedLap: 'all',
+        rawPlaybackPayload: null,
+        playbackManifest: null,
+        lapCache: {},
+        activeLapChunk: null,
+        sessionId,
         canonicalLayout: null,
         layoutImage: null,
         projectedPoints: null,
+        alignedProjectedPoints: null,
         displayProjectedPoints: null,
-        renderedLapKey: null
+        renderedLapKey: null,
+        localLagDiagnostics: null,
+        tuner: {
+            visible: false,
+            enabled: false,
+            activeTune: null,
+            savedTune: null,
+            defaultTune: null,
+            previewSeq: 0,
+            previewTimer: null,
+            previewPending: false,
+        }
     };
 
     // 2. Show Modal (Loading)
@@ -6701,17 +6805,19 @@ async function openPlayback(sessionId, shareToken = null) {
     try {
         // 3. Fetch Data
         let endpoint = `/api/sessions/${sessionId}`;
-        let playbackEndpoint = `/api/sessions/${sessionId}/playback`;
+        let playbackEndpoint = `/api/sessions/${sessionId}/playback/manifest`;
 
         if (shareToken) {
             endpoint = `/api/shared/${shareToken}`;
             playbackEndpoint = `/api/shared/${shareToken}/playback`;
         }
 
-        const session = await apiCall(endpoint);
+        const sessionPromise = apiCall(endpoint);
+        const playbackPromise = apiCall(playbackEndpoint, { displayError: false });
+        const session = await sessionPromise;
         let playback = null;
         try {
-            playback = await apiCall(playbackEndpoint, { displayError: false });
+            playback = await playbackPromise;
         } catch (playbackError) {
             let telemetryEndpoint = `/api/sessions/${sessionId}/telemetry`;
             if (shareToken) {
@@ -6722,34 +6828,10 @@ async function openPlayback(sessionId, shareToken = null) {
         }
 
         pbState.session = session;
+        pbState.rawPlaybackPayload = playback;
+        pbState.playbackManifest = playback?.kind === 'playback_manifest' ? playback : null;
         pbState.data = normalizePlaybackData(playback, session.laps || []);
         pbState.laps = pbState.data.laps || session.laps || [];
-
-        if (session.track?.track_scope === 'global' && session.track?.has_canonical_layout) {
-            try {
-                pbState.canonicalLayout = await apiCall(`/api/tracks/${session.track.track_id}/layout`, { displayError: false });
-                const baseSvg = pbState.canonicalLayout?.preview_svg_data_url || pbState.canonicalLayout?.svg_data_url;
-                if (baseSvg) {
-                    pbState.layoutImage = await loadImageAsset(baseSvg);
-                }
-                pbState.projectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
-                    lats: pbState.data.lat || [],
-                    lons: pbState.data.lon || []
-                });
-                pbState.displayProjectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
-                    lats: pbState.data.display_lat || pbState.data.lat || [],
-                    lons: pbState.data.display_lon || pbState.data.lon || []
-                });
-            } catch (error) {
-                pbState.canonicalLayout = null;
-                pbState.layoutImage = null;
-                pbState.projectedPoints = null;
-                pbState.displayProjectedPoints = null;
-            }
-        }
-
-        // Load Annotations
-        loadAnnotations(sessionId);
 
         if (pbState.data.time && pbState.data.time.length > 0) {
             pbState.duration = pbState.data.time[pbState.data.time.length - 1] - pbState.data.time[0];
@@ -6760,8 +6842,9 @@ async function openPlayback(sessionId, shareToken = null) {
 
         // 4. Init UI
         initPlaybackUI();
+        renderPlaybackTunerPanel();
 
-        // 5. Pre-calculate Map
+        // 5. Draw immediately from display GPS. Layout/tuner metadata loads after first paint.
         fitTrackMap();
         if (playbackResizeHandler) {
             window.removeEventListener('resize', playbackResizeHandler);
@@ -6775,6 +6858,7 @@ async function openPlayback(sessionId, shareToken = null) {
 
         // 6. Ready
         togglePlayback(true);
+        loadPlaybackSideData(session, sessionId, shareToken);
 
     } catch (e) {
         console.error(e);
@@ -6783,9 +6867,105 @@ async function openPlayback(sessionId, shareToken = null) {
     }
 }
 
+async function loadPlaybackSideData(session, sessionId, shareToken = null) {
+    loadAnnotations(sessionId);
+    if (!shareToken) {
+        loadPlaybackTunerState();
+    }
+    setTimeout(() => {
+        loadPlaybackCanonicalLayout(session);
+    }, 0);
+}
+
+async function loadPlaybackTunerState() {
+    try {
+        const tunerState = await apiCall('/api/admin/playback-tuner', { displayError: false });
+        if (!pbState.active) return;
+        pbState.tuner.visible = true;
+        pbState.tuner.enabled = Boolean(tunerState?.enabled);
+        pbState.tuner.defaultTune = tunerState?.default_tune || null;
+        pbState.tuner.savedTune = tunerState?.active_tune || tunerState?.default_tune || null;
+        pbState.tuner.activeTune = tunerState?.active_tune || tunerState?.default_tune || null;
+        renderPlaybackTunerPanel();
+        if (pbState.tuner.enabled) {
+            schedulePlaybackTunerPreview();
+        }
+    } catch (error) {
+        if (!pbState.active) return;
+        pbState.tuner.visible = Boolean(currentUser?.is_admin);
+        pbState.tuner.defaultTune = playbackDefaultTunerTune();
+        pbState.tuner.savedTune = playbackDefaultTunerTune();
+        pbState.tuner.activeTune = playbackDefaultTunerTune();
+        renderPlaybackTunerPanel();
+    }
+}
+
+async function loadPlaybackCanonicalLayout(session) {
+    if (!pbState.active || !(session.track?.track_scope === 'global' && session.track?.has_canonical_layout)) return;
+    try {
+        const layout = await apiCall(`/api/tracks/${session.track.track_id}/layout`, { displayError: false });
+        if (!pbState.active) return;
+        const baseSvg = layout?.preview_svg_data_url || layout?.svg_data_url;
+        const image = baseSvg ? await loadImageAsset(baseSvg) : null;
+        if (!pbState.active) return;
+        if (!pbState.active) return;
+        pbState.canonicalLayout = layout;
+        pbState.layoutImage = image;
+        refreshPlaybackProjectedPoints();
+        fitTrackMap();
+        drawFrame();
+    } catch (error) {
+        pbState.canonicalLayout = null;
+        pbState.layoutImage = null;
+        pbState.projectedPoints = null;
+        pbState.displayProjectedPoints = null;
+    }
+}
+
+async function loadPlaybackLapChunk(lapNumber) {
+    if (!pbState.sessionId || !lapNumber || lapNumber === 'all') return null;
+    const key = String(lapNumber);
+    if (pbState.lapCache?.[key]) {
+        return pbState.lapCache[key];
+    }
+    const payload = await apiCall(`/api/sessions/${pbState.sessionId}/playback/laps/${encodeURIComponent(key)}`, { displayError: false });
+    const data = normalizePlaybackData(payload, pbState.session?.laps || []);
+    pbState.lapCache[key] = { payload, data };
+    return pbState.lapCache[key];
+}
+
+function activatePlaybackData(data, selectedLap) {
+    pbState.data = data;
+    pbState.selectedLap = selectedLap == null ? 'all' : String(selectedLap);
+    pbState.activeLapChunk = pbState.selectedLap === 'all' ? null : data;
+    pbState.pathCache = null;
+    pbState.renderedLapKey = null;
+    pbState.localLagDiagnostics = null;
+    if (data?.time?.length) {
+        pbState.startTime = data.time[0];
+        pbState.duration = data.time[data.time.length - 1] - data.time[0];
+        pbState.currentIndex = 0;
+        pbState.playbackTime = data.time[0];
+    }
+    const slider = document.getElementById('pbSeek');
+    if (slider && data?.time) {
+        slider.max = Math.max(0, data.time.length - 1);
+        slider.value = 0;
+    }
+    const sel = document.getElementById('pbLapSelect');
+    if (sel) sel.value = pbState.selectedLap;
+    refreshPlaybackProjectedPoints();
+    fitTrackMap();
+    drawFrame();
+}
+
 function closePlaybackModal() {
     pbState.active = false;
     pbState.playing = false;
+    if (pbState.tuner?.previewTimer) {
+        clearTimeout(pbState.tuner.previewTimer);
+        pbState.tuner.previewTimer = null;
+    }
     if (playbackResizeHandler) {
         window.removeEventListener('resize', playbackResizeHandler);
         playbackResizeHandler = null;
@@ -6793,6 +6973,380 @@ function closePlaybackModal() {
     document.getElementById('playbackModal').classList.remove('active');
     closePlaybackTimingModal();
     closePlaybackGraphModal();
+}
+
+function playbackTunerFieldDefs() {
+    return [
+        { key: 'gyroScale', label: 'Gyro Scale', kind: 'range', step: 0.001, min: 0, max: 0.12, unit: 'x', decimals: 3 },
+        { key: 'leanGaussianSigma', label: 'Lean Gaussian', kind: 'range', step: 0.25, min: 0, max: 20, unit: 'sigma', decimals: 2 },
+        { key: 'longGaussianSigma', label: 'Long Gaussian', kind: 'range', step: 0.25, min: 0, max: 20, unit: 'sigma', decimals: 2 },
+        { key: 'pathTrimMs', label: 'Path Lag Trim', kind: 'range', step: 25, min: -3000, max: 3000, unit: 'ms', decimals: 0 },
+        { key: 'flipLean', label: 'Flip Lean', kind: 'toggle' },
+        { key: 'flipForce', label: 'Flip Force', kind: 'toggle' },
+        { key: 'autoAlignEnabled', label: 'Auto Align', kind: 'toggle' },
+    ];
+}
+
+function playbackTunerPayload(tune) {
+    const source = tune || {};
+    const payload = {};
+    playbackTunerFieldDefs().forEach((field) => {
+        if (source[field.key] === undefined) return;
+        payload[field.key] = source[field.key];
+    });
+    return payload;
+}
+
+function playbackDefaultTunerTune() {
+    return {
+        gyroScale: 0.04,
+        leanGaussianSigma: 0,
+        longGaussianSigma: 0,
+        pathTrimMs: 0,
+        flipLean: false,
+        flipForce: false,
+        autoAlignEnabled: true,
+    };
+}
+
+function renderPlaybackAlignmentModeControl() {
+    const wrap = document.getElementById('playbackAlignmentModeCard');
+    const select = document.getElementById('playbackAlignmentModeSelect');
+    const trimWrap = document.getElementById('playbackPathTrimCard');
+    const trimSlider = document.getElementById('playbackPathTrimSlider');
+    const trimValue = document.getElementById('playbackPathTrimValue');
+    if (!wrap || !select || !trimWrap || !trimSlider || !trimValue) return;
+    wrap.style.display = 'none';
+    trimWrap.style.display = 'none';
+}
+
+function renderPlaybackTunerPanel() {
+    const card = document.getElementById('playbackGraphTunerPanel');
+    const fields = document.getElementById('playbackTunerFields');
+    const status = document.getElementById('playbackTunerStatus');
+    if (!card || !status || !fields) return;
+    if (!pbState.tuner?.visible) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'flex';
+    renderPlaybackAlignmentModeControl();
+    const tune = pbState.tuner.activeTune || pbState.tuner.savedTune || pbState.tuner.defaultTune || {};
+    fields.innerHTML = playbackTunerFieldDefs().map((field) => {
+        const value = tune[field.key] ?? '';
+        if (field.kind === 'select') {
+            return `
+                <label class="form-group" style="margin-bottom:12px; display:block;">
+                    <span class="help-text" style="display:block; margin-bottom:6px;">${field.label}</span>
+                    <select class="filter-select" style="width:100%;" onchange="updatePlaybackTunerField('${field.key}', this.value)">
+                        ${field.options.map((option) => `<option value="${option.value}" ${String(value) === String(option.value) ? 'selected' : ''}>${option.label}</option>`).join('')}
+                    </select>
+                </label>
+            `;
+        }
+        if (field.kind === 'toggle') {
+            return `
+                <label class="form-group" style="margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                    <span class="help-text">${field.label}</span>
+                    <input
+                        type="checkbox"
+                        ${value ? 'checked' : ''}
+                        onchange="updatePlaybackTunerField('${field.key}', this.checked)"
+                    />
+                </label>
+            `;
+        }
+        return `
+            <label class="form-group" style="margin-bottom:14px; display:block;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
+                    <span class="help-text">${field.label}</span>
+                    <strong id="playbackTunerValue_${field.key}" style="font-size:0.82rem; color:#f5f5f5;">${playbackTunerFormatValue(field, value)}</strong>
+                </div>
+                <input
+                    type="range"
+                    min="${field.min}"
+                    max="${field.max}"
+                    step="${field.step}"
+                    value="${value}"
+                    style="width:100%; accent-color: var(--primary);"
+                    onchange="updatePlaybackTunerField('${field.key}', this.value)"
+                    oninput="updatePlaybackTunerField('${field.key}', this.value, true)"
+                />
+            </label>
+        `;
+    }).join('');
+    updatePlaybackTunerStatus();
+}
+
+function updatePlaybackTunerStatus() {
+    const status = document.getElementById('playbackTunerStatus');
+    if (!status) return;
+    if (pbState.tuner?.previewPending) {
+        status.textContent = 'Previewing...';
+    } else if (pbState.tuner?.previewError) {
+        status.textContent = 'Preview failed';
+    } else if (!pbState.tuner?.enabled) {
+        status.textContent = 'Admin preview only';
+    } else {
+        status.textContent = `Live preview ${pbState.data?.tune_source || 'default'}`;
+    }
+    renderPlaybackAlignmentModeControl();
+}
+
+function playbackTunerFormatValue(field, value) {
+    if (field.kind === 'toggle') {
+        return value ? 'On' : 'Off';
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '--';
+    const decimals = Number(field.decimals ?? 0);
+    const formatted = numeric.toFixed(decimals);
+    return field.unit ? `${formatted} ${field.unit}` : formatted;
+}
+
+function updatePlaybackTunerField(key, rawValue, liveOnly = false) {
+    if (!pbState.tuner?.visible) return;
+    const defs = playbackTunerFieldDefs();
+    const field = defs.find(item => item.key === key);
+    if (!field) return;
+    let value = rawValue;
+    if (field.kind === 'toggle') {
+        value = Boolean(rawValue);
+    } else if (field.kind !== 'select' || rawValue === '-1' || rawValue === '1') {
+        const numeric = Number(rawValue);
+        if (!Number.isFinite(numeric)) return;
+        value = field.step === 1 ? Math.round(numeric) : numeric;
+    }
+    pbState.tuner.activeTune = {
+        ...(pbState.tuner.activeTune || pbState.tuner.savedTune || pbState.tuner.defaultTune || {}),
+        [key]: value,
+    };
+    if (field.kind === 'range') {
+        const label = document.getElementById(`playbackTunerValue_${key}`);
+        if (label) label.textContent = playbackTunerFormatValue(field, value);
+    } else if (!liveOnly) {
+        renderPlaybackTunerPanel();
+    }
+    schedulePlaybackTunerPreview();
+}
+
+function schedulePlaybackTunerPreview() {
+    if (!pbState.sessionId || !pbState.tuner?.visible) return;
+    if (pbState.tuner.previewTimer) clearTimeout(pbState.tuner.previewTimer);
+    pbState.tuner.previewPending = true;
+    pbState.tuner.previewError = false;
+    updatePlaybackTunerStatus();
+    pbState.tuner.previewTimer = setTimeout(() => {
+        runPlaybackTunerPreview();
+    }, 80);
+}
+
+async function runPlaybackTunerPreview() {
+    if (!pbState.sessionId || !pbState.tuner?.visible) return;
+    const seq = (pbState.tuner.previewSeq || 0) + 1;
+    pbState.tuner.previewSeq = seq;
+    const tune = playbackTunerPayload(pbState.tuner.activeTune || pbState.tuner.savedTune || pbState.tuner.defaultTune || {});
+    const bounds = playbackPreviewPatchBounds();
+    try {
+        const payload = await apiCall('/api/admin/playback-tuner/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: pbState.sessionId,
+                tune,
+                start_index: bounds.startIndex,
+                end_index: bounds.endIndex,
+            }),
+            displayError: false,
+        });
+        if (seq !== pbState.tuner.previewSeq || !payload) return;
+        if (payload.kind === 'playback_tune_patch') {
+            applyPlaybackTunePatch(payload);
+        } else {
+            pbState.data = normalizePlaybackData(payload, pbState.session.laps || []);
+            pbState.laps = pbState.data.laps || pbState.session.laps || [];
+            pbState.duration = pbState.data.time[pbState.data.time.length - 1] - pbState.data.time[0];
+        }
+        pbState.tuner.previewPending = false;
+        pbState.tuner.previewError = false;
+        updatePlaybackTunerStatus();
+        if (document.getElementById('playbackGraphModal')?.classList.contains('active')) {
+            updatePlaybackGraphMeta();
+        }
+        drawFrame();
+        if (document.getElementById('playbackGraphModal')?.classList.contains('active')) {
+            drawPlaybackComparisonGraph();
+        }
+    } catch (error) {
+        if (seq !== pbState.tuner.previewSeq) return;
+        pbState.tuner.previewPending = false;
+        pbState.tuner.previewError = true;
+        updatePlaybackTunerStatus();
+    }
+}
+
+function playbackPreviewPatchBounds() {
+    const data = pbState.data;
+    if (!data?.time?.length) return { startIndex: 0, endIndex: 0 };
+    if (pbState.selectedLap && pbState.selectedLap !== 'all') {
+        const start = Number(data.start_index || 0);
+        const end = Number(data.end_index || (start + data.time.length));
+        return { startIndex: start, endIndex: end };
+    }
+    const rowLapNumber = data.lap_number?.[pbState.currentIndex];
+    const activeLap = rowLapNumber ? playbackLapByNumber(rowLapNumber) : playbackLapForTime(data.time[pbState.currentIndex]);
+    if (activeLap) {
+        const range = pbState.playbackManifest?.lap_ranges?.find(item => Number(item.lap_number) === Number(activeLap.lap_number));
+        if (range) return { startIndex: range.start_index, endIndex: range.end_index };
+    }
+    const start = Number(data.start_index || 0);
+    const end = Number(data.end_index || (start + data.time.length));
+    return { startIndex: start, endIndex: end };
+}
+
+function applyPlaybackTunePatch(payload) {
+    const dataStart = Number(pbState.data?.start_index || 0);
+    const start = Math.max(0, Number(payload.start_index || 0) - dataStart);
+    const columns = payload.columns || {};
+    Object.entries(columns).forEach(([key, values]) => {
+        if (!Array.isArray(values)) return;
+        if (!Array.isArray(pbState.data[key])) return;
+        for (let offset = 0; offset < values.length; offset += 1) {
+            const target = start + offset;
+            if (target >= 0 && target < pbState.data[key].length) {
+                pbState.data[key][target] = values[offset];
+            }
+        }
+    });
+    const meta = payload.meta || {};
+    pbState.data.gps_lag_ms_applied = meta.gps_lag_ms_applied ?? pbState.data.gps_lag_ms_applied;
+    pbState.data.gps_lean_lag_ms_applied = meta.gps_lean_lag_ms_applied ?? pbState.data.gps_lean_lag_ms_applied;
+    pbState.data.gps_long_lag_ms_applied = meta.gps_long_lag_ms_applied ?? pbState.data.gps_long_lag_ms_applied;
+    pbState.data.gps_lag_source = meta.gps_lag_source ?? pbState.data.gps_lag_source;
+    pbState.data.gps_lag_score = meta.gps_lag_score ?? pbState.data.gps_lag_score;
+    pbState.data.alignment_confidence = meta.alignment_confidence ?? pbState.data.alignment_confidence;
+    pbState.data.alignment_lean_points = meta.alignment_lean_points ?? pbState.data.alignment_lean_points;
+    pbState.data.alignment_long_points = meta.alignment_long_points ?? pbState.data.alignment_long_points;
+    pbState.data.alignment_frame_points = meta.alignment_frame_points ?? pbState.data.alignment_frame_points;
+    pbState.data.alignment_frame_laps = meta.alignment_frame_laps ?? pbState.data.alignment_frame_laps;
+    pbState.data.alignment_frame_label = meta.alignment_frame_label ?? pbState.data.alignment_frame_label;
+    pbState.data.gps_lag_configured_ms = meta.gps_lag_configured_ms ?? pbState.data.gps_lag_configured_ms;
+    pbState.data.alignment_mode = meta.alignment_mode ?? pbState.data.alignment_mode;
+    pbState.data.path_trim_ms = meta.path_trim_ms ?? pbState.data.path_trim_ms;
+    pbState.data.gps_lean_ref_sign = meta.gps_lean_ref_sign ?? pbState.data.gps_lean_ref_sign;
+    pbState.data.gps_long_ref_sign = meta.gps_long_ref_sign ?? pbState.data.gps_long_ref_sign;
+    pbState.data.graph_lean_display_sign = meta.graph_lean_display_sign ?? pbState.data.graph_lean_display_sign;
+    pbState.data.active_tune = meta.active_tune ?? payload.config ?? pbState.data.active_tune;
+    pbState.data.tune_source = meta.tune_source ?? 'preview';
+    pbState.data.tuner_feature_enabled = Boolean(meta.tuner_feature_enabled);
+    refreshPlaybackProjectedPoints();
+    pbState.pathCache = null;
+    pbState.renderedLapKey = null;
+}
+
+async function savePlaybackTuner() {
+    if (!pbState.tuner?.visible) return;
+    const tune = playbackTunerPayload(pbState.tuner.activeTune || pbState.tuner.savedTune || pbState.tuner.defaultTune || {});
+    try {
+        const response = await apiCall('/api/admin/playback-tuner', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: true, active_tune: tune }),
+            displayError: false,
+        });
+        pbState.tuner.enabled = Boolean(response?.enabled);
+        pbState.tuner.savedTune = response?.active_tune || tune;
+        pbState.tuner.activeTune = response?.active_tune || tune;
+        pbState.tuner.defaultTune = response?.default_tune || pbState.tuner.defaultTune;
+        renderPlaybackTunerPanel();
+        showToast('Playback tune saved', 'success');
+    } catch (error) {
+        showToast(error?.message || 'Failed to save playback tune', 'error');
+    }
+}
+
+function resetPlaybackTuner() {
+    if (!pbState.tuner?.visible) return;
+    pbState.tuner.activeTune = { ...(pbState.tuner.savedTune || pbState.tuner.defaultTune || {}) };
+    renderPlaybackTunerPanel();
+    schedulePlaybackTunerPreview();
+}
+
+function refreshPlaybackProjectedPoints() {
+    if (!pbState.canonicalLayout || !pbState.data) {
+        pbState.projectedPoints = null;
+        pbState.alignedProjectedPoints = null;
+        pbState.displayProjectedPoints = null;
+        return;
+    }
+    pbState.projectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
+        lats: pbState.data.lat || [],
+        lons: pbState.data.lon || []
+    });
+    pbState.alignedProjectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
+        lats: pbState.data.aligned_lat || pbState.data.display_lat || pbState.data.lat || [],
+        lons: pbState.data.aligned_lon || pbState.data.display_lon || pbState.data.lon || []
+    });
+    pbState.displayProjectedPoints = projectTelemetryToCanonical(pbState.canonicalLayout, {
+        lats: pbState.data.display_lat || pbState.data.lat || [],
+        lons: pbState.data.display_lon || pbState.data.lon || []
+    });
+}
+
+function playbackSelectedPathSeries() {
+    const data = pbState.data || {};
+    if (pbState.pathSource === 'rawfix') {
+        return {
+            key: 'rawfix',
+            label: 'Raw GPS fixes',
+            lats: data.lat || [],
+            lons: data.lon || [],
+            speeds: data.speed || [],
+            projected: pbState.projectedPoints,
+            fixOnly: true,
+        };
+    }
+    if (pbState.pathSource === 'display') {
+        return {
+            key: 'display',
+            label: 'Display path',
+            lats: data.display_lat || data.aligned_lat || data.lat || [],
+            lons: data.display_lon || data.aligned_lon || data.lon || [],
+            speeds: data.display_speed || data.aligned_speed || data.speed || [],
+            projected: pbState.displayProjectedPoints || pbState.alignedProjectedPoints || pbState.projectedPoints,
+            fixOnly: false,
+        };
+    }
+    return {
+        key: 'aligned',
+        label: 'Aligned GPS on IMU',
+        lats: data.aligned_lat || data.display_lat || data.lat || [],
+        lons: data.aligned_lon || data.display_lon || data.lon || [],
+        speeds: data.aligned_speed || data.display_speed || data.speed || [],
+        projected: pbState.alignedProjectedPoints || pbState.displayProjectedPoints || pbState.projectedPoints,
+        fixOnly: false,
+    };
+}
+
+function updatePlaybackGraphMeta() {
+    const meta = document.getElementById('playbackGraphMeta');
+    if (!meta || !pbState.data) return;
+    const lagMs = pbState.data.gps_lag_ms_applied ?? 0;
+    const lagSource = pbState.data.gps_lag_source || 'configured';
+    const score = pbState.data.alignment_confidence == null ? '' : `, score ${Number(pbState.data.alignment_confidence).toFixed(3)}`;
+    const mode = pbState.data.alignment_mode || 'single_lag';
+    const pathTrimMs = pbState.data.path_trim_ms ?? pbState.data.active_tune?.pathTrimMs ?? 0;
+    const scope = pbState.selectedLap && pbState.selectedLap !== 'all' ? `Lap ${pbState.selectedLap}` : 'Session';
+    const leanPoints = pbState.data.alignment_lean_points ?? 0;
+    const longPoints = pbState.data.alignment_long_points ?? 0;
+    const framePoints = pbState.data.alignment_frame_points ?? 0;
+    const frameLabel = pbState.data.alignment_frame_label || 'window';
+    const trimText = pathTrimMs ? `, path trim ${pathTrimMs} ms` : '';
+    const drift = getPlaybackLocalLagDiagnostics(playbackGraphRows());
+    const driftText = drift?.segments?.length
+        ? ` Local lag ${Math.round(drift.minLagMs)}..${Math.round(drift.maxLagMs)} ms across ${drift.segments.length} windows.`
+        : '';
+    meta.textContent = `${scope} comparison. GPS alignment ${lagMs} ms${trimText} (${mode}, ${lagSource}${score}). Window ${frameLabel}, ${framePoints} samples. Correlation samples: lean ${leanPoints}, long ${longPoints}.${driftText}`;
 }
 
 function showPlaybackTimingModal() {
@@ -6852,18 +7406,20 @@ function closePlaybackTimingModal() {
     if (modal) modal.classList.remove('active');
 }
 
-function showPlaybackGraphModal() {
+async function showPlaybackGraphModal() {
+    if (pbState.selectedLap === 'all') {
+        const currentTime = pbState.data?.time?.[Math.floor(pbState.currentIndex || 0)];
+        const lap = currentTime != null ? playbackLapForTime(currentTime) : (pbState.laps?.[0] || null);
+        if (lap?.lap_number) {
+            await jumpToLap(String(lap.lap_number));
+        }
+    }
     const modal = document.getElementById('playbackGraphModal');
     const canvas = document.getElementById('playbackGraphCanvas');
-    const meta = document.getElementById('playbackGraphMeta');
     if (!modal || !canvas || !pbState.data) return;
-    const lagMs = pbState.data.gps_lag_ms_applied ?? 0;
-    const lagSource = pbState.data.gps_lag_source || 'configured';
-    const score = pbState.data.gps_lag_score == null ? '' : `, score ${Number(pbState.data.gps_lag_score).toFixed(3)}`;
-    const signNote = `Lean sign ${pbState.data.gps_lean_ref_sign || 1}, Long sign ${pbState.data.gps_long_ref_sign || 1}`;
-    const scope = pbState.selectedLap && pbState.selectedLap !== 'all' ? `Lap ${pbState.selectedLap}` : 'Session';
-    if (meta) meta.textContent = `${scope} comparison. GPS reference alignment: ${lagMs} ms (${lagSource}${score}). ${signNote}.`;
+    updatePlaybackGraphMeta();
     modal.classList.add('active');
+    renderPlaybackTunerPanel();
     drawPlaybackComparisonGraph();
     canvas.onclick = (event) => seekPlaybackFromGraphClick(event);
 }
@@ -6893,7 +7449,8 @@ function playbackGraphRows() {
 
 function playbackLeanGraphValue(value) {
     const number = finiteOrNull(value);
-    return number == null ? null : -number;
+    if (number == null) return null;
+    return number;
 }
 
 function finiteOrNull(value) {
@@ -6917,9 +7474,11 @@ function drawPlaybackComparisonGraph() {
         ctx.fillText('No playback graph data available.', 28 * dpr, 48 * dpr);
         return;
     }
+    const diagnostics = getPlaybackLocalLagDiagnostics(rows);
+    const panelCount = diagnostics?.segments?.length ? 3 : 2;
     const margin = 26 * dpr;
     const gap = 22 * dpr;
-    const graphH = (canvas.height - margin * 2 - gap) / 2;
+    const graphH = (canvas.height - margin * 2 - gap * (panelCount - 1)) / panelCount;
     const graphW = canvas.width - margin * 2;
     drawPlaybackSeriesGraph(ctx, rows, {
         x: margin,
@@ -6948,6 +7507,83 @@ function drawPlaybackComparisonGraph() {
         positiveLabel: 'accel',
         negativeLabel: 'brake',
     }, dpr);
+    if (panelCount === 3) {
+        drawPlaybackLocalLagGraph(ctx, rows, diagnostics, {
+            x: margin,
+            y: margin + (graphH + gap) * 2,
+            w: graphW,
+            h: graphH,
+            title: 'Local lag drift: best longitudinal lag by window',
+        }, dpr);
+    }
+}
+
+function drawInlinePlaybackLeanGraph() {
+    const canvas = document.getElementById('pbLeanInlineCanvas');
+    if (!canvas || !pbState.data?.time?.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(480, Math.round(rect.width * dpr));
+    canvas.height = Math.max(140, Math.round(rect.height * dpr));
+    const ctx = canvas.getContext('2d');
+    const rows = playbackGraphRows();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!rows.length) {
+        ctx.fillStyle = 'rgba(255,255,255,0.65)';
+        ctx.font = `${12 * dpr}px sans-serif`;
+        ctx.fillText('No lean graph data available.', 18 * dpr, 26 * dpr);
+        return;
+    }
+    const padX = 18 * dpr;
+    const padTop = 18 * dpr;
+    const padBottom = 20 * dpr;
+    const left = padX;
+    const right = canvas.width - padX;
+    const top = padTop;
+    const bottom = canvas.height - padBottom;
+    const plotW = Math.max(1, right - left);
+    const plotH = Math.max(1, bottom - top);
+    const values = rows.flatMap((row) => [playbackLeanGraphValue(row.imuLean), playbackLeanGraphValue(row.gpsLean)]).filter(Number.isFinite);
+    const maxValue = Math.max(20, ...values.map((value) => Math.abs(value)));
+    const xFor = (offset) => left + (offset / Math.max(1, rows.length - 1)) * plotW;
+    const yFor = (value) => top + ((maxValue - value) / (maxValue * 2)) * plotH;
+
+    ctx.fillStyle = 'rgba(12,12,12,0.92)';
+    fillRoundedRect(ctx, 0, 0, canvas.width, canvas.height, 16 * dpr);
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    [-0.5, 0, 0.5].forEach((mark) => {
+        const y = yFor(maxValue * mark);
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+        ctx.stroke();
+    });
+
+    drawPlaybackGraphLine(ctx, rows, 'gpsLean', xFor, yFor, '#4da3ff', 2.0 * dpr, playbackLeanGraphValue);
+    drawPlaybackGraphLine(ctx, rows, 'imuLean', xFor, yFor, '#ff6b3a', 1.8 * dpr, playbackLeanGraphValue);
+
+    const markerIndex = Math.max(0, rows.findIndex((row) => row.index >= pbState.currentIndex));
+    const markerX = xFor(markerIndex === -1 ? rows.length - 1 : markerIndex);
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.moveTo(markerX, top);
+    ctx.lineTo(markerX, bottom);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.font = `${11 * dpr}px sans-serif`;
+    ctx.fillText('GPS', left + 2 * dpr, 13 * dpr);
+    ctx.fillStyle = '#4da3ff';
+    ctx.fillRect(left + 28 * dpr, 5 * dpr, 10 * dpr, 3 * dpr);
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.fillText('IMU', left + 52 * dpr, 13 * dpr);
+    ctx.fillStyle = '#ff6b3a';
+    ctx.fillRect(left + 78 * dpr, 5 * dpr, 10 * dpr, 3 * dpr);
+    canvas.onclick = (event) => seekPlaybackFromInlineLeanGraphClick(event);
 }
 
 function fillRoundedRect(ctx, x, y, w, h, r) {
@@ -7053,6 +7689,189 @@ function drawPlaybackGraphLine(ctx, rows, key, xFor, yFor, color, width, valueTr
     ctx.stroke();
 }
 
+function drawPlaybackLocalLagGraph(ctx, rows, diagnostics, graph, dpr) {
+    const padLeft = 54 * dpr;
+    const padRight = 20 * dpr;
+    const padTop = 36 * dpr;
+    const padBottom = 28 * dpr;
+    const left = graph.x + padLeft;
+    const right = graph.x + graph.w - padRight;
+    const top = graph.y + padTop;
+    const bottom = graph.y + graph.h - padBottom;
+    const lags = diagnostics?.segments?.map(segment => segment.lagMs).filter(Number.isFinite) || [];
+    const scores = diagnostics?.segments?.map(segment => segment.score).filter(Number.isFinite) || [];
+    const lagExtent = Math.max(250, ...lags.map(value => Math.abs(value)));
+    const xFor = (offset) => left + (offset / Math.max(1, rows.length - 1)) * (right - left);
+    const yForLag = (value) => top + ((lagExtent - value) / (lagExtent * 2)) * (bottom - top);
+
+    ctx.fillStyle = 'rgba(16, 16, 16, 0.82)';
+    fillRoundedRect(ctx, graph.x, graph.y, graph.w, graph.h, 18 * dpr);
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.strokeRect(graph.x, graph.y, graph.w, graph.h);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.14)';
+    [-0.5, 0, 0.5].forEach(mark => {
+        const gy = yForLag(lagExtent * mark);
+        ctx.beginPath();
+        ctx.moveTo(left, gy);
+        ctx.lineTo(right, gy);
+        ctx.stroke();
+    });
+    ctx.strokeStyle = 'rgba(255,255,255,0.42)';
+    ctx.beginPath();
+    ctx.moveTo(left, yForLag(0));
+    ctx.lineTo(right, yForLag(0));
+    ctx.stroke();
+
+    const segments = diagnostics?.segments || [];
+    if (segments.length) {
+        ctx.strokeStyle = '#ffd166';
+        ctx.lineWidth = 2 * dpr;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        segments.forEach((segment, index) => {
+            const x = xFor(segment.centerOffset);
+            const y = yForLag(segment.lagMs);
+            if (index === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        segments.forEach((segment) => {
+            const x = xFor(segment.centerOffset);
+            const y = yForLag(segment.lagMs);
+            const alpha = Math.max(0.25, Math.min(1, segment.score || 0));
+            ctx.fillStyle = `rgba(255, 209, 102, ${alpha})`;
+            ctx.beginPath();
+            ctx.arc(x, y, Math.max(2 * dpr, 4 * alpha * dpr), 0, Math.PI * 2);
+            ctx.fill();
+        });
+    }
+
+    const markerIndex = Math.max(0, rows.findIndex(row => row.index >= pbState.currentIndex));
+    const markerX = xFor(markerIndex === -1 ? rows.length - 1 : markerIndex);
+    ctx.strokeStyle = 'rgba(255,255,255,0.58)';
+    ctx.lineWidth = 1 * dpr;
+    ctx.beginPath();
+    ctx.moveTo(markerX, top);
+    ctx.lineTo(markerX, bottom);
+    ctx.stroke();
+
+    ctx.fillStyle = '#f5f5f5';
+    ctx.font = `${14 * dpr}px sans-serif`;
+    ctx.fillText(graph.title, graph.x + 18 * dpr, graph.y + 24 * dpr);
+    ctx.fillStyle = '#ffd166';
+    ctx.fillText('Lag', graph.x + 366 * dpr, graph.y + 24 * dpr);
+    ctx.fillStyle = 'rgba(255,255,255,0.68)';
+    ctx.font = `${12 * dpr}px sans-serif`;
+    ctx.fillText(`+${Math.round(lagExtent)} ms`, graph.x + 10 * dpr, top + 8 * dpr);
+    ctx.fillText(`-${Math.round(lagExtent)} ms`, graph.x + 10 * dpr, bottom);
+    const scoreText = scores.length ? `score ${Math.max(...scores).toFixed(2)} best` : 'no local windows';
+    ctx.fillText(scoreText, right - 120 * dpr, top + 12 * dpr);
+}
+
+function getPlaybackLocalLagDiagnostics(rows) {
+    if (!rows?.length) return null;
+    const sampleIndexes = [0, Math.floor(rows.length / 2), rows.length - 1]
+        .map(index => rows[index])
+        .map(row => `${row?.time ?? 'x'}:${row?.imuLong ?? 'x'}:${row?.gpsLong ?? 'x'}`)
+        .join('|');
+    const key = [
+        pbState.selectedLap || 'all',
+        rows.length,
+        pbState.data?.gps_lag_ms_applied ?? 0,
+        sampleIndexes,
+    ].join('::');
+    if (pbState.localLagDiagnostics?.key === key) {
+        return pbState.localLagDiagnostics.value;
+    }
+    const value = computePlaybackLocalLagDiagnostics(rows);
+    pbState.localLagDiagnostics = { key, value };
+    return value;
+}
+
+function computePlaybackLocalLagDiagnostics(rows) {
+    if (!rows.length) return null;
+    const dtValues = [];
+    for (let index = 1; index < rows.length; index += 1) {
+        const dtMs = (Number(rows[index].time) - Number(rows[index - 1].time)) * 1000;
+        if (Number.isFinite(dtMs) && dtMs > 1) dtValues.push(dtMs);
+    }
+    if (!dtValues.length) return null;
+    const sortedDt = dtValues.slice().sort((a, b) => a - b);
+    const medianDtMs = sortedDt[Math.floor(sortedDt.length / 2)] || 20;
+    const windowSize = Math.max(140, Math.min(560, Math.round(rows.length / 5)));
+    const stepSize = Math.max(60, Math.round(windowSize / 3));
+    const maxShift = Math.max(4, Math.min(240, Math.round(3000 / Math.max(5, medianDtMs))));
+    const segments = [];
+
+    for (let start = 0; start + windowSize <= rows.length; start += stepSize) {
+        const end = start + windowSize;
+        const windowRows = rows.slice(start, end);
+        const best = playbackBestLagForWindow(windowRows, maxShift);
+        if (!best) continue;
+        segments.push({
+            centerOffset: start + Math.floor(windowRows.length / 2),
+            lagMs: best.shift * medianDtMs,
+            score: best.score,
+            samples: best.samples,
+        });
+    }
+    if (!segments.length) return null;
+    return {
+        segments,
+        medianDtMs,
+        minLagMs: Math.min(...segments.map(segment => segment.lagMs)),
+        maxLagMs: Math.max(...segments.map(segment => segment.lagMs)),
+    };
+}
+
+function playbackBestLagForWindow(rows, maxShift) {
+    let best = null;
+    for (let shift = -maxShift; shift <= maxShift; shift += 1) {
+        const candidate = playbackCorrelationAtShift(rows, shift);
+        if (!candidate) continue;
+        if (!best || candidate.score > best.score) {
+            best = { ...candidate, shift };
+        }
+    }
+    return best;
+}
+
+function playbackCorrelationAtShift(rows, shift) {
+    let count = 0;
+    let sumImu = 0;
+    let sumGps = 0;
+    let sumImu2 = 0;
+    let sumGps2 = 0;
+    let sumCross = 0;
+    for (let index = 0; index < rows.length; index += 1) {
+        const shiftedIndex = index + shift;
+        if (shiftedIndex < 0 || shiftedIndex >= rows.length) continue;
+        const imu = finiteOrNull(rows[index].imuLong);
+        const gps = finiteOrNull(rows[shiftedIndex].gpsLong);
+        if (imu == null || gps == null) continue;
+        count += 1;
+        sumImu += imu;
+        sumGps += gps;
+        sumImu2 += imu * imu;
+        sumGps2 += gps * gps;
+        sumCross += imu * gps;
+    }
+    if (count < Math.max(40, Math.floor(rows.length * 0.35))) return null;
+    const numerator = count * sumCross - sumImu * sumGps;
+    const denomLeft = count * sumImu2 - sumImu * sumImu;
+    const denomRight = count * sumGps2 - sumGps * sumGps;
+    const denominator = Math.sqrt(Math.max(1e-9, denomLeft * denomRight));
+    if (!Number.isFinite(denominator) || denominator <= 1e-9) return null;
+    return {
+        score: Math.abs(numerator / denominator),
+        samples: count,
+    };
+}
+
 function seekPlaybackFromGraphClick(event) {
     const canvas = document.getElementById('playbackGraphCanvas');
     const rows = playbackGraphRows();
@@ -7067,6 +7886,24 @@ function seekPlaybackFromGraphClick(event) {
     if (slider) slider.value = row.index;
     drawFrame();
     drawPlaybackComparisonGraph();
+}
+
+function seekPlaybackFromInlineLeanGraphClick(event) {
+    const canvas = document.getElementById('pbLeanInlineCanvas');
+    const rows = playbackGraphRows();
+    if (!canvas || !rows.length) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const ratio = Math.max(0, Math.min(1, x / Math.max(1, rect.width)));
+    const row = rows[Math.round(ratio * (rows.length - 1))];
+    if (!row) return;
+    pbState.currentIndex = row.index;
+    pbState.playbackTime = pbState.data.time[row.index];
+    drawFrame();
+    drawInlinePlaybackLeanGraph();
+    if (document.getElementById('playbackGraphModal')?.classList.contains('active')) {
+        drawPlaybackComparisonGraph();
+    }
 }
 
 function initPlaybackUI() {
@@ -7094,6 +7931,10 @@ function initPlaybackUI() {
 
     // Buttons
     document.getElementById('pbPlayPause').textContent = '▶';
+    const pathSourceInputs = document.getElementsByName('pbPathSource');
+    for (let input of pathSourceInputs) {
+        input.checked = input.value === (pbState.pathSource || 'aligned');
+    }
 }
 
 function fitTrackMap() {
@@ -7125,8 +7966,9 @@ function fitTrackMap() {
     }
 
     // Calculate Bounds
-    const lats = pbState.data.display_lat || pbState.data.lat;
-    const lons = pbState.data.display_lon || pbState.data.lon;
+    const pathSeries = playbackSelectedPathSeries();
+    const lats = pathSeries.lats;
+    const lons = pathSeries.lons;
     if (!lats || !lons || lats.length === 0) return;
 
     let minLat = 90, maxLat = -90, minLon = 180, maxLon = -180;
@@ -7134,6 +7976,7 @@ function fitTrackMap() {
     // Sampling for performance
     const step = Math.ceil(lats.length / 2000) || 1;
     for (let i = 0; i < lats.length; i += step) {
+        if (pathSeries.fixOnly && !pbState.data.gps_is_fix?.[i]) continue;
         if (lats[i] == null || lons[i] == null || !Number.isFinite(lats[i]) || !Number.isFinite(lons[i])) continue;
         if (lats[i] < minLat) minLat = lats[i];
         if (lats[i] > maxLat) maxLat = lats[i];
@@ -7213,7 +8056,11 @@ function projectPlaybackPoint(index) {
         return leftPoint || rightPoint || null;
     };
 
-    const projected = pbState.displayProjectedPoints || pbState.projectedPoints;
+    const projected = pbState.pathSource === 'rawfix'
+        ? pbState.projectedPoints
+        : pbState.pathSource === 'display'
+            ? (pbState.displayProjectedPoints || pbState.alignedProjectedPoints || pbState.projectedPoints)
+            : (pbState.alignedProjectedPoints || pbState.displayProjectedPoints || pbState.projectedPoints);
     if (pbState.canonicalLayout && projected?.length) {
         let clamped = Math.max(0, Math.min(projected.length - 1, index));
         let point = projected[clamped];
@@ -7233,12 +8080,28 @@ function projectPlaybackPoint(index) {
             y: point.y * pbState.scale + pbState.offsetY
         };
     }
-    const lat = pbState.data.display_lat?.[index] ?? pbState.data.lat[index];
-    const lon = pbState.data.display_lon?.[index] ?? pbState.data.lon[index];
+    const lat = pbState.pathSource === 'rawfix'
+        ? (pbState.data.lat[index])
+        : pbState.pathSource === 'display'
+            ? (pbState.data.display_lat?.[index] ?? pbState.data.aligned_lat?.[index] ?? pbState.data.lat[index])
+            : (pbState.data.aligned_lat?.[index] ?? pbState.data.display_lat?.[index] ?? pbState.data.lat[index]);
+    const lon = pbState.pathSource === 'rawfix'
+        ? (pbState.data.lon[index])
+        : pbState.pathSource === 'display'
+            ? (pbState.data.display_lon?.[index] ?? pbState.data.aligned_lon?.[index] ?? pbState.data.lon[index])
+            : (pbState.data.aligned_lon?.[index] ?? pbState.data.display_lon?.[index] ?? pbState.data.lon[index]);
     if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) {
         return interpolateMissingPoint((candidateIndex) => {
-            const candidateLat = pbState.data.display_lat?.[candidateIndex] ?? pbState.data.lat[candidateIndex];
-            const candidateLon = pbState.data.display_lon?.[candidateIndex] ?? pbState.data.lon[candidateIndex];
+            const candidateLat = pbState.pathSource === 'rawfix'
+                ? pbState.data.lat[candidateIndex]
+                : pbState.pathSource === 'display'
+                    ? (pbState.data.display_lat?.[candidateIndex] ?? pbState.data.aligned_lat?.[candidateIndex] ?? pbState.data.lat[candidateIndex])
+                    : (pbState.data.aligned_lat?.[candidateIndex] ?? pbState.data.display_lat?.[candidateIndex] ?? pbState.data.lat[candidateIndex]);
+            const candidateLon = pbState.pathSource === 'rawfix'
+                ? pbState.data.lon[candidateIndex]
+                : pbState.pathSource === 'display'
+                    ? (pbState.data.display_lon?.[candidateIndex] ?? pbState.data.aligned_lon?.[candidateIndex] ?? pbState.data.lon[candidateIndex])
+                    : (pbState.data.aligned_lon?.[candidateIndex] ?? pbState.data.display_lon?.[candidateIndex] ?? pbState.data.lon[candidateIndex]);
             if (candidateLat == null || candidateLon == null || !Number.isFinite(candidateLat) || !Number.isFinite(candidateLon)) return null;
             return project(candidateLat, candidateLon);
         });
@@ -7273,7 +8136,31 @@ function playbackTimeWindow(timeSec) {
     return { left, right, alpha };
 }
 
+function playbackSeriesValueAtTime(series, timeSec, fallbackIndex = 0) {
+    if (!Array.isArray(series) || !series.length) return null;
+    const { left, right, alpha } = playbackTimeWindow(timeSec);
+    const a = Number(series[left]);
+    const b = Number(series[right]);
+    if (Number.isFinite(a) && Number.isFinite(b)) {
+        return a + ((b - a) * alpha);
+    }
+    if (Number.isFinite(a)) return a;
+    if (Number.isFinite(b)) return b;
+    const fallback = Number(series[Math.max(0, Math.min(series.length - 1, fallbackIndex))]);
+    return Number.isFinite(fallback) ? fallback : null;
+}
+
+function playbackPathTimeOffsetSec() {
+    const lagMs = Number(pbState.data?.gps_lag_ms_applied ?? 0) || 0;
+    const trimMs = Number(pbState.data?.path_trim_ms ?? pbState.data?.active_tune?.pathTrimMs ?? 0) || 0;
+    return (lagMs + trimMs) / 1000.0;
+}
+
 function projectPlaybackPointAtTime(timeSec) {
+    if (pbState.pathSource === 'rawfix') {
+        const index = playbackNearestFixIndexForTime(timeSec + playbackPathTimeOffsetSec());
+        return index == null ? null : projectPlaybackPoint(index);
+    }
     const { left, right, alpha } = playbackTimeWindow(timeSec);
     const a = projectPlaybackPoint(left);
     const b = projectPlaybackPoint(right);
@@ -7284,6 +8171,24 @@ function projectPlaybackPointAtTime(timeSec) {
         };
     }
     return a || b || null;
+}
+
+function playbackNearestFixIndexForTime(timeSec) {
+    const times = pbState.data?.time || [];
+    const fixes = pbState.data?.gps_is_fix || [];
+    if (!times.length) return null;
+    let bestIndex = null;
+    let bestDistance = Infinity;
+    for (let index = 0; index < times.length; index += 1) {
+        if (!fixes[index]) continue;
+        if (pbState.data.lat?.[index] == null || pbState.data.lon?.[index] == null) continue;
+        const distance = Math.abs(Number(times[index]) - Number(timeSec));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = index;
+        }
+    }
+    return bestIndex;
 }
 
 function playbackLapByNumber(lapNumber) {
@@ -7341,8 +8246,9 @@ function renderStaticMap() {
     const count = data.lat.length;
     const { startIndex, endIndex, lapKey } = currentPlaybackLapBounds();
     pbState.renderedLapKey = lapKey;
+    const pathSeries = playbackSelectedPathSeries();
 
-    if (pbState.canonicalLayout && (pbState.displayProjectedPoints?.length || pbState.projectedPoints?.length)) {
+    if (pbState.canonicalLayout && (pathSeries.projected?.length || pbState.projectedPoints?.length)) {
         if (pbState.layoutImage) {
             ctx.drawImage(
                 pbState.layoutImage,
@@ -7353,22 +8259,36 @@ function renderStaticMap() {
             );
         }
 
-        drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), (index) => projectRawPlaybackPoint(index));
+        drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), {
+            projectIndex: (index) => projectPlaybackPoint(index),
+            speedSeries: pathSeries.speeds,
+            fixOnly: pathSeries.fixOnly,
+            emphasizeFixes: pathSeries.fixOnly,
+        });
         return;
     }
 
-    drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), (index) => {
-        if (data.lat[index] == null || data.lon[index] == null || !Number.isFinite(data.lat[index]) || !Number.isFinite(data.lon[index])) return null;
-        return project(data.lat[index], data.lon[index]);
+    drawPlaybackGpsDiagnostics(ctx, data, startIndex, Math.min(endIndex, count), {
+        projectIndex: (index) => projectPlaybackPoint(index),
+        speedSeries: pathSeries.speeds,
+        fixOnly: pathSeries.fixOnly,
+        emphasizeFixes: pathSeries.fixOnly,
     });
 }
 
-function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectIndex) {
+function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, options) {
+    const projectIndex = typeof options === 'function' ? options : options?.projectIndex;
+    const speedSeries = options?.speedSeries || data.display_speed || data.speed || [];
+    const fixOnly = Boolean(options?.fixOnly);
+    const emphasizeFixes = Boolean(options?.emphasizeFixes);
     const gpsValid = data.gps_is_valid || [];
     const gpsFix = data.gps_is_fix || [];
     const points = [];
-    for (let i = startIndex; i < endIndex; i += 1) {
+    const rangeCount = Math.max(0, endIndex - startIndex);
+    const step = pbState.selectedLap === 'all' ? Math.max(1, Math.ceil(rangeCount / 2500)) : 1;
+    for (let i = startIndex; i < endIndex; i += step) {
         if (gpsValid.length && !gpsValid[i]) continue;
+        if (fixOnly && !gpsFix[i]) continue;
         const point = projectIndex(i);
         if (!point) continue;
         points.push({
@@ -7383,15 +8303,22 @@ function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectInde
 
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    let minSpeed = 0;
+    let maxSpeed = 1;
+    if (pbState.mapMode === 'speed') {
+        const speeds = [];
+        for (let index = startIndex; index < endIndex; index += step) {
+            const speed = Number(speedSeries[index]);
+            if (Number.isFinite(speed)) speeds.push(speed);
+        }
+        minSpeed = speeds.length ? Math.min(...speeds) : 0;
+        maxSpeed = speeds.length ? Math.max(...speeds) : 1;
+    }
     for (let i = 1; i < points.length; i += 1) {
         const prev = points[i - 1];
         const next = points[i];
         let strokeStyle = 'rgba(150, 150, 150, 0.72)';
         if (pbState.mapMode === 'speed') {
-            const speedSeries = data.display_speed || data.speed || [];
-            const speeds = speedSeries.filter(Number.isFinite);
-            const minSpeed = speeds.length ? Math.min(...speeds) : 0;
-            const maxSpeed = speeds.length ? Math.max(...speeds) : 1;
             const a = Number(speedSeries?.[prev.index]);
             const b = Number(speedSeries?.[next.index]);
             const avg = [a, b].filter(Number.isFinite).reduce((sum, value) => sum + value, 0) / Math.max(1, [a, b].filter(Number.isFinite).length);
@@ -7416,7 +8343,8 @@ function drawPlaybackGpsDiagnostics(ctx, data, startIndex, endIndex, projectInde
     for (let i = 0; i < points.length; i += 1) {
         const point = points[i];
         ctx.beginPath();
-        ctx.arc(point.x, point.y, point.isFix ? 2.2 : 1.7, 0, Math.PI * 2);
+        const radius = point.isFix ? (emphasizeFixes ? 2.8 : 2.2) : 1.7;
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
         ctx.fillStyle = point.isFix ? '#ff4d4f' : '#4da3ff';
         ctx.fill();
     }
@@ -7445,6 +8373,20 @@ function updateHeatmapMode() {
     }
     renderStaticMap();
     if (!pbState.playing) drawFrame();
+}
+
+function updatePlaybackPathSource() {
+    const inputs = document.getElementsByName('pbPathSource');
+    for (let input of inputs) {
+        if (input.checked) pbState.pathSource = input.value;
+    }
+    pbState.localLagDiagnostics = null;
+    pbState.pathCache = null;
+    pbState.renderedLapKey = null;
+    fitTrackMap();
+    if (!pbState.playing) {
+        drawFrame();
+    }
 }
 
 function togglePlayback(forceState = null) {
@@ -7476,20 +8418,24 @@ function seekPlayback(val) {
     drawFrame();
 }
 
-function jumpToLap(val) {
+async function jumpToLap(val) {
     pbState.selectedLap = val;
     if (val === 'all') {
+        if (pbState.playbackManifest) {
+            activatePlaybackData(normalizePlaybackData(pbState.playbackManifest, pbState.session?.laps || []), 'all');
+            return;
+        }
         pbState.currentIndex = 0;
     } else {
-        const lapNum = parseInt(val);
-        const lap = pbState.laps.find(l => l.lap_number === lapNum);
-        if (lap) {
-            const idx = pbState.data.time.findIndex(t => t >= lap.start_time);
-            if (idx !== -1) {
-                pbState.currentIndex = idx;
-                const slider = document.getElementById('pbSeek');
-                if (slider) slider.value = idx;
+        try {
+            const chunk = await loadPlaybackLapChunk(parseInt(val));
+            if (chunk) {
+                activatePlaybackData(chunk.data, val);
+                prefetchPlaybackLap(parseInt(val) + 1);
+                return;
             }
+        } catch (error) {
+            console.error('Failed to load playback lap chunk', error);
         }
     }
     // Sync Time
@@ -7497,7 +8443,14 @@ function jumpToLap(val) {
     drawFrame();
 }
 
-function nextLapPlay() {
+function prefetchPlaybackLap(lapNumber) {
+    if (!lapNumber || pbState.lapCache?.[String(lapNumber)]) return;
+    const lap = pbState.laps?.find(item => Number(item.lap_number) === Number(lapNumber));
+    if (!lap) return;
+    loadPlaybackLapChunk(lapNumber).catch(() => {});
+}
+
+async function nextLapPlay() {
     const curTime = pbState.data.time[Math.floor(pbState.currentIndex)];
     const curLap = playbackLapForTime(curTime);
 
@@ -7505,16 +8458,14 @@ function nextLapPlay() {
         const nextLapNum = curLap.lap_number + 1;
         const nextLap = pbState.laps.find(l => l.lap_number === nextLapNum);
         if (nextLap) {
-            pbState.selectedLap = String(nextLapNum);
-            const idx = pbState.data.time.findIndex(t => t >= nextLap.start_time);
-            if (idx !== -1) pbState.currentIndex = idx;
+            await jumpToLap(String(nextLapNum));
         } else {
             pbState.selectedLap = 'all';
             pbState.currentIndex = 0;
             togglePlayback(false);
         }
     } else {
-        jumpToLap(1);
+        await jumpToLap(1);
     }
     // Sync Time
     if (pbState.data) pbState.playbackTime = pbState.data.time[pbState.currentIndex];
@@ -7570,6 +8521,8 @@ function drawFrame() {
     const i = Math.floor(pbState.currentIndex);
     const data = pbState.data;
     if (!data) return;
+    const timeSec = pbState.playbackTime ?? data.time[i];
+    drawInlinePlaybackLeanGraph();
 
     const currentLap = currentPlaybackLapBounds();
     if (pbState.renderedLapKey !== currentLap.lapKey) {
@@ -7583,7 +8536,7 @@ function drawFrame() {
         ctx.drawImage(pbState.pathCache, 0, 0);
     }
 
-    const p = projectPlaybackPointAtTime(pbState.playbackTime ?? data.time[i]);
+    const p = projectPlaybackPointAtTime(timeSec);
     if (!p) return;
 
     // Dot
@@ -7599,7 +8552,7 @@ function drawFrame() {
 
     // Time
     // Time
-    const t = data.time[i] - pbState.startTime;
+    const t = timeSec - pbState.startTime;
     const timeEl = document.getElementById('pbTime');
     if (timeEl) timeEl.textContent = formatDuration(t);
 
@@ -7613,7 +8566,7 @@ function drawFrame() {
 
     if (pbState.laps && pbState.laps.length > 0) {
         const rowLapNumber = data.lap_number?.[i];
-        activeLap = rowLapNumber ? playbackLapByNumber(rowLapNumber) : playbackLapForTime(data.time[i]);
+        activeLap = rowLapNumber ? playbackLapByNumber(rowLapNumber) : playbackLapForTime(timeSec);
         if (activeLap) {
             currentLapNum = activeLap.lap_number || 1;
             lapStartTime = activeLap.start_time;
@@ -7629,7 +8582,7 @@ function drawFrame() {
     }
 
     // Current lap time
-    const currentLapTime = data.time[i] - lapStartTime;
+    const currentLapTime = timeSec - lapStartTime;
     const lapTimeEl = document.getElementById('pbLapTime');
     if (lapTimeEl) {
         lapTimeEl.textContent = formatLapTime(currentLapTime);
@@ -7736,7 +8689,7 @@ function drawFrame() {
     }
 
     // Speed
-    const speed = data.display_speed?.[i] ?? data.speed[i] ?? 0;
+    const speed = playbackSeriesValueAtTime(data.aligned_speed || data.display_speed || data.speed, timeSec, i) ?? 0;
     const speedVal = Math.round(speed);
     const speedEl = document.getElementById('pbSpeed');
     if (speedEl) speedEl.textContent = speedVal;
@@ -7746,14 +8699,15 @@ function drawFrame() {
     // Lean Angle
     // Priority: Explicit Lean > Roll > Derived from Gyro/Speed > 0
     let lean = 0;
-    if (data.display_lean_deg && data.display_lean_deg[i] !== undefined && data.display_lean_deg[i] !== null) {
-        lean = data.display_lean_deg[i];
-    } else if (data.lean_deg && data.lean_deg[i] !== undefined && data.lean_deg[i] !== null) {
-        lean = data.lean_deg[i];
+    const displayLean = playbackSeriesValueAtTime(data.display_lean_deg || data.lean_deg, timeSec, i);
+    if (displayLean !== null) {
+        lean = displayLean;
     } else if (data.lean_angle && data.lean_angle[i] !== undefined) {
         lean = data.lean_angle[i];
     } else if (data.roll && data.roll[i] !== undefined) {
         lean = data.roll[i];
+    } else if (data.lean_deg && data.lean_deg[i] !== undefined && data.lean_deg[i] !== null) {
+        lean = data.lean_deg[i];
     } else if (data.raw_gx && data.raw_gx[i] !== undefined) {
         // Fallback: Estimate lean from gyro X (ROLL axis, not Z which is yaw)
         // Raw gyro values are 16-bit signed, scale by 131 LSB/deg/s for ±250°/s
@@ -7801,12 +8755,14 @@ function drawFrame() {
     // Raw X = Long (usually), Raw Y = Lat (usually).
     let gx = 0, gy = 0;
 
-    if (data.display_long_g && data.display_long_g[i] !== undefined && data.display_long_g[i] !== null) gx = data.display_long_g[i];
+    const displayLong = playbackSeriesValueAtTime(data.display_long_g || data.long_g, timeSec, i);
+    const displayLat = playbackSeriesValueAtTime(data.display_lat_g || data.lat_g, timeSec, i);
+    if (displayLong !== null) gx = displayLong;
     else if (data.long_g && data.long_g[i] !== undefined && data.long_g[i] !== null) gx = data.long_g[i];
     else if (data.ax && data.ax[i] !== undefined) gx = data.ax[i];
     else if (data.raw_ax && data.raw_ax[i] !== undefined) gx = data.raw_ax[i];
 
-    if (data.display_lat_g && data.display_lat_g[i] !== undefined && data.display_lat_g[i] !== null) gy = data.display_lat_g[i];
+    if (displayLat !== null) gy = displayLat;
     else if (data.lat_g && data.lat_g[i] !== undefined && data.lat_g[i] !== null) gy = data.lat_g[i];
     else if (data.ay && data.ay[i] !== undefined) gy = data.ay[i];
     else if (data.raw_ay && data.raw_ay[i] !== undefined) gy = data.raw_ay[i];
