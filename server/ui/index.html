@@ -1134,9 +1134,9 @@
 
       <!-- Dashboard Grid -->
       <div class="playback-grid">
-        <div style="display:grid; grid-template-rows:minmax(0,1fr) 188px; gap:12px; min-width:0; min-height:0;">
+        <div class="playback-main-column">
           <!-- Map Container -->
-          <div class="glass playback-map-container playback-map-panel" style="min-height:0; height:auto;">
+          <div class="glass playback-map-container playback-map-panel">
             <canvas id="pbTrackCanvas"></canvas>
 
             <!-- Map Layer Controls -->
@@ -1156,18 +1156,10 @@
                 Raw Fixes</label>
             </div>
           </div>
-
-          <div class="glass playback-card" style="padding:12px 14px; min-height:0; overflow:hidden; display:flex; flex-direction:column;">
-            <div class="playback-card-head" style="margin-bottom:8px;">
-              <div class="stat-label">Lean Graph</div>
-              <div class="help-text" style="margin:0;">IMU vs GPS reference</div>
-            </div>
-            <canvas id="pbLeanInlineCanvas" width="1200" height="200" style="width:100%; height:140px; flex:1 1 auto; min-height:140px; display:block; cursor:pointer;"></canvas>
-          </div>
         </div>
 
         <!-- Widgets Column -->
-        <div class="playback-sidebar">
+        <div class="playback-sidebar playback-telemetry-rail">
           <!-- LAP TIME + DELTA -->
           <div class="card playback-card playback-hero-card">
             <div class="playback-card-head">
@@ -1260,55 +1252,107 @@
             </div>
           </div>
 
-          <div class="playback-metrics-grid">
-            <!-- Speed -->
-            <div class="card playback-card playback-metric-card">
-              <div class="stat-label">Current Speed</div>
-              <div class="playback-metric-value-row">
-                <span id="pbSpeed" class="playback-metric-value playback-speed-value">0</span>
-                <span class="playback-metric-unit">KM/H</span>
+          <div class="card playback-card playback-metric-card playback-speed-card">
+            <div class="playback-card-head">
+              <div>
+                <div class="stat-label">Speed</div>
+                <div class="help-text playback-subtext">Live playback speed</div>
               </div>
-              <div class="playback-meter-track">
-                <div id="pbSpeedBar" class="playback-meter-fill playback-speed-fill">
-                </div>
+              <div class="playback-metric-unit">KM/H</div>
+            </div>
+            <div class="playback-metric-value-row">
+              <span id="pbSpeed" class="playback-metric-value playback-speed-value">0</span>
+            </div>
+            <div class="playback-speed-meter">
+              <div class="playback-meter-track playback-speed-track">
+                <div id="pbSpeedBar" class="playback-meter-fill playback-speed-fill"></div>
+              </div>
+              <div class="playback-scale-labels">
+                <span>0</span>
+                <span>120</span>
+                <span>240</span>
               </div>
             </div>
+          </div>
 
-            <!-- Lean Angle -->
-            <div class="card playback-card playback-metric-card">
-              <div class="stat-label">Lean Angle</div>
-              <div class="playback-lean-layout">
-                <div class="playback-lean-gauge">
-                  <div class="playback-lean-horizon"></div>
+          <div class="card playback-card playback-metric-card playback-lean-card">
+            <div class="playback-card-head">
+              <div>
+                <div class="stat-label">Lean Angle</div>
+                <div class="help-text playback-subtext">Live bike attitude</div>
+              </div>
+            </div>
+            <div class="playback-lean-widget">
+              <div class="playback-lean-stage">
+                <div class="playback-lean-arc"></div>
+                <div class="playback-lean-arc-label left">L</div>
+                <div class="playback-lean-arc-label right">R</div>
+                <div class="playback-lean-bike-wrap">
                   <div id="pbLeanBike" class="playback-lean-bike">
+                    <div class="playback-lean-bar"></div>
+                    <div class="playback-lean-pivot"></div>
                   </div>
                 </div>
-                <div class="playback-lean-value"><span id="pbLean">0</span></div>
+              </div>
+              <div class="playback-lean-readout">
+                <div class="playback-lean-value-row">
+                  <div class="playback-lean-value"><span id="pbLean">0</span></div>
+                  <div id="pbLeanDirection" class="playback-lean-direction">C</div>
+                </div>
+                <div class="playback-lean-caption">Current lean</div>
               </div>
             </div>
           </div>
 
-          <!-- G-Force -->
-          <div class="card playback-card playback-gforce-card">
+          <div class="card playback-card playback-force-card">
             <div class="playback-card-head">
-              <div class="stat-label">Acceleration G's</div>
+              <div>
+                <div class="stat-label">Force</div>
+                <div class="help-text playback-subtext">Brake left, accel right</div>
+              </div>
+              <div id="pbForceState" class="playback-force-state">COAST</div>
             </div>
-            <div class="playback-gforce-layout">
-              <div class="playback-gforce-dial">
-                <div class="playback-gforce-v-axis">
+            <div class="playback-force-layout">
+              <div class="playback-force-value-row">
+                <span id="pbForceValue" class="playback-force-value">0.00g</span>
+                <span class="playback-force-caption">Longitudinal</span>
+              </div>
+              <div class="playback-force-meter">
+                <div class="playback-force-track">
+                  <div class="playback-force-center"></div>
+                  <div id="pbForceBrakeFill" class="playback-force-fill playback-force-fill-brake"></div>
+                  <div id="pbForceAccelFill" class="playback-force-fill playback-force-fill-accel"></div>
                 </div>
-                <div class="playback-gforce-h-axis">
-                </div>
-                <div id="pbGDot" class="playback-gforce-dot">
+                <div class="playback-scale-labels playback-force-scale">
+                  <span>Brake</span>
+                  <span>Coast</span>
+                  <span>Accel</span>
                 </div>
               </div>
-              <div class="playback-gforce-stats">
-                <div>LAT <span id="pbGY" class="playback-gforce-number">0.0</span>G
+              <div class="playback-force-stats">
+                <div class="playback-force-stat">
+                  <span class="playback-force-stat-label">LON</span>
+                  <span id="pbGX" class="playback-force-stat-value">0.00</span>
+                  <span class="playback-force-stat-unit">g</span>
                 </div>
-                <div>LON <span id="pbGX" class="playback-gforce-number">0.0</span>G</div>
-              </div>
+                <div class="playback-force-stat">
+                  <span class="playback-force-stat-label">LAT</span>
+                  <span id="pbGY" class="playback-force-stat-value">0.00</span>
+                  <span class="playback-force-stat-unit">g</span>
             </div>
           </div>
+        </div>
+
+        <div class="glass playback-card playback-graph-strip playback-graph-bottom">
+          <div class="playback-card-head">
+            <div>
+              <div class="stat-label">Lean Graph</div>
+              <div class="help-text playback-subtext">IMU vs GPS reference</div>
+            </div>
+          </div>
+          <canvas id="pbLeanInlineCanvas" width="1200" height="200" class="playback-lean-inline-canvas"></canvas>
+        </div>
+      </div>
 
           <!-- SESSION ANNOTATIONS -->
           <div class="card playback-card playback-notes-card">

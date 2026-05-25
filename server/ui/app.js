@@ -6567,6 +6567,8 @@ let pbState = {
     playbackManifest: null,
     lapCache: {},
     activeLapChunk: null,
+    lapSwitchSeq: 0,
+    lapSwitchPending: false,
     session: null,
     sessionId: null,
     currentIndex: 0,
@@ -6596,6 +6598,7 @@ let pbState = {
     renderedLapKey: null,
     pathSource: 'aligned',
     localLagDiagnostics: null,
+    forceScaleG: null,
     tuner: {
         visible: false,
         enabled: false,
@@ -6778,7 +6781,10 @@ async function openPlayback(sessionId, shareToken = null) {
         playbackManifest: null,
         lapCache: {},
         activeLapChunk: null,
+        lapSwitchSeq: 0,
+        lapSwitchPending: false,
         sessionId,
+        shareToken,
         canonicalLayout: null,
         layoutImage: null,
         projectedPoints: null,
@@ -6786,6 +6792,7 @@ async function openPlayback(sessionId, shareToken = null) {
         displayProjectedPoints: null,
         renderedLapKey: null,
         localLagDiagnostics: null,
+        forceScaleG: null,
         tuner: {
             visible: false,
             enabled: false,
@@ -6832,6 +6839,21 @@ async function openPlayback(sessionId, shareToken = null) {
         pbState.playbackManifest = playback?.kind === 'playback_manifest' ? playback : null;
         pbState.data = normalizePlaybackData(playback, session.laps || []);
         pbState.laps = pbState.data.laps || session.laps || [];
+
+        const firstLapNumber = pbState.laps?.length ? pbState.laps[0]?.lap_number : null;
+        if (firstLapNumber != null) {
+            try {
+                const firstLapChunk = await loadPlaybackLapChunk(firstLapNumber);
+                if (firstLapChunk?.data?.time?.length) {
+                    pbState.data = firstLapChunk.data;
+                    pbState.selectedLap = String(firstLapNumber);
+                    pbState.activeLapChunk = firstLapChunk.data;
+                    prefetchPlaybackLap(Number(firstLapNumber) + 1);
+                }
+            } catch (error) {
+                console.error('Failed to load initial playback lap chunk', error);
+            }
+        }
 
         if (pbState.data.time && pbState.data.time.length > 0) {
             pbState.duration = pbState.data.time[pbState.data.time.length - 1] - pbState.data.time[0];
@@ -6928,7 +6950,10 @@ async function loadPlaybackLapChunk(lapNumber) {
     if (pbState.lapCache?.[key]) {
         return pbState.lapCache[key];
     }
-    const payload = await apiCall(`/api/sessions/${pbState.sessionId}/playback/laps/${encodeURIComponent(key)}`, { displayError: false });
+    const endpoint = pbState.shareToken
+        ? `/api/shared/${pbState.shareToken}/playback/laps/${encodeURIComponent(key)}`
+        : `/api/sessions/${pbState.sessionId}/playback/laps/${encodeURIComponent(key)}`;
+    const payload = await apiCall(endpoint, { displayError: false });
     const data = normalizePlaybackData(payload, pbState.session?.laps || []);
     pbState.lapCache[key] = { payload, data };
     return pbState.lapCache[key];
@@ -6941,6 +6966,7 @@ function activatePlaybackData(data, selectedLap) {
     pbState.pathCache = null;
     pbState.renderedLapKey = null;
     pbState.localLagDiagnostics = null;
+    pbState.forceScaleG = null;
     if (data?.time?.length) {
         pbState.startTime = data.time[0];
         pbState.duration = data.time[data.time.length - 1] - data.time[0];
@@ -7239,6 +7265,7 @@ function applyPlaybackTunePatch(payload) {
     pbState.data.active_tune = meta.active_tune ?? payload.config ?? pbState.data.active_tune;
     pbState.data.tune_source = meta.tune_source ?? 'preview';
     pbState.data.tuner_feature_enabled = Boolean(meta.tuner_feature_enabled);
+    pbState.forceScaleG = null;
     refreshPlaybackProjectedPoints();
     pbState.pathCache = null;
     pbState.renderedLapKey = null;
@@ -8150,6 +8177,33 @@ function playbackSeriesValueAtTime(series, timeSec, fallbackIndex = 0) {
     return Number.isFinite(fallback) ? fallback : null;
 }
 
+function playbackForceScaleG() {
+    if (Number.isFinite(pbState.forceScaleG) && pbState.forceScaleG > 0) {
+        return pbState.forceScaleG;
+    }
+    const candidates = [];
+    const collect = (series) => {
+        if (!Array.isArray(series)) return;
+        for (const value of series) {
+            const num = Number(value);
+            if (Number.isFinite(num)) candidates.push(Math.abs(num));
+        }
+    };
+
+    const sessionSource = pbState.playbackManifest
+        ? normalizePlaybackData(pbState.playbackManifest, pbState.session?.laps || [])
+        : (pbState.rawPlaybackPayload ? normalizePlaybackData(pbState.rawPlaybackPayload, pbState.session?.laps || []) : null);
+
+    collect(sessionSource?.display_long_g);
+    collect(sessionSource?.long_g);
+    collect(pbState.data?.display_long_g);
+    collect(pbState.data?.long_g);
+
+    const sessionMax = candidates.length ? Math.max(...candidates) : 0;
+    pbState.forceScaleG = Math.max(0.4, sessionMax * 1.2);
+    return pbState.forceScaleG;
+}
+
 function playbackPathTimeOffsetSec() {
     const lagMs = Number(pbState.data?.gps_lag_ms_applied ?? 0) || 0;
     const trimMs = Number(pbState.data?.path_trim_ms ?? pbState.data?.active_tune?.pathTrimMs ?? 0) || 0;
@@ -8419,28 +8473,50 @@ function seekPlayback(val) {
 }
 
 async function jumpToLap(val) {
-    pbState.selectedLap = val;
-    if (val === 'all') {
+    const targetLap = val == null ? 'all' : String(val);
+    const switchSeq = (pbState.lapSwitchSeq || 0) + 1;
+    const wasPlaying = Boolean(pbState.playing);
+    pbState.lapSwitchSeq = switchSeq;
+    pbState.lapSwitchPending = true;
+    pbState.playing = false;
+    const btn = document.getElementById('pbPlayPause');
+    if (btn) btn.textContent = '▶';
+    pbState.selectedLap = targetLap;
+
+    const finishLapSwitch = (shouldResume = false) => {
+        if (switchSeq !== pbState.lapSwitchSeq) return;
+        pbState.lapSwitchPending = false;
+        if (shouldResume && wasPlaying && pbState.active) {
+            togglePlayback(true);
+        }
+    };
+
+    if (targetLap === 'all') {
         if (pbState.playbackManifest) {
             activatePlaybackData(normalizePlaybackData(pbState.playbackManifest, pbState.session?.laps || []), 'all');
+            finishLapSwitch(true);
             return;
         }
         pbState.currentIndex = 0;
     } else {
         try {
-            const chunk = await loadPlaybackLapChunk(parseInt(val));
+            const chunk = await loadPlaybackLapChunk(parseInt(targetLap));
+            if (switchSeq !== pbState.lapSwitchSeq) return;
             if (chunk) {
-                activatePlaybackData(chunk.data, val);
-                prefetchPlaybackLap(parseInt(val) + 1);
+                activatePlaybackData(chunk.data, targetLap);
+                prefetchPlaybackLap(parseInt(targetLap) + 1);
+                finishLapSwitch(true);
                 return;
             }
         } catch (error) {
+            if (switchSeq !== pbState.lapSwitchSeq) return;
             console.error('Failed to load playback lap chunk', error);
         }
     }
     // Sync Time
     if (pbState.data) pbState.playbackTime = pbState.data.time[pbState.currentIndex];
     drawFrame();
+    finishLapSwitch(true);
 }
 
 function prefetchPlaybackLap(lapNumber) {
@@ -8451,8 +8527,10 @@ function prefetchPlaybackLap(lapNumber) {
 }
 
 async function nextLapPlay() {
-    const curTime = pbState.data.time[Math.floor(pbState.currentIndex)];
-    const curLap = playbackLapForTime(curTime);
+    if (pbState.lapSwitchPending) return;
+    const curLap = (pbState.selectedLap && pbState.selectedLap !== 'all')
+        ? playbackLapByNumber(pbState.selectedLap)
+        : playbackLapForTime(pbState.data.time[Math.floor(pbState.currentIndex)]);
 
     if (curLap) {
         const nextLapNum = curLap.lap_number + 1;
@@ -8473,7 +8551,7 @@ async function nextLapPlay() {
 }
 
 function pbAnimationLoop() {
-    if (!pbState.active || !pbState.playing) return;
+    if (!pbState.active || !pbState.playing || pbState.lapSwitchPending) return;
 
     const now = performance.now();
     const dt = (now - pbState.lastTick) / 1000; // seconds
@@ -8730,10 +8808,20 @@ function drawFrame() {
     }
 
     const leanEl = document.getElementById('pbLean');
+    const leanDirEl = document.getElementById('pbLeanDirection');
     if (leanEl) {
-        // Show lean with direction indicator
-        const leanDir = lean > 0 ? 'R' : (lean < 0 ? 'L' : '');
-        leanEl.textContent = `${Math.abs(Math.round(lean))}° ${leanDir}`;
+        leanEl.textContent = `${Math.abs(Math.round(lean))}°`;
+    }
+    if (leanDirEl) {
+        const leanDir = lean > 1 ? 'R' : (lean < -1 ? 'L' : 'C');
+        leanDirEl.textContent = leanDir;
+        leanDirEl.style.color = leanDir === 'C' ? 'rgba(255,255,255,0.92)' : '#ffffff';
+        leanDirEl.style.borderColor = leanDir === 'C'
+            ? 'rgba(255,255,255,0.08)'
+            : 'rgba(255,107,53,0.24)';
+        leanDirEl.style.background = leanDir === 'C'
+            ? 'rgba(255,255,255,0.04)'
+            : 'rgba(255,107,53,0.12)';
     }
     const leanDockEl = document.getElementById('pbLeanDock');
     if (leanDockEl) {
@@ -8743,16 +8831,13 @@ function drawFrame() {
 
     const bikeEl = document.getElementById('pbLeanBike');
     if (bikeEl) {
-        // CSS rotate: positive = clockwise = rider's right lean
-        // Negate to match visual expectation (positive lean = lean right = visual tilt right)
-        bikeEl.style.transform = `rotate(${-lean}deg)`;
-        bikeEl.style.backgroundColor = Math.abs(lean) > 45 ? '#ff0000' : 'var(--secondary)';
+        const clampedLean = Math.max(-58, Math.min(58, Number(lean) || 0));
+        bikeEl.style.transform = `rotate(${-clampedLean}deg)`;
+        const glow = Math.min(0.9, Math.abs(clampedLean) / 54);
+        bikeEl.style.filter = `drop-shadow(0 0 ${8 + (glow * 10)}px rgba(255,107,53,${0.18 + glow * 0.28}))`;
     }
 
-    // G-Force
-    // Priority: Aligned > Raw
-    // Note: Aligned X = Long, Aligned Y = Lat.
-    // Raw X = Long (usually), Raw Y = Lat (usually).
+    // Force / G values
     let gx = 0, gy = 0;
 
     const displayLong = playbackSeriesValueAtTime(data.display_long_g || data.long_g, timeSec, i);
@@ -8771,41 +8856,35 @@ function drawFrame() {
     const gyEl = document.getElementById('pbGY');
     if (gxEl) gxEl.textContent = gx.toFixed(2);
     if (gyEl) gyEl.textContent = gy.toFixed(2);
-
-    const maxG = 1.5;
-    const dotX = 50 + (gy / maxG) * 50;
-    // Invert X for display (Brake = Top = Neg?, Accel = Bot = Pos?)
-    // Conventional G-G diagram: Braking (Long G > 0 or < 0 depending on frame) is usually Up.
-    // Datalogger: Accel > 0 (Green). Brake < 0 (Red). 
-    // Visualization: Up = Brake. Down = Accel. 
-    // So if Brake (<0), we want y < 50 (Top). 
-    // 50 + (-Brake * 50). Wait.
-    // If val is -1 (Brake). 50 + (-1 * 50) = 0 (Top). Correct.
-    // If val is +1 (Accel). 50 + (1 * 50) = 100 (Bot). Correct.
-    const dotY = 50 + (gx / maxG) * 50;
-
-    const gDot = document.getElementById('pbGDot');
-    if (gDot) {
-        gDot.style.left = Math.max(0, Math.min(100, dotX)) + '%';
-        gDot.style.top = Math.max(0, Math.min(100, dotY)) + '%';
+    const forceValueEl = document.getElementById('pbForceValue');
+    if (forceValueEl) forceValueEl.textContent = `${gx >= 0 ? '+' : ''}${gx.toFixed(2)}g`;
+    const forceStateEl = document.getElementById('pbForceState');
+    if (forceStateEl) {
+        if (gx > 0.05) {
+            forceStateEl.textContent = 'ACCEL';
+            forceStateEl.style.color = 'rgba(0, 210, 106, 0.92)';
+        } else if (gx < -0.05) {
+            forceStateEl.textContent = 'BRAKE';
+            forceStateEl.style.color = 'rgba(255, 77, 79, 0.92)';
+        } else {
+            forceStateEl.textContent = 'COAST';
+            forceStateEl.style.color = 'rgba(255,255,255,0.62)';
+        }
     }
 
     // Bars
-    const accelBar = document.getElementById('pbAccelBar');
-    const brakeBar = document.getElementById('pbBrakeBar');
     const speedBar = document.getElementById('pbSpeedBar');
+    const accelFill = document.getElementById('pbForceAccelFill');
+    const brakeFill = document.getElementById('pbForceBrakeFill');
 
-    if (speedBar) speedBar.style.width = Math.min((speed / 250) * 100, 100) + '%';
+    if (speedBar) speedBar.style.width = Math.min((speed / 240) * 100, 100) + '%';
 
-    if (accelBar && brakeBar) {
-        accelBar.style.height = '0%';
-        brakeBar.style.height = '0%';
-
-        if (gx > 0.1) {
-            accelBar.style.height = Math.min((gx / 0.8) * 100, 100) + '%';
-        } else if (gx < -0.1) {
-            brakeBar.style.height = Math.min((Math.abs(gx) / 1.2) * 100, 100) + '%';
-        }
+    if (accelFill && brakeFill) {
+        const maxForce = playbackForceScaleG();
+        const accelPct = gx > 0 ? Math.min((gx / maxForce) * 50, 50) : 0;
+        const brakePct = gx < 0 ? Math.min((Math.abs(gx) / maxForce) * 50, 50) : 0;
+        accelFill.style.width = `${accelPct}%`;
+        brakeFill.style.width = `${brakePct}%`;
     }
 }
 // ============================================================================

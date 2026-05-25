@@ -5219,3 +5219,89 @@ The important architectural boundary is now in place:
 - playback data answers "how should the session be animated and inspected?"
 
 This separation should make future work safer because playback smoothness, graph tuning, GPS lag, and diagnostic overlays can evolve without risking official lap and sector timing.
+
+## 2026-05-25 - Playback UI Rail Pass, Lap-Scoped Startup, and Safer Lap Switching
+
+Today was a playback-focused product pass. The work stayed in the UI layer and concentrated on making playback easier to read, less glitchy during lap transitions, and more session-relative in how it presents live force.
+
+### Playback Layout And Widget Pass
+
+The playback modal was reworked visually without changing the backend contract.
+
+Main UI changes:
+
+- the map remains the dominant playback surface
+- the right side is now a cleaner telemetry rail rather than a mixed stack of older cards
+- the lean graph was moved to a bottom strip so it no longer competes with the map path
+- the speed card was restyled into a simpler live instrument card
+- the longitudinal force widget was rebuilt as a centered brake/coast/accel bar
+
+The lean widget was simplified again after the more illustrative version missed the target. It now uses a plain bottom-pivoted lean bar rather than a bike drawing, which is easier to read and less visually noisy.
+
+### Lap-Scoped Playback Startup
+
+Playback no longer starts by drawing the full session overview path by default.
+
+Instead:
+
+- opening playback now tries to load the first lap chunk immediately
+- the modal starts on lap 1 when that chunk is available
+- only that lap is drawn at startup
+- the next lap is still prefetched for smoother stepping
+
+This makes first-open playback feel more focused and avoids the clutter of rendering all laps before the user has chosen a working view.
+
+### Lap Switching Stability
+
+Fast lap switching was causing race conditions in the browser:
+
+- old async lap responses could arrive after a newer click
+- playback could continue running on stale data while a lap handoff was happening
+- rapid `Next Lap` clicks could bounce back to lap 1 or reset the dot unexpectedly
+
+The client flow was hardened by:
+
+- adding a lap-switch sequence token
+- ignoring stale lap-load responses
+- pausing playback while a lap switch is in flight
+- preventing `Next Lap` re-entry during an active switch
+- preferring the explicitly selected lap over inferred current playback position when stepping forward
+
+This should make lap handoff behavior deterministic rather than timing-sensitive.
+
+### Session-Relative Force Meter Scaling
+
+The longitudinal force bar was changed from a fixed visual scale to a session-relative one.
+
+New behavior:
+
+- the bar limit is now based on the maximum absolute longitudinal force seen in the session
+- a `20%` headroom margin is applied on top of that maximum
+- the widget therefore expands or compresses relative to the actual session instead of pinning against a hardcoded ceiling
+
+This makes the force card more meaningful across both mild and aggressive sessions.
+
+### Files Touched
+
+- `server/ui/app.js`
+- `server/ui/index.html`
+- `server/ui/styles.css`
+
+### Verification
+
+UI sanity checks run today:
+
+- `node --check server/ui/app.js`
+
+### Product State
+
+Playback is now closer to a dedicated product surface than a loose collection of telemetry blocks.
+
+The important practical improvements from today are:
+
+- lap 1 loads first instead of the whole session
+- the lean graph no longer fights the map for attention
+- fast lap switching should no longer corrupt the active playback state
+- the force bar now reads relative to the actual session envelope
+
+The playback UI still needs more visual refinement, but the current pass improves structure and interaction reliability without forcing any backend changes.
