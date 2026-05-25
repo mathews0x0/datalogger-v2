@@ -21,15 +21,21 @@ REMOTE_LEGACY_ENV="$REMOTE_APP_DIR/.env"
 BACKUP_DIR="${BACKUP_DIR:-/root/racesense_backups}"
 LOCAL_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-# ─── SSH Multiplexing (enter password only ONCE) ─────────────────────────────
-SSH_SOCK="/tmp/racesense_deploy_$$"
-SSH_OPTS="-o ConnectTimeout=10 -o ControlMaster=auto -o ControlPath=$SSH_SOCK -o ControlPersist=300"
+# ─── SSH Multiplexing (cache local auth for 24h) ─────────────────────────────
+SSH_CACHE_DIR="${HOME}/.cache/racesense"
+mkdir -p "$SSH_CACHE_DIR"
+SERVER_SLUG=$(printf '%s' "$SERVER" | tr -c '[:alnum:]._-@' '_')
+SSH_SOCK="$SSH_CACHE_DIR/ssh_mux_${SERVER_SLUG}"
+SSH_OPTS="-o ConnectTimeout=10 -o ControlMaster=auto -o ControlPath=$SSH_SOCK -o ControlPersist=86400"
 export RSYNC_RSH="ssh $SSH_OPTS"
 
-cleanup() {
-    ssh -o ControlPath="$SSH_SOCK" -O exit "$SERVER" 2>/dev/null || true
+reset_ssh_mux_if_stale() {
+    if [ -S "$SSH_SOCK" ] && ! ssh -o ControlPath="$SSH_SOCK" -O check "$SERVER" >/dev/null 2>&1; then
+        rm -f "$SSH_SOCK"
+    fi
 }
-trap cleanup EXIT
+
+reset_ssh_mux_if_stale
 
 # ─── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'

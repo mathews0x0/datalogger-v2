@@ -12,7 +12,7 @@ import uuid
 from api.models import db, User, Job, SessionMeta
 from core.file_manager import FileManager
 import api.config as config
-from api.helpers import get_track_folder
+from api.helpers import get_track_folder, is_primary_session_json
 
 files_bp = Blueprint('files', __name__)
 
@@ -68,7 +68,7 @@ def process_session():
         sessions_dir = config.get_user_sessions_dir(user_id)
         if sessions_dir.exists():
             for sfile in os.listdir(sessions_dir):
-                if sfile.endswith('.json') and not sfile.endswith('_telemetry.json'):
+                if is_primary_session_json(sfile):
                     try:
                         with open(sessions_dir / sfile, 'r') as f:
                             sdata = json.load(f)
@@ -193,7 +193,7 @@ def get_processed_files():
     
     if sessions_dir.exists():
         for filename in os.listdir(sessions_dir):
-            if filename.endswith('.json') and not filename.endswith('_telemetry.json'):
+            if is_primary_session_json(filename):
                 try:
                     with open(sessions_dir / filename, 'r') as f:
                         data = json.load(f)
@@ -232,7 +232,7 @@ def process_all_files():
     sessions_dir = config.get_user_sessions_dir(user_id)
     if sessions_dir.exists():
         for fname in os.listdir(sessions_dir):
-            if fname.endswith('.json') and not fname.endswith('_telemetry.json'):
+            if is_primary_session_json(fname):
                 try:
                     with open(sessions_dir / fname, 'r') as f:
                         sdata = json.load(f)
@@ -353,4 +353,3 @@ def rename_learning_file():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-

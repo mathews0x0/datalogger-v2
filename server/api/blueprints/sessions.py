@@ -414,9 +414,11 @@ def delete_session_endpoint(session_id):
         sessions_dir = config.get_user_sessions_dir(s_meta.user_id)
         s_path = sessions_dir / f"{session_id}.json"
         t_path = sessions_dir / f"{session_id}_telemetry.json"
+        p_path = sessions_dir / f"{session_id}_playback.json"
         
         if s_path.exists(): os.remove(s_path)
         if t_path.exists(): os.remove(t_path)
+        if p_path.exists(): os.remove(p_path)
         
         db.session.delete(s_meta)
         db.session.commit()

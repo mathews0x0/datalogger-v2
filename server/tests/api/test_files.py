@@ -1,10 +1,13 @@
 import pytest
 import sys
 import os
+import json
 
 from flask_jwt_extended import create_access_token
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
-from api.models import db, User
+from api.models import db, User, SessionMeta
+import api.config as config
+from api.helpers import register_new_sessions
 
 @pytest.fixture
 def client(app):
@@ -43,3 +46,42 @@ def test_learning_delete_missing(client, app):
     resp = client.post('/api/learning/delete', json={'files': ['missing.csv']})
     assert resp.status_code == 200
     assert resp.json['success'] is True
+
+def test_register_new_sessions_ignores_playback_sidecar(client, app):
+    with app.app_context():
+        user = User.query.filter_by(email='files@racesense.in').first()
+        sessions_dir = config.get_user_sessions_dir(user.id)
+
+        real_session = {
+            'meta': {
+                'session_id': 'sess_real',
+                'start_time': '2026-05-25 08:50:00',
+                'duration_sec': 852.0,
+                'source_file': '/tmp/sess_real.csv',
+            },
+            'track': {
+                'track_id': 1000068,
+                'track_name': 'track_1000068',
+                'track_scope': 'user_fallback',
+                'folder_name': 'track_1000068',
+            },
+            'summary': {
+                'total_laps': 6,
+                'best_lap_time': 95.434,
+            },
+            'laps': [{}],
+        }
+        playback_sidecar = {
+            'rows': [],
+            'gps_lag_ms_applied': 2200,
+        }
+
+        (sessions_dir / 'sess_real.json').write_text(json.dumps(real_session))
+        (sessions_dir / 'sess_real_playback.json').write_text(json.dumps(playback_sidecar))
+
+        register_new_sessions(user.id)
+
+        metas = SessionMeta.query.filter_by(user_id=user.id).order_by(SessionMeta.session_id.asc()).all()
+        assert [meta.session_id for meta in metas] == ['sess_real']
+        assert metas[0].duration_sec == 852.0
+        assert metas[0].total_laps == 6

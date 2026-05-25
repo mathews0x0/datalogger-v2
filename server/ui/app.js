@@ -37,6 +37,9 @@ let currentCommunityTab = localStorage.getItem('ui:communityTab') || 'explore';
 let trackSearchQuery = localStorage.getItem('ui:tracksSearch') || '';
 let sessionSearchQuery = localStorage.getItem('ui:sessionSearch') || '';
 let communitySearchQuery = localStorage.getItem('ui:communitySearch') || '';
+let sessionSelectionMode = false;
+let selectedSessionIds = new Set();
+let sessionBulkDeleteInFlight = false;
 let adminUsersData = [];
 let adminTracksData = [];
 let adminUnmatchedTracks = [];
@@ -2879,6 +2882,7 @@ async function loadSessions(filterTrackId = null) {
 
         sessions = sessionsData || [];
         renderSessionsList(sessions);
+        updateSessionBulkActionsUI();
 
     } catch (error) {
         container.innerHTML = renderErrorState('Failed to load sessions.');
@@ -2907,6 +2911,8 @@ function renderSessionsList(sessionList) {
     if (!container) return;
 
     if (!sessionList || sessionList.length === 0) {
+        selectedSessionIds.clear();
+        updateSessionBulkActionsUI([]);
         container.innerHTML = renderEmptyState(
             '📊',
             'No sessions yet',
@@ -2924,6 +2930,8 @@ function renderSessionsList(sessionList) {
     });
 
     if (filteredSessions.length === 0) {
+        selectedSessionIds.clear();
+        updateSessionBulkActionsUI([]);
         container.innerHTML = renderEmptyState(
             '🔎',
             'No matching sessions',
@@ -2938,7 +2946,12 @@ function renderSessionsList(sessionList) {
         <div class="session-date-group">
             <h3>${date}</h3>
             ${dateSessions.map(session => `
-                <div class="session-card" onclick="viewSession('${session.session_id}')">
+                <div class="session-card ${sessionSelectionMode ? 'session-card-selectable' : ''} ${selectedSessionIds.has(session.session_id) ? 'selected' : ''}" onclick="handleSessionCardClick(event, '${session.session_id}')">
+                    ${sessionSelectionMode ? `
+                        <button class="session-select-toggle ${selectedSessionIds.has(session.session_id) ? 'selected' : ''}" onclick="event.stopPropagation(); toggleSessionSelected('${session.session_id}')" aria-label="Toggle session selection">
+                            <i class="fas ${selectedSessionIds.has(session.session_id) ? 'fa-check' : 'fa-plus'}"></i>
+                        </button>
+                    ` : ''}
                     <div class="session-header">
                         <div class="session-title">${session.track_name}</div>
                         <div class="session-time">${formatTime24h(session.start_time)}</div>
@@ -2959,11 +2972,119 @@ function renderSessionsList(sessionList) {
                         ${session.is_public ? '<span class="badge status-pill-public"><i class="fas fa-globe"></i> Public</span>' : ''}
                         ${session.tbl_improved ? '<span class="badge success">New TBL!</span>' : ''}
                     </div>
-                    ${renderSessionQuickActions(session)}
+                    ${sessionSelectionMode ? '' : renderSessionQuickActions(session)}
                 </div>
             `).join('')}
         </div>
     `).join('');
+
+    updateSessionBulkActionsUI(filteredSessions);
+}
+
+function handleSessionCardClick(event, sessionId) {
+    if (sessionSelectionMode) {
+        event?.preventDefault?.();
+        toggleSessionSelected(sessionId);
+        return;
+    }
+    viewSession(sessionId);
+}
+
+function toggleSessionSelectionMode(forceValue = null) {
+    sessionSelectionMode = typeof forceValue === 'boolean' ? forceValue : !sessionSelectionMode;
+    if (!sessionSelectionMode) {
+        selectedSessionIds.clear();
+    }
+    renderSessionsList(sessions);
+}
+
+function toggleSessionSelected(sessionId) {
+    if (!sessionSelectionMode || !sessionId) return;
+    if (selectedSessionIds.has(sessionId)) {
+        selectedSessionIds.delete(sessionId);
+    } else {
+        selectedSessionIds.add(sessionId);
+    }
+    renderSessionsList(sessions);
+}
+
+function getVisibleSessionIds() {
+    const query = normalizeQuery(sessionSearchQuery);
+    const filterSelect = document.getElementById('trackFilter');
+    const selectedTrackId = filterSelect?.value ? String(filterSelect.value) : '';
+    return (sessions || [])
+        .filter(session => {
+            if (selectedTrackId && String(session.track_id) !== selectedTrackId) return false;
+            if (!query) return true;
+            return `${session.track_name || ''} ${formatDateTimeAbbreviated(session.start_time)}`.toLowerCase().includes(query);
+        })
+        .map(session => session.session_id);
+}
+
+function selectAllVisibleSessions() {
+    if (!sessionSelectionMode) return;
+    getVisibleSessionIds().forEach(sessionId => selectedSessionIds.add(sessionId));
+    renderSessionsList(sessions);
+}
+
+function clearSessionSelection() {
+    selectedSessionIds.clear();
+    renderSessionsList(sessions);
+}
+
+function updateSessionBulkActionsUI(filteredSessions = null) {
+    const bulkBar = document.getElementById('sessionBulkActions');
+    const countEl = document.getElementById('sessionBulkCount');
+    const selectBtn = document.getElementById('sessionSelectModeBtn');
+    const deleteBtn = document.getElementById('sessionBulkDeleteBtn');
+    if (!bulkBar || !countEl || !selectBtn || !deleteBtn) return;
+
+    const visibleCount = Array.isArray(filteredSessions) ? filteredSessions.length : getVisibleSessionIds().length;
+    const selectedCount = selectedSessionIds.size;
+    bulkBar.style.display = sessionSelectionMode ? 'flex' : 'none';
+    countEl.textContent = `${selectedCount} selected${sessionSelectionMode ? ` • ${visibleCount} visible` : ''}`;
+    selectBtn.innerHTML = sessionSelectionMode
+        ? '<i class="fas fa-times"></i> Cancel Select'
+        : '<i class="fas fa-check-square"></i> Select';
+    deleteBtn.disabled = selectedCount === 0 || sessionBulkDeleteInFlight;
+}
+
+async function deleteSelectedSessions() {
+    const ids = Array.from(selectedSessionIds);
+    if (!ids.length || sessionBulkDeleteInFlight) return;
+    if (!confirm(`Delete ${ids.length} selected session${ids.length === 1 ? '' : 's'}?\n\nRaw CSV files will remain safe.`)) {
+        return;
+    }
+
+    sessionBulkDeleteInFlight = true;
+    updateSessionBulkActionsUI();
+
+    try {
+        const results = await Promise.allSettled(
+            ids.map(sessionId => apiCall(`/api/sessions/${sessionId}`, { method: 'DELETE' }))
+        );
+        const successCount = results.filter(result => result.status === 'fulfilled').length;
+        const failedCount = results.length - successCount;
+
+        if (successCount) {
+            showToast(`Deleted ${successCount} session${successCount === 1 ? '' : 's'}`, 'success');
+        }
+        if (failedCount) {
+            showToast(`${failedCount} session delete${failedCount === 1 ? '' : 's'} failed`, 'error');
+        }
+
+        if (successCount === ids.length) {
+            sessionSelectionMode = false;
+            selectedSessionIds.clear();
+        }
+
+        const filterSelect = document.getElementById('trackFilter');
+        const trackId = filterSelect?.value ? parseInt(filterSelect.value, 10) : null;
+        await loadSessions(trackId);
+    } finally {
+        sessionBulkDeleteInFlight = false;
+        updateSessionBulkActionsUI();
+    }
 }
 
 // ============================================================================
@@ -8832,7 +8953,7 @@ function drawFrame() {
     const bikeEl = document.getElementById('pbLeanBike');
     if (bikeEl) {
         const clampedLean = Math.max(-58, Math.min(58, Number(lean) || 0));
-        bikeEl.style.transform = `rotate(${-clampedLean}deg)`;
+        bikeEl.style.transform = `rotate(${clampedLean}deg)`;
         const glow = Math.min(0.9, Math.abs(clampedLean) / 54);
         bikeEl.style.filter = `drop-shadow(0 0 ${8 + (glow * 10)}px rgba(255,107,53,${0.18 + glow * 0.28}))`;
     }
@@ -8854,8 +8975,8 @@ function drawFrame() {
 
     const gxEl = document.getElementById('pbGX');
     const gyEl = document.getElementById('pbGY');
-    if (gxEl) gxEl.textContent = gx.toFixed(2);
-    if (gyEl) gyEl.textContent = gy.toFixed(2);
+    if (gxEl) gxEl.textContent = `${gx >= 0 ? '+' : ''}${gx.toFixed(2)}g`;
+    if (gyEl) gyEl.textContent = `${gy >= 0 ? '+' : ''}${gy.toFixed(2)}g lat`;
     const forceValueEl = document.getElementById('pbForceValue');
     if (forceValueEl) forceValueEl.textContent = `${gx >= 0 ? '+' : ''}${gx.toFixed(2)}g`;
     const forceStateEl = document.getElementById('pbForceState');

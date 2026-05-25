@@ -5305,3 +5305,143 @@ The important practical improvements from today are:
 - the force bar now reads relative to the actual session envelope
 
 The playback UI still needs more visual refinement, but the current pass improves structure and interaction reliability without forcing any backend changes.
+
+## 2026-05-26 — Playback UI Consolidation, Session Cleanup, and Processing Hygiene
+
+Today’s work was a mixed product and maintenance pass across playback UX, session management, and backend file handling.
+
+### Sessions Tab: Bulk Cleanup for Broken Entries
+
+A practical cleanup problem had built up in production: stray broken sessions were showing up with placeholder metadata such as:
+
+- `Unknown`
+- `0:00`
+- `1/1/1970`
+
+These sessions often could not be opened normally, which meant they also could not be deleted through the existing single-session flows.
+
+To address that, the Sessions tab now supports bulk selection and delete at the card level:
+
+- a dedicated `Select` mode was added to the Sessions toolbar
+- visible session cards can be multi-selected directly
+- bulk actions now support:
+  - `Select Visible`
+  - `Clear`
+  - `Delete Selected`
+  - `Cancel`
+
+This gives users a recovery path even when a session is malformed enough to be unusable from the playback side.
+
+### Root Cause Fix: Playback Sidecars Were Being Registered as Real Sessions
+
+The broken `1970 / Unknown / 0:00` entries were not just a UI issue. A backend scan bug was causing session sidecars to be misclassified as real sessions.
+
+Root cause:
+
+- session-folder scans were correctly excluding `*_telemetry.json`
+- but they were not excluding `*_playback.json`
+- after processing a real session, its playback sidecar could therefore be auto-registered as a second fake session
+
+The backend now uses a shared canonical filter for “real session JSON only,” and all relevant scan paths were updated to ignore playback sidecars.
+
+Deletion was also hardened so that deleting a session removes:
+
+- the primary session JSON
+- the telemetry sidecar
+- the playback sidecar
+
+This closes both halves of the bug:
+
+- new fake sessions should no longer be created
+- deleting a real session should no longer leave behind sidecars that get re-registered later
+
+### Upgrade Flow: 24-Hour SSH Auth Reuse
+
+The local `./upgrade` workflow was also improved.
+
+Previous behavior:
+
+- SSH password prompts could recur unnecessarily across repeated upgrades
+
+New behavior:
+
+- SSH auth now reuses a stable local multiplexed connection for up to 24 hours
+- the password should normally be entered once per day rather than once per upgrade
+- no plaintext password is stored
+
+This is a pure operator-quality improvement, but it meaningfully reduces friction on repeated deploy/test cycles.
+
+### Playback UI: Visual Compression and Tuning Separation
+
+Playback UI changes continued today, but with a clearer product rule:
+
+- the map remains the primary surface
+- tuning tools are secondary
+- the inline graph must not interfere with normal playback
+
+That led to a few concrete decisions.
+
+#### Inline Graph Removed From Main Playback Surface
+
+The inline IMU/GPS graph had started competing visually with the playback path and repeatedly overlapped the main playback stage.
+
+Decision:
+
+- remove the inline graph from the playback modal entirely
+- keep tuning access available through the dedicated `Graph` button and popup graph modal only
+
+This keeps tuning available without letting debug visualization damage the primary playback experience.
+
+#### Speed and Lean Rebalanced
+
+The right-rail metric widgets were compacted and rebalanced.
+
+Current product direction:
+
+- `Speed` should behave like a compact numeric readout, not a large status block
+- `Lean` should remain more expressive visually than `Speed`
+- the two widgets do not need identical size or equal visual weight
+
+As part of that:
+
+- `Speed` was slimmed so it no longer wastes vertical or horizontal space around the number
+- the lean widget was restored from the narrow “thermometer-like” look back toward the fuller arc-based treatment
+- the row now allows `Speed` to shrink to its content while `Lean` takes the remaining width
+
+This is a better match for how users actually read those widgets:
+
+- speed is instant numeric information
+- lean benefits from a stronger orientation cue
+
+#### Lean Sign Consistency Fixed
+
+A correctness issue in the lean widget was also fixed:
+
+- the direction text and visual motion had become contradictory
+- the bar could move toward the side marked `L` while the value was labeled `R`
+
+The transform direction was corrected so the widget now visually leans toward the same side indicated by the direction label.
+
+### Playback Stability: Prior Work Now Integrated
+
+The following recent playback changes remain part of the active product state and were carried forward as part of today’s cleanup context:
+
+- playback starts on lap 1 instead of drawing the entire session first
+- rapid lap switching is guarded against async race conditions
+- the longitudinal force bar scales to session maximum force plus headroom
+- the graph button remains available for tuning, but tuning is separated from the main playback surface
+
+### Product Readout
+
+The product is now moving toward a cleaner separation of concerns:
+
+- playback for understanding the lap
+- popup graph tooling for tuning and debugging
+- session management that can recover from malformed records without requiring playback access
+
+The main remaining need on the UI side is refinement, not feature discovery. The structure is becoming clearer:
+
+- map-first playback
+- lighter metric widgets
+- separate tuning surface
+- safer session lifecycle handling

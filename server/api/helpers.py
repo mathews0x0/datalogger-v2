@@ -88,6 +88,15 @@ def robust_get_json(url, timeout=3.0):
         
     return None
 
+def is_primary_session_json(filename):
+    """Return True only for canonical session JSON files, not sidecar artifacts."""
+    if not filename or not filename.endswith('.json'):
+        return False
+    return not (
+        filename.endswith('_telemetry.json')
+        or filename.endswith('_playback.json')
+    )
+
 def register_new_sessions(user_id):
     """Scan user-specific sessions directory and register any new sessions"""
     sessions_dir = config.get_user_sessions_dir(user_id)
@@ -96,7 +105,7 @@ def register_new_sessions(user_id):
     
     new_found = False
     for filename in os.listdir(sessions_dir):
-        if filename.endswith('.json') and not filename.endswith('_telemetry.json'):
+        if is_primary_session_json(filename):
             session_id = filename.replace('.json', '')
             try:
                 with open(sessions_dir / filename, 'r') as f:
