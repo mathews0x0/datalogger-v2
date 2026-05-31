@@ -17,13 +17,13 @@ This document provides a deep dive into the technology stack, deployment process
 *   **Worker**: Custom `worker.py` script for asynchronous session analysis.
 
 ### **Frontend (Modern Vanilla JS)**
-*   **UI**: Standard HTML5, CSS3 (Custom variables, Flexbox/Grid).
-*   **Architecture**: **Direct-to-Cloud (IoT)**.
-    *   The UI polls the Cloud API (`/api/devices`) for heartbeats.
-    *   Local network discovery/IP scanning has been decommissioned.
-*   **Maps**: [Leaflet.js](https://leafletjs.com/) for track visualization.
-*   **Charts**: Custom SVG-based telemetry traces and [Chart.js](https://www.chartjs.org/) for interactive plots.
-*   **Target**: Browser-first web app served directly from `server/ui/`.
+*   **UI**: Static HTML5/CSS3 plus a large vanilla-JS single-page app served from `server/ui/`.
+*   **Architecture**: Browser-first SPA with view switching inside `server/ui/app.js`.
+*   **Rendering**: Custom DOM/SVG/canvas rendering for telemetry, charts, and playback. There is no React/Vite/Webpack build pipeline in the current repo.
+*   **Direct-to-Cloud + Local Ops**:
+    *   The UI polls backend APIs for heartbeats and sync/device state.
+    *   Local-network device operations still exist (`/api/device/scan`, `/api/device/check`, `/api/device/configure`, `/api/device/update-ota`), but are server-side gated with `@local_only`.
+*   **Target**: Browser-first web app served directly by Flask from `server/ui/`.
 
 ### **Infrastructure**
 *   **Host**: **Host.co.in** self-managed VPS (Ubuntu).
@@ -53,11 +53,9 @@ This document provides a deep dive into the technology stack, deployment process
 *   [`sync_cloud.sh`](file:///Users/mj/Documents/datalogger-v2/sync_cloud.sh): A faster, rsync-only alternative for pushing code changes without a full rebuild.
 
 ### **2. Local Development**
-*   [`start.sh`](file:///Users/mj/Documents/datalogger-v2/start.sh): Kills any processes on port 6969, loads `env/development.env`, and starts both the **Backend** and the **Worker** locally.
+*   [`start.sh`](file:///Users/mj/Documents/datalogger-v2/start.sh): Kills any processes on port `6969`, loads `env/development.env`, ensures local PostgreSQL exists, runs migrations, starts `worker.py`, then starts the Flask app.
+*   [`deploy/ensure_local_postgres.sh`](file:///Users/mj/Documents/datalogger-v2/deploy/ensure_local_postgres.sh): Creates the expected local PostgreSQL database if missing.
 *   [`reboot_racesense.sh`](file:///Users/mj/Documents/datalogger-v2/reboot_racesense.sh): Handy script to remotely restart Nginx and Gunicorn services if the server becomes unresponsive.
-
-### **3. Database Hacks**
-*   [`patch_production_db.py`](file:///Users/mj/Documents/datalogger-v2/patch_production_db.py): Use this when structural changes (like adding `UNIQUE` constraints across multiple columns) aren't easily handled by Alembic. It performs a "Copy -> Drop -> Recreate -> Restore" cycle.
 
 ---
 
@@ -75,7 +73,6 @@ Environment-specific files live in `env/`:
 - `env/production.env`: server runtime config, stored on production at `/var/www/racesense/env/production.env`
 
 Key variables:
-- `SECRET_KEY`: Flask session security.
 - `JWT_SECRET_KEY`: JWT signing key.
 - `FLASK_ENV`: Set to `production` or `development`.
 - `DATABASE_URL`: Required in every environment. Must point to PostgreSQL.
@@ -88,14 +85,14 @@ Key variables:
 ### **1. Database Silo Uniqueness**
 In the `sessions` and `tracks` tables, constraints are set as `UNIQUE(session_id, user_id)`. Never change this to just `UNIQUE(session_id)`, as different users may have overlapping track IDs or session folder names.
 
-### **2. The Instance Folder**
-The `server/instance/data` folder contains all raw telemetry and analyzed JSONs. **Never run `rm -rf` on this folder** without a full backup, as these files are the primary source of truth for the platform (even more than the DB).
+### **2. User Data Storage**
+User data is persisted under `server/data/users/<user_id>/...` via helpers in `server/api/config.py`. This includes raw learning CSVs, processed session JSON, playback artifacts, tracks, and user media. **Never run `rm -rf` on `server/data/users`** without a full backup, as these files remain a primary source of truth alongside the DB.
 
 ### **3. Worker Concurrency**
-The `worker.py` script is designed to run a single job at a time per user to avoid unnecessary I/O pressure while the web server is active. PostgreSQL removes SQLite locking concerns, but this queue behavior still protects CPU and disk contention.
+The current `worker.py` process polls the `jobs` table and executes one queued job at a time per worker process. In the standard local setup there is one worker process, so analysis is effectively serialized. PostgreSQL removes the old SQLite locking pressure, but queue serialization still protects CPU and disk contention.
 
-### **4. Local vs Production IPs**
-The networking code in `devices.py` (Scanning) uses a proxy logic. While developing locally, it scans `192.168.*`. In production, this feature is disabled via the `@local_only` decorator to prevent the server from scanning its internal VPC network.
+### **4. Local vs Production Device Ops**
+Device scan/check/configure/update endpoints are still present for LAN workflows, but sensitive local-network actions are protected with the `@local_only` decorator in `server/api/decorators.py`. Any future local-only developer harness should follow the same minimum rule and ideally avoid registering dev routes in production entirely.
 
 ---
 

@@ -46,6 +46,9 @@ def protect_api():
         # Also allow shared and public session data
         if request.path.startswith('/api/shared/') or request.path.startswith('/api/public/'):
             return
+
+        if request.path.startswith('/api/race-view/'):
+            return
         
         # Allow profile photo serving
         if request.path.endswith('/photo') and request.path.startswith('/api/users/') and request.method == 'GET':

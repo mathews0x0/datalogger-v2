@@ -72,7 +72,7 @@ class SessionMeta(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
     # New fields for Phase 2: Privacy
-    is_public = db.Column(db.Boolean, default=False)
+    is_public = db.Column(db.Boolean, default=True)
     share_token = db.Column(db.String(100), unique=True, nullable=True)
     share_expires_at = db.Column(db.DateTime, nullable=True)
 

@@ -25,7 +25,7 @@ The heart of the project is the **RS-Core** hardware module. It is a compact, ba
 ### 🌐 The Platform
 The platform consists of:
 1.  **Backend (Flask/SQLAlchemy)**: Manages users, sessions, metadata, and background analysis jobs.
-2.  **Frontend (Vanilla JS/Capacitor)**: A high-performance web dashboard that also runs as a native mobile app.
+2.  **Frontend (Vanilla JS SPA)**: A browser-first dashboard served directly from `server/ui/` with no frontend build step in the current repo.
 3.  **Analysis Engine (Python)**: The "brain" that processes raw CSV logs into laps, sectors, and advanced metrics.
 
 ### ☁️ Deployment Posture
@@ -59,7 +59,7 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 ### 🛰️ Device Integration (RS-Core)
 | Feature | Description | Frontend Files | Backend Files | Models |
 | :--- | :--- | :--- | :--- | :--- |
-| **Network Scan** | 2-Phase Scan: **Priority (ARP table)** then **Parallel Brute Force (50 threads)**. | `server/ui/app.js` (scanForDevice) | `server/api/blueprints/devices.py` | N/A |
+| **Network Scan / Local Device Ops** | LAN device scan, reachability checks, WiFi configure proxy, and OTA endpoints still exist but are restricted to local mode with `@local_only`. | `server/ui/app.js` | `server/api/blueprints/devices.py` | N/A |
 | **Device Token** | Unique `rsk_` token for hardware auth. Dual-auth supported on uploads. | `server/ui/app.js` (generateDeviceToken)| `server/api/blueprints/devices.py` | `DeviceToken` |
 | **WiFi Config** | Web-proxy to push SSID/Password to device in AP mode (`192.168.4.1`). | `server/ui/app.js` (configureDevice) | `server/api/blueprints/devices.py` | N/A |
 | **Firmware OTA** | Pushes binary updates to device over WiFi using `UpdateManager`. | `server/ui/app.js` (flashLatest) | `server/api/update_manager.py` | N/A |
@@ -71,7 +71,7 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 | :--- | :--- | :--- | :--- | :--- |
 | **Track List** | User sees private fallback tracks plus only the shared master tracks they have actually matched a session against. | `server/ui/app.js` (tracksView) | `server/api/blueprints/tracks.py` | `TrackMeta`, `GlobalTrack` |
 | **Master Track Packages** | Admin uploads canonical track packages containing SVG layout, geo-reference, sampled GPS anchors, and transform metadata. | `server/ui/app.js` (adminView) | `server/api/blueprints/admin.py`, `server/api/track_catalog.py` | `GlobalTrack` |
-| **Sectors** | Shared master tracks are initialized with 7 sectors from the uploaded package start/finish basis; fallback tracks retain existing behavior. | `server/ui/app.js` (trackDetail) | `server/api/track_catalog.py`, `src/analysis/core/track_manager.py` | Track JSONs |
+| **Sectors** | Shared master tracks are initialized with 7 sectors from the uploaded package start/finish basis; fallback tracks retain existing behavior. | `server/ui/app.js` (trackDetail) | `server/api/track_catalog.py`, `server/core/` analysis modules | Track JSONs |
 | **Active Track** | Push current track metadata to the RS-Core for live timing. For shared master tracks, firmware receives the canonical track definition plus user-specific TBL overlay. | `server/ui/app.js` (setActive) | `server/api/blueprints/devices.py` (ensureTrackSynced) | N/A |
 | **Pit Lane** | Mark entry/exit to filter sessions for "Clean" track time only. | `server/ui/app.js` (markPitLane) | `server/api/blueprints/tracks.py` | JSON metadata |
 
@@ -89,12 +89,14 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 | Feature | Description | Frontend Files | Backend Files | Models |
 | :--- | :--- | :--- | :--- | :--- |
 | **Trackdays** | Grouping sessions. **Aggregated Stats** (Total Trackday Best, TBL, Consistency). | `server/ui/app.js` (viewTrackday) | `server/api/blueprints/trackdays.py` | `TrackDayMeta` |
+| **Race View CTA** | Contextual multi-rider replay entry point surfaced inside Trackday detail when 2+ public sessions overlap on the same canonical track. | `server/ui/app.js` (loadTrackdayRaceViewCta, openRaceView) | `server/api/blueprints/race_view.py` | `SessionMeta`, `GlobalTrack` |
 | **Bulk Tagging** | Multi-select sessions to associate with an event. | `server/ui/app.js` (showTagSessionModal)| `server/api/blueprints/trackdays.py` | JSON relation |
 
 ### 👥 Community & Social
 | Feature | Description | Frontend Files | Backend Files | Models |
 | :--- | :--- | :--- | :--- | :--- |
 | **Public Feed** | Explore shared sessions. Following/Follower system. | `server/ui/app.js` (loadFollowingFeed)| `server/api/blueprints/social.py` | `Follow` |
+| **Race View** | Public multi-rider replay for overlapping public sessions on the same canonical track. Surfaced first through Community discovery cards and Trackday CTAs rather than a top-level tab. | `server/ui/app.js` (loadCommunityRaceViewRail, renderRaceView) | `server/api/blueprints/race_view.py` | `SessionMeta`, `GlobalTrack` |
 | **Leaderboards** | Track rankings filtered by `all`, `month`, `week`. One entry per user. | `server/ui/app.js` (loadLeaderboard) | `server/api/blueprints/leaderboards.py`| `SessionMeta` |
 | **Teams** | Roles: `owner`, `coach`, `rider`. Coaching access to member data. **Team creation requires Team tier.** | `server/ui/app.js` (teamsView) | `server/api/blueprints/teams.py` | `Team` |
 | **Team Invites** | UUID-based invitation links with 7-day expiration. | `server/ui/app.js` (generateInvite) | `server/api/blueprints/teams.py` | `TeamInvite` |
@@ -112,8 +114,7 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 ## 🏗️ Core Architecture Concepts
 
 ### 1. The Silo Storage System
-Data is stored in a per-user silo:
-- `server/instance/data/users/<user_id>/`
+Data is stored in a per-user silo rooted at `server/data/users/<user_id>/`:
   - `sessions/`: JSON analysis files and `_telemetry.json` blobs.
   - `tracks/`: User-defined track configurations.
   - `trackdays.json`: Trackday groupings for that user.
@@ -129,7 +130,8 @@ Important current-state clarification:
 - **Job Creation**: `POST /api/process` creates a `Job` row (status: `queued`).
 - **Worker**: `worker.py` polls for jobs, spawns `run_analysis.py` as a subprocess.
 - **Processing**:
-  - `CSVLoader`: Sanitizes and parses 10/25Hz logs.
+  - The analysis implementation lives under `server/core/` (`ingestion/`, `processing/`, `core/`), but several files still reference an older `src.analysis...` import namespace. Treat this as a known codebase inconsistency until that namespace migration is completed.
+  - `CSVLoader`: Sanitizes and parses telemetry logs plus marker rows.
   - Marker rows (`row_type=M`) are tolerated and ignored by the current loader so interrupted-session breadcrumbs do not break ingestion.
   - `LapDetector`: Uses `StartLine` (lat/lon) and `distance_to_segment` logic.
   - `Comparator`: Interpolates two telemetry streams based on **Distance** (using cumulative sum of `speed * dt`) to calculate deltas.
@@ -229,8 +231,8 @@ Track-resolution layering as of the canonical package rollout:
 
 2.  **Frontend Setup**:
     - The frontend is served statically by Flask from `server/ui/`.
-    - No build step required for web development.
-    - For mobile (iOS/Android), use Capacitor commands in `server/ui/`.
+    - No build step is required for web development.
+    - There are no active Capacitor/mobile project files in the current repo snapshot.
 
 3.  **Database**:
     - PostgreSQL is required in every environment via `DATABASE_URL`.

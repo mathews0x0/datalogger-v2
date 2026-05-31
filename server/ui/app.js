@@ -57,6 +57,26 @@ let pairingTutorialMode = 'hotspot';
 let ledTutorialCurrentSlide = 0;
 let onboardingTutorialFlow = false;
 let headerMetricsObserver = null;
+let raceViewAnimationFrame = null;
+
+const raceViewPalette = ['#ff6b35', '#66d15a', '#57b8ff', '#ffc857', '#f76ad8', '#9b8cff'];
+const raceViewState = {
+    source: null,
+    sourceId: null,
+    sourceLabel: '',
+    sourceTrackId: null,
+    sourceDate: '',
+    groupsByKey: new Map(),
+    activeGroup: null,
+    detail: null,
+    playing: false,
+    speed: 1,
+    scrubEpoch: null,
+    playbackStartMs: 0,
+    baseScrubEpoch: null,
+    selectedSessionId: null,
+    hiddenSessionIds: new Set(),
+};
 
 function saveUiState(key, value) {
     if (value === undefined || value === null || value === '') {
@@ -232,7 +252,10 @@ function setupNavigation() {
     });
 }
 
-function showView(viewName) {
+function showView(viewName, options = {}) {
+    const persist = options.persist !== false;
+    const loadData = options.loadData !== false;
+
     // Update nav buttons
     document.querySelectorAll('.nav-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.view === viewName);
@@ -247,40 +270,44 @@ function showView(viewName) {
     if (targetView) {
         targetView.classList.add('active');
         currentView = viewName;
-        saveUiState('ui:lastView', viewName);
+        if (persist) {
+            saveUiState('ui:lastView', viewName);
+        }
 
         // Load data for view
-        switch (viewName) {
-            case 'home':
-                loadHomeData();
-                break;
-            case 'tracks':
-                loadTracks();
-                break;
-            case 'sessions':
-                switchSessionTab(currentSessionTab);
-                break;
-            case 'community':
-                switchCommunityTab(currentCommunityTab);
-                break;
-            case 'teams':
-                loadTeams();
-                break;
-            case 'admin':
-                loadAdminUsers();
-                loadAdminTrackData();
-                break;
-            case 'process':
-                loadLearningFiles();
-                break;
-            case 'settings':
-                // Load custom API URL into input if it exists
-                const customUrlInput = document.getElementById('customApiUrl');
-                const defaultUrlSpan = document.getElementById('defaultApiUrl');
-                if (customUrlInput) customUrlInput.value = localStorage.getItem('custom_api_url') || '';
-                if (defaultUrlSpan) defaultUrlSpan.textContent = window.location.origin;
-                if (currentUser) loadDeviceTokens();
-                break;
+        if (loadData) {
+            switch (viewName) {
+                case 'home':
+                    loadHomeData();
+                    break;
+                case 'tracks':
+                    loadTracks();
+                    break;
+                case 'sessions':
+                    switchSessionTab(currentSessionTab);
+                    break;
+                case 'community':
+                    switchCommunityTab(currentCommunityTab);
+                    break;
+                case 'teams':
+                    loadTeams();
+                    break;
+                case 'admin':
+                    loadAdminUsers();
+                    loadAdminTrackData();
+                    break;
+                case 'process':
+                    loadLearningFiles();
+                    break;
+                case 'settings':
+                    // Load custom API URL into input if it exists
+                    const customUrlInput = document.getElementById('customApiUrl');
+                    const defaultUrlSpan = document.getElementById('defaultApiUrl');
+                    if (customUrlInput) customUrlInput.value = localStorage.getItem('custom_api_url') || '';
+                    if (defaultUrlSpan) defaultUrlSpan.textContent = window.location.origin;
+                    if (currentUser) loadDeviceTokens();
+                    break;
+            }
         }
     }
 
@@ -3095,7 +3122,9 @@ async function loadCommunitySessions() {
     const container = document.getElementById('communitySessionsList');
     const filterSelect = document.getElementById('communityTrackFilter');
     const searchInput = document.getElementById('communitySearchInput');
+    const rail = document.getElementById('communityRaceViewRail');
     if (searchInput) searchInput.value = communitySearchQuery;
+    if (rail) rail.innerHTML = '';
 
     container.innerHTML = renderSkeletonCards(3, 'session');
 
@@ -3112,6 +3141,7 @@ async function loadCommunitySessions() {
         const trackId = filterSelect.value ? parseInt(filterSelect.value) : null;
         const endpoint = trackId ? `/api/public/sessions?track_id=${trackId}` : '/api/public/sessions';
         const publicSessions = await apiCall(endpoint);
+        await loadCommunityRaceViewRail(trackId);
 
         if (publicSessions.length === 0) {
             container.innerHTML = renderEmptyState(
@@ -3171,6 +3201,494 @@ async function loadCommunitySessions() {
     } catch (error) {
         container.innerHTML = renderErrorState('Failed to load community sessions.');
     }
+}
+
+function raceViewGroupKey(group) {
+    if (!group) return '';
+    return (group.session_ids || []).slice().sort().join('|');
+}
+
+function raceViewAssignColor(index) {
+    return raceViewPalette[index % raceViewPalette.length];
+}
+
+function raceViewFormatClock(epochSeconds) {
+    if (!Number.isFinite(epochSeconds)) return '--:--';
+    return new Date(epochSeconds * 1000).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    });
+}
+
+function raceViewFormatGap(gapSeconds) {
+    if (!Number.isFinite(gapSeconds)) return '--';
+    if (gapSeconds <= 0.05) return 'Lead';
+    return `+${gapSeconds.toFixed(1)}s`;
+}
+
+async function fetchRaceViewGroups({ trackId = null, date = '', limit = 6 } = {}) {
+    const params = new URLSearchParams();
+    if (trackId) params.set('track_id', String(trackId));
+    if (date) params.set('date', date);
+    params.set('limit', String(limit));
+    const endpoint = `/api/race-view/groups?${params.toString()}`;
+    const groups = await apiCall(endpoint, { displayError: false });
+    return Array.isArray(groups) ? groups : [];
+}
+
+async function fetchRaceViewDetail(sessionIds) {
+    const params = new URLSearchParams();
+    params.set('session_ids', (sessionIds || []).join(','));
+    return apiCall(`/api/race-view/detail?${params.toString()}`, { displayError: false });
+}
+
+async function loadCommunityRaceViewRail(trackId = null) {
+    const rail = document.getElementById('communityRaceViewRail');
+    if (!rail) return;
+
+    try {
+        const groups = await fetchRaceViewGroups({ trackId, limit: 3 });
+        raceViewState.groupsByKey = new Map(groups.map(group => [raceViewGroupKey(group), group]));
+        if (!groups.length) {
+            rail.innerHTML = '';
+            return;
+        }
+
+        rail.innerHTML = `
+            <div class="race-view-rail">
+                ${groups.map((group, index) => `
+                    <div class="race-view-discovery-card">
+                        <div class="race-view-discovery-card-header">
+                            <div>
+                                <div class="race-view-kicker"><i class="fas fa-users"></i> Race View Available</div>
+                                <h3>${group.track_name}</h3>
+                                <p>${group.rider_count} riders shared overlapping public sessions on ${formatDate(group.date)}.</p>
+                            </div>
+                            <div class="race-view-chip">Window ${raceViewFormatClock(group.focus_start_epoch || group.start_epoch)}-${raceViewFormatClock(group.focus_end_epoch || group.end_epoch)}</div>
+                        </div>
+                        <div class="race-view-chip-row">
+                            <span class="race-view-chip"><i class="fas fa-map-marker-alt"></i>${group.track_name}</span>
+                            <span class="race-view-chip"><i class="fas fa-stopwatch"></i>${group.rider_count} riders</span>
+                        </div>
+                        <div class="race-view-participant-pills">
+                            ${group.participants.map((participant, participantIndex) => `
+                                <span class="race-view-participant-pill">
+                                    <span class="race-view-pill-dot" style="background:${raceViewAssignColor(participantIndex)}"></span>
+                                    ${participant.owner_name}
+                                </span>
+                            `).join('')}
+                        </div>
+                        <div class="race-view-discovery-actions" style="margin-top: 1rem;">
+                            <button class="btn btn-primary btn-sm" onclick="openRaceViewFromCommunity('${raceViewGroupKey(group)}')">
+                                <i class="fas fa-play"></i> Open Race View
+                            </button>
+                            ${index === 0 ? '<span class="race-view-inline-note">Public sessions only. Rider dots are labeled in the shared replay.</span>' : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+    } catch (error) {
+        rail.innerHTML = '';
+    }
+}
+
+async function loadTrackdayRaceViewCta(trackId, date, trackdayId) {
+    const mount = document.getElementById('trackdayRaceViewCta');
+    if (!mount || !trackId || !date) return;
+
+    mount.innerHTML = '';
+    try {
+        const groups = await fetchRaceViewGroups({ trackId, date, limit: 3 });
+        raceViewState.groupsByKey = new Map(groups.map(group => [raceViewGroupKey(group), group]));
+        if (!groups.length) return;
+
+        const group = groups[0];
+        mount.innerHTML = `
+            <div class="race-view-trackday-cta">
+                <div class="race-view-trackday-cta-header">
+                    <div>
+                        <div class="race-view-kicker"><i class="fas fa-flag-checkered"></i> Race View Ready</div>
+                        <h3>Replay this trackday as one shared map</h3>
+                        <p>${group.rider_count} riders on ${group.track_name} overlap long enough to build a common playback view.</p>
+                    </div>
+                    <div class="race-view-chip">Focus ${raceViewFormatClock(group.focus_start_epoch || group.start_epoch)}-${raceViewFormatClock(group.focus_end_epoch || group.end_epoch)}</div>
+                </div>
+                <div class="race-view-participant-pills">
+                    ${group.participants.map((participant, index) => `
+                        <span class="race-view-participant-pill">
+                            <span class="race-view-pill-dot" style="background:${raceViewAssignColor(index)}"></span>
+                            ${participant.owner_name}
+                        </span>
+                    `).join('')}
+                </div>
+                <div class="race-view-trackday-cta-actions" style="margin-top: 1rem;">
+                    <button class="btn btn-primary btn-sm" onclick="openRaceViewFromTrackday('${trackdayId}', '${raceViewGroupKey(group)}')">
+                        <i class="fas fa-route"></i> Open Race View
+                    </button>
+                    <span class="race-view-inline-note">This uses only public sessions with a shared canonical track layout.</span>
+                </div>
+            </div>
+        `;
+    } catch (error) {
+        mount.innerHTML = '';
+    }
+}
+
+function openRaceViewFromCommunity(groupKey) {
+    openRaceView({
+        source: 'community',
+        sourceLabel: 'Community',
+        group: raceViewState.groupsByKey.get(groupKey) || null,
+    });
+}
+
+function openRaceViewFromTrackday(trackdayId, groupKey) {
+    openRaceView({
+        source: 'trackday',
+        sourceId: trackdayId,
+        sourceLabel: 'Trackday',
+        group: raceViewState.groupsByKey.get(groupKey) || null,
+    });
+}
+
+function closeRaceView() {
+    raceViewState.playing = false;
+    if (raceViewAnimationFrame) {
+        cancelAnimationFrame(raceViewAnimationFrame);
+        raceViewAnimationFrame = null;
+    }
+    if (raceViewState.source === 'trackday' && raceViewState.sourceId) {
+        viewTrackday(raceViewState.sourceId);
+        return;
+    }
+    showView('community');
+}
+
+async function openRaceView({ source, sourceId = null, sourceLabel = '', group = null }) {
+    if (!group?.session_ids?.length) {
+        showToast('Race View group unavailable', 'error');
+        return;
+    }
+
+    raceViewState.source = source;
+    raceViewState.sourceId = sourceId;
+    raceViewState.sourceLabel = sourceLabel || 'Community';
+    raceViewState.activeGroup = group;
+    raceViewState.detail = null;
+    raceViewState.playing = false;
+    raceViewState.speed = 1;
+    raceViewState.scrubEpoch = null;
+    raceViewState.baseScrubEpoch = null;
+    raceViewState.selectedSessionId = null;
+    raceViewState.hiddenSessionIds = new Set();
+
+    showView('raceView', { persist: false, loadData: false });
+    const mount = document.getElementById('raceViewContent');
+    if (mount) {
+        mount.innerHTML = '<div class="loading">Loading Race View...</div>';
+    }
+
+    try {
+        const detail = await fetchRaceViewDetail(group.session_ids);
+        prepareRaceViewDetail(detail);
+        renderRaceView();
+        startRaceViewPlayback(false);
+    } catch (error) {
+        if (mount) mount.innerHTML = renderErrorState('Failed to load Race View.');
+    }
+}
+
+function prepareRaceViewDetail(detail) {
+    const timeline = detail?.timeline || {};
+    const participants = (detail?.participants || []).map((participant, index) => {
+        const columns = participant.playback?.columns || {};
+        const latSeries = columns.display_lat || columns.aligned_lat || columns.lat || [];
+        const lonSeries = columns.display_lon || columns.aligned_lon || columns.lon || [];
+        return {
+            ...participant,
+            color: raceViewAssignColor(index),
+            playbackColumns: columns,
+            projectedPoints: projectTelemetryToCanonicalRaw(detail.layout, {
+                lats: latSeries,
+                lons: lonSeries,
+            }),
+        };
+    });
+
+    raceViewState.detail = {
+        ...detail,
+        participants,
+    };
+    raceViewState.selectedSessionId = participants[0]?.session_id || null;
+    const defaultStart = timeline.focus_start_epoch || timeline.start_epoch || participants[0]?.start_epoch || 0;
+    raceViewState.scrubEpoch = defaultStart;
+    raceViewState.baseScrubEpoch = defaultStart;
+}
+
+function raceViewBinaryIndex(times, targetEpoch) {
+    if (!times?.length) return -1;
+    let lo = 0;
+    let hi = times.length - 1;
+    while (lo < hi) {
+        const mid = Math.floor((lo + hi) / 2);
+        if (Number(times[mid]) < targetEpoch) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo > 0) {
+        const prev = Number(times[lo - 1]);
+        const current = Number(times[lo]);
+        if (Math.abs(prev - targetEpoch) < Math.abs(current - targetEpoch)) {
+            return lo - 1;
+        }
+    }
+    return lo;
+}
+
+function raceViewPointForParticipant(participant, targetEpoch) {
+    const times = participant?.playbackColumns?.time_epoch || [];
+    if (!times.length) return null;
+    const index = raceViewBinaryIndex(times, targetEpoch);
+    if (index < 0) return null;
+    const epoch = Number(times[index]);
+    if (!Number.isFinite(epoch) || Math.abs(epoch - targetEpoch) > 1.0) return null;
+    const projected = participant.projectedPoints?.[index];
+    if (!projected) return null;
+    return { index, x: projected.x, y: projected.y };
+}
+
+function raceViewTrailPath(participant, currentIndex) {
+    if (!participant?.projectedPoints?.length || currentIndex == null || currentIndex < 0) return '';
+    const start = Math.max(0, currentIndex - 12);
+    const points = [];
+    for (let index = start; index <= currentIndex; index += 1) {
+        const point = participant.projectedPoints[index];
+        if (!point) continue;
+        points.push(`${point.x},${point.y}`);
+    }
+    return points.join(' ');
+}
+
+function renderRaceView() {
+    const mount = document.getElementById('raceViewContent');
+    const detail = raceViewState.detail;
+    if (!mount || !detail) return;
+
+    const group = raceViewState.activeGroup || {};
+    const timeline = detail.timeline || {};
+    const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
+    const focusEnd = timeline.focus_end_epoch || timeline.end_epoch || focusStart;
+    const maxValue = Math.max(0, (focusEnd - focusStart));
+
+    mount.innerHTML = `
+        <div class="race-view-shell">
+            <div class="race-view-header">
+                <div>
+                    <div class="race-view-kicker"><i class="fas fa-route"></i> ${raceViewState.sourceLabel || 'Race View'}</div>
+                    <h2 style="margin: 0;">Race View</h2>
+                    <div class="race-view-header-copy">
+                        ${detail.track.track_name} • ${detail.participants.length} riders • shared playback on a canonical layout.
+                    </div>
+                </div>
+                <div class="race-view-header-actions">
+                    <span class="race-view-chip"><i class="fas fa-clock"></i>${raceViewFormatClock(focusStart)}-${raceViewFormatClock(focusEnd)}</span>
+                    <button class="btn secondary btn-sm" id="raceViewSpeedBtn" onclick="cycleRaceViewSpeed()">1.0x</button>
+                    <button class="btn btn-primary btn-sm" id="raceViewPlayBtn" onclick="toggleRaceViewPlayback()"><i class="fas fa-pause"></i> Pause</button>
+                </div>
+            </div>
+            <div class="race-view-layout">
+                <div class="race-view-stage">
+                    <div class="race-view-stage-toolbar">
+                        <div class="race-view-stage-meta">
+                            <span class="race-view-stage-chip"><i class="fas fa-map-marker-alt"></i>${detail.track.track_name}</span>
+                            <span class="race-view-stage-chip"><i class="fas fa-users"></i>${detail.participants.length} public riders</span>
+                            <span class="race-view-stage-chip"><i class="fas fa-calendar-alt"></i>${formatDate(group.date || new Date(focusStart * 1000).toISOString())}</span>
+                        </div>
+                        <div class="race-view-transport">
+                            <span class="race-view-inline-note">Dots stay labeled. Click a rider card to focus them.</span>
+                        </div>
+                    </div>
+                    <div class="race-view-map-frame">
+                        ${detail.layout.preview_svg_data_url || detail.layout.svg_data_url ? `<img src="${detail.layout.preview_svg_data_url || detail.layout.svg_data_url}" alt="${detail.track.track_name}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; object-position:center;">` : ''}
+                        <svg class="race-view-map-svg" id="raceViewMapSvg" viewBox="0 0 ${detail.layout.layout_width || 1000} ${detail.layout.layout_height || 700}" preserveAspectRatio="xMidYMid meet"></svg>
+                    </div>
+                    <div class="race-view-timeline">
+                        <div class="race-view-timeline-header">
+                            <span>Shared timeline</span>
+                            <span id="raceViewTimelineRange">${raceViewFormatClock(focusStart)}-${raceViewFormatClock(focusEnd)}</span>
+                        </div>
+                        <div class="race-view-scrubber-wrap">
+                            <span class="race-view-time-label" id="raceViewCurrentTime">${raceViewFormatClock(raceViewState.scrubEpoch)}</span>
+                            <input
+                                type="range"
+                                class="race-view-scrubber"
+                                id="raceViewScrubber"
+                                min="0"
+                                max="${Math.max(1, maxValue)}"
+                                step="0.1"
+                                value="${Math.max(0, (raceViewState.scrubEpoch || focusStart) - focusStart)}"
+                                oninput="setRaceViewScrubber(this.value)"
+                            >
+                            <span class="race-view-time-label">${raceViewFormatClock(focusEnd)}</span>
+                        </div>
+                    </div>
+                </div>
+                <aside class="race-view-sidebar">
+                    <div class="race-view-sidebar-title">Riders On Track</div>
+                    <div class="race-view-legend" id="raceViewLegend">
+                        ${detail.participants.map(participant => `
+                            <div class="race-view-legend-item ${participant.session_id === raceViewState.selectedSessionId ? 'active' : ''}" data-race-session-id="${participant.session_id}" onclick="focusRaceViewParticipant('${participant.session_id}')">
+                                <span class="race-view-legend-dot" style="background:${participant.color}"></span>
+                                <div class="race-view-legend-copy">
+                                    <strong>${participant.owner_name}</strong>
+                                    <span>${participant.bike_info || 'Bike not set'} • Best ${formatTime(participant.best_lap_time)}</span>
+                                </div>
+                                <span class="race-view-gap-chip" id="raceViewGap-${participant.session_id}">--</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="race-view-sidebar-note">
+                        Only riders who shared publicly are included here. This module can move to another tab later without changing the data contract.
+                    </div>
+                    <div class="race-view-sidebar-title">Moments</div>
+                    <div class="race-view-moment-list" id="raceViewMoments">
+                        <div class="race-view-moment-card">
+                            <h4>Shared replay mode</h4>
+                            <p>The first version focuses on synchronized rider positions, labels, and timeline control. Overtake annotations can layer on later.</p>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </div>
+    `;
+
+    updateRaceViewFrame();
+}
+
+function cycleRaceViewSpeed() {
+    const speeds = [0.5, 1, 2];
+    const index = speeds.indexOf(raceViewState.speed);
+    raceViewState.speed = speeds[(index + 1) % speeds.length];
+    const btn = document.getElementById('raceViewSpeedBtn');
+    if (btn) btn.textContent = `${raceViewState.speed.toFixed(1)}x`;
+    if (raceViewState.playing) {
+        raceViewState.baseScrubEpoch = raceViewState.scrubEpoch;
+        raceViewState.playbackStartMs = performance.now();
+    }
+}
+
+function setRaceViewScrubber(rawValue) {
+    const timeline = raceViewState.detail?.timeline || {};
+    const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
+    raceViewState.scrubEpoch = focusStart + Number(rawValue || 0);
+    raceViewState.baseScrubEpoch = raceViewState.scrubEpoch;
+    raceViewState.playing = false;
+    const playBtn = document.getElementById('raceViewPlayBtn');
+    if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i> Play';
+    updateRaceViewFrame();
+}
+
+function focusRaceViewParticipant(sessionId) {
+    raceViewState.selectedSessionId = sessionId;
+    document.querySelectorAll('.race-view-legend-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.raceSessionId === sessionId);
+    });
+    updateRaceViewFrame();
+}
+
+function toggleRaceViewPlayback() {
+    if (raceViewState.playing) {
+        raceViewState.playing = false;
+        const playBtn = document.getElementById('raceViewPlayBtn');
+        if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i> Play';
+        if (raceViewAnimationFrame) cancelAnimationFrame(raceViewAnimationFrame);
+        return;
+    }
+    startRaceViewPlayback(true);
+}
+
+function startRaceViewPlayback(resetClock) {
+    const timeline = raceViewState.detail?.timeline || {};
+    const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
+    if (resetClock) {
+        raceViewState.scrubEpoch = focusStart;
+    } else if (!Number.isFinite(raceViewState.scrubEpoch)) {
+        raceViewState.scrubEpoch = focusStart;
+    }
+    raceViewState.baseScrubEpoch = raceViewState.scrubEpoch;
+    raceViewState.playbackStartMs = performance.now();
+    raceViewState.playing = true;
+    const playBtn = document.getElementById('raceViewPlayBtn');
+    if (playBtn) playBtn.innerHTML = '<i class="fas fa-pause"></i> Pause';
+    if (raceViewAnimationFrame) cancelAnimationFrame(raceViewAnimationFrame);
+    raceViewAnimationFrame = requestAnimationFrame(stepRaceViewPlayback);
+}
+
+function stepRaceViewPlayback(now) {
+    if (!raceViewState.playing || !raceViewState.detail) return;
+    const timeline = raceViewState.detail.timeline || {};
+    const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
+    const focusEnd = timeline.focus_end_epoch || timeline.end_epoch || focusStart;
+    const elapsedSec = ((now - raceViewState.playbackStartMs) / 1000) * raceViewState.speed;
+    raceViewState.scrubEpoch = Math.min(focusEnd, (raceViewState.baseScrubEpoch || focusStart) + elapsedSec);
+    updateRaceViewFrame();
+    if (raceViewState.scrubEpoch >= focusEnd) {
+        raceViewState.playing = false;
+        const playBtn = document.getElementById('raceViewPlayBtn');
+        if (playBtn) playBtn.innerHTML = '<i class="fas fa-rotate-left"></i> Replay';
+        return;
+    }
+    raceViewAnimationFrame = requestAnimationFrame(stepRaceViewPlayback);
+}
+
+function updateRaceViewFrame() {
+    const detail = raceViewState.detail;
+    const svg = document.getElementById('raceViewMapSvg');
+    if (!detail || !svg) return;
+
+    const visibleParticipants = detail.participants.filter(participant => !raceViewState.hiddenSessionIds.has(participant.session_id));
+    const points = visibleParticipants.map(participant => ({
+        participant,
+        point: raceViewPointForParticipant(participant, raceViewState.scrubEpoch),
+    })).filter(item => item.point);
+
+    const leadEpoch = points.length
+        ? Math.max(...points.map(item => Number(item.participant.playbackColumns.time_epoch?.[item.point.index] || 0)))
+        : 0;
+
+    svg.innerHTML = `
+        ${!points.length ? `<text class="race-view-stage-label" x="${(detail.layout.layout_width || 1000) / 2 - 90}" y="${(detail.layout.layout_height || 700) / 2}" fill="#ffffff">No riders active at this moment</text>` : ''}
+        ${points.map(({ participant, point }) => {
+            const trail = raceViewTrailPath(participant, point.index);
+            return `
+                ${trail ? `<polyline class="race-view-rider-trail" points="${trail}" stroke="${participant.color}" />` : ''}
+                <circle class="race-view-rider-dot" cx="${point.x}" cy="${point.y}" r="${participant.session_id === raceViewState.selectedSessionId ? 10 : 8}" fill="${participant.color}" style="color:${participant.color}"></circle>
+                <text class="race-view-stage-label" x="${point.x + 14}" y="${point.y - 14}" fill="${participant.color}">${participant.owner_name}</text>
+            `;
+        }).join('')}
+    `;
+
+    const timeLabel = document.getElementById('raceViewCurrentTime');
+    if (timeLabel) timeLabel.textContent = raceViewFormatClock(raceViewState.scrubEpoch);
+
+    const scrubber = document.getElementById('raceViewScrubber');
+    if (scrubber) {
+        const focusStart = detail.timeline?.focus_start_epoch || detail.timeline?.start_epoch || 0;
+        scrubber.value = Math.max(0, (raceViewState.scrubEpoch || focusStart) - focusStart);
+    }
+
+    detail.participants.forEach(participant => {
+        const gapEl = document.getElementById(`raceViewGap-${participant.session_id}`);
+        if (!gapEl) return;
+        const point = raceViewPointForParticipant(participant, raceViewState.scrubEpoch);
+        if (!point) {
+            gapEl.textContent = 'Off';
+            return;
+        }
+        const rowEpoch = Number(participant.playbackColumns.time_epoch?.[point.index] || 0);
+        gapEl.textContent = raceViewFormatGap(Math.max(0, leadEpoch - rowEpoch));
+    });
 }
 
 // ============================================================================
@@ -3498,6 +4016,8 @@ async function viewTrackday(trackdayId) {
             </div>
             ` : ''}
 
+            <div id="trackdayRaceViewCta"></div>
+
             <!-- Trackday Leaderboard (Phase 4) -->
             <div class="card" style="margin-bottom: 1.5rem;">
                 <h3 style="margin: 0 0 1rem 0; display: flex; align-items: center; gap: 0.5rem;">
@@ -3666,6 +4186,7 @@ async function viewTrackday(trackdayId) {
 
         // Load Trackday Leaderboard (Phase 4)
         loadTrackdayLeaderboard(trackdayId);
+        loadTrackdayRaceViewCta(td.track_id, td.date, trackdayId);
 
     } catch (error) {
         container.innerHTML = '<p class="help-text">Failed to load trackday</p>';

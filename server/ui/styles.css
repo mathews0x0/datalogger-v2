@@ -6240,6 +6240,414 @@ input:checked+.toggle-slider:before {
   display: none;
 }
 
+.race-view-rail {
+  margin-bottom: 1rem;
+  display: grid;
+  gap: 0.9rem;
+}
+
+.race-view-discovery-card,
+.race-view-trackday-cta,
+.race-view-shell,
+.race-view-stage,
+.race-view-sidebar,
+.race-view-timeline,
+.race-view-legend-item,
+.race-view-moment-card {
+  background: var(--glass);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.race-view-discovery-card {
+  border-radius: 18px;
+  padding: 1rem;
+  background:
+    linear-gradient(135deg, rgba(255, 107, 53, 0.18), rgba(255, 107, 53, 0.03) 34%, rgba(0, 78, 137, 0.08) 100%),
+    rgba(18, 18, 18, 0.92);
+}
+
+.race-view-discovery-card-header,
+.race-view-trackday-cta-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 0.9rem;
+}
+
+.race-view-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(255, 107, 53, 0.14);
+  color: #ffd5c8;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 0.65rem;
+}
+
+.race-view-discovery-card h3,
+.race-view-trackday-cta h3,
+.race-view-header h2 {
+  margin: 0;
+  letter-spacing: -0.03em;
+}
+
+.race-view-discovery-card p,
+.race-view-trackday-cta p,
+.race-view-header-copy,
+.race-view-sidebar-note,
+.race-view-moment-card p {
+  color: var(--text-dim);
+}
+
+.race-view-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin: 0.85rem 0 1rem;
+}
+
+.race-view-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.race-view-participant-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.race-view-participant-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.race-view-pill-dot,
+.race-view-legend-dot {
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+
+.race-view-discovery-actions,
+.race-view-trackday-cta-actions,
+.race-view-transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: center;
+}
+
+.race-view-trackday-cta {
+  margin-top: 1rem;
+  margin-bottom: 1.5rem;
+  border-radius: 18px;
+  padding: 1rem 1.1rem;
+  background:
+    linear-gradient(135deg, rgba(255, 107, 53, 0.14), rgba(255, 107, 53, 0.02) 36%, rgba(255, 255, 255, 0.02) 100%),
+    rgba(18, 18, 18, 0.92);
+}
+
+.race-view-shell {
+  border-radius: 24px;
+  padding: 1.1rem;
+  background:
+    radial-gradient(circle at top left, rgba(255, 107, 53, 0.12), transparent 26%),
+    radial-gradient(circle at 92% 8%, rgba(0, 78, 137, 0.12), transparent 22%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0)),
+    #090909;
+}
+
+.race-view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.race-view-header-copy {
+  margin-top: 0.45rem;
+  max-width: 780px;
+  font-size: 0.92rem;
+}
+
+.race-view-header-actions {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.race-view-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.95fr);
+  gap: 1rem;
+}
+
+.race-view-stage {
+  border-radius: 22px;
+  padding: 0.95rem;
+  background: rgba(15, 15, 15, 0.92);
+}
+
+.race-view-stage-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.7rem;
+  margin-bottom: 0.85rem;
+  flex-wrap: wrap;
+}
+
+.race-view-stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.race-view-stage-chip {
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.race-view-map-frame {
+  position: relative;
+  min-height: 520px;
+  border-radius: 20px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.03), transparent 42%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)),
+    #101010;
+}
+
+.race-view-map-frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
+  background-size: 42px 42px;
+  opacity: 0.5;
+}
+
+.race-view-map-svg {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 520px;
+}
+
+.race-view-stage-label {
+  font-size: 13px;
+  font-weight: 700;
+  paint-order: stroke;
+  stroke: rgba(0, 0, 0, 0.88);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+
+.race-view-track-outline {
+  fill: none;
+  stroke: rgba(245, 240, 230, 0.92);
+  stroke-width: 13;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.race-view-track-glow {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 42;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.race-view-stage-start-line {
+  stroke: var(--primary);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.race-view-rider-dot {
+  stroke: rgba(255, 255, 255, 0.9);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 14px currentColor);
+}
+
+.race-view-rider-trail {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.55;
+}
+
+.race-view-timeline {
+  border-radius: 18px;
+  margin-top: 0.9rem;
+  padding: 0.9rem 1rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.race-view-timeline-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 0.7rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.race-view-scrubber-wrap {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.race-view-time-label {
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.race-view-scrubber {
+  width: 100%;
+}
+
+.race-view-sidebar {
+  border-radius: 22px;
+  padding: 1rem;
+  background: rgba(15, 15, 15, 0.92);
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+}
+
+.race-view-sidebar-title {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 800;
+}
+
+.race-view-legend {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.race-view-legend-item {
+  border-radius: 16px;
+  padding: 0.85rem;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.race-view-legend-item:hover,
+.race-view-legend-item.active {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-1px);
+}
+
+.race-view-legend-copy strong {
+  display: block;
+  font-size: 0.95rem;
+  margin-bottom: 0.2rem;
+}
+
+.race-view-legend-copy span {
+  color: var(--text-dim);
+  font-size: 0.78rem;
+}
+
+.race-view-gap-chip {
+  border-radius: 999px;
+  padding: 0.38rem 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  font-size: 0.76rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.race-view-sidebar-note {
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.race-view-moment-list {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.race-view-moment-card {
+  border-radius: 16px;
+  padding: 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.race-view-moment-card h4 {
+  margin: 0 0 0.35rem;
+  font-size: 0.94rem;
+}
+
+.race-view-empty {
+  text-align: center;
+  padding: 2rem 1.2rem;
+  color: var(--text-dim);
+}
+
+.race-view-inline-note {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.race-view-hidden {
+  display: none !important;
+}
+
 .leaderboard-card,
 .admin-user-card {
   background: var(--glass);
@@ -6305,6 +6713,42 @@ input:checked+.toggle-slider:before {
 }
 
 @media (max-width: 768px) {
+  .race-view-header,
+  .race-view-stage-toolbar,
+  .race-view-scrubber-wrap,
+  .race-view-discovery-card-header,
+  .race-view-trackday-cta-header {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .race-view-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .race-view-map-frame,
+  .race-view-map-svg {
+    min-height: 360px;
+  }
+
+  .race-view-shell {
+    padding: 0.85rem;
+  }
+
+  .race-view-stage,
+  .race-view-sidebar {
+    padding: 0.85rem;
+  }
+
+  .race-view-legend-item {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .race-view-gap-chip {
+    grid-column: 2;
+    justify-self: start;
+  }
+
   .session-quick-actions .btn {
     flex: 1 1 140px;
   }

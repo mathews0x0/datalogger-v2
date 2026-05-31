@@ -99,6 +99,29 @@ def test_list_sessions(client, app):
     assert len(resp.json) == 1
     assert resp.json[0]['session_id'] == 'test-session-123'
 
+
+def test_session_meta_defaults_public_when_unspecified(app):
+    with app.app_context():
+        db.drop_all()
+        db.create_all()
+
+        user = User(email='default-public@racesense.in', name='Default Public', is_approved=True)
+        user.set_password('Pass123!')
+        db.session.add(user)
+        db.session.commit()
+
+        sm = SessionMeta(
+            session_id='default-public-session',
+            user_id=user.id,
+            session_name='Default Public Session',
+        )
+        db.session.add(sm)
+        db.session.commit()
+
+        saved = SessionMeta.query.filter_by(session_id='default-public-session', user_id=user.id).first()
+        assert saved is not None
+        assert saved.is_public is True
+
 def test_rename_session(client, app):
     resp = client.post('/api/sessions/test-session-123/rename', json={'new_name': 'Renamed Session'})
     print("Rename response:", resp.json)

@@ -5445,3 +5445,207 @@ The main remaining need on the UI side is refinement, not feature discovery. The
 - lighter metric widgets
 - separate tuning surface
 - safer session lifecycle handling
+
+---
+
+### [2026-05-31] Race View MVP: Public Multi-Rider Replay
+
+**Objective:** Turn the previously speculative multi-rider replay idea into a real product module without locking it to a permanent navigation position too early.
+
+The important PM constraint was not just "build a race map." It was:
+
+- keep the feature real, not conceptual
+- make rider dots explicitly labeled
+- make the module usable from existing product surfaces
+- keep it modular enough to move into its own tab later if usage justifies that
+
+That ruled out two weaker implementations:
+
+- a pure mock or placeholder screen with no data contract
+- a hard-coded top-level tab that would likely feel empty or forced early on
+
+### Product Decision: No Dedicated Tab Yet
+
+The first implementation intentionally does **not** add `Race View` as a top-level nav destination.
+
+Instead, it appears contextually in places where the user already understands why a multi-rider replay would exist:
+
+- a discovery rail in `Community`
+- a CTA inside `Trackday` detail
+- a dedicated internal `raceViewView` module that can be opened from either entry point
+
+This keeps the product honest.
+
+If Race View proves to be a strong repeat destination later, the module can be moved into its own tab with minimal internal change because the rendering surface and API contract were separated from the entry points from day one.
+
+### Privacy Model Locked Down
+
+The privacy rule was clarified before implementation:
+
+- if sessions are public individually, the combined Race View is public too
+- rider `C` can view a shared Race View created from riders `A` and `B` if both source sessions are public
+- if a rider unshares later, that rider must disappear from Race View
+
+This avoids inventing a second hidden privacy layer on top of `is_public`.
+
+The implementation follows that rule by sourcing only from public sessions and by exposing Race View through public-community surfaces rather than a separate invite-only path.
+
+### MVP Scope Chosen
+
+The first shipped version is intentionally narrower than the long-term idea:
+
+- only public sessions
+- only same-track groups
+- only sessions with enough real-time overlap
+- only canonical/global tracks with shared layout support
+- labeled rider dots on a shared replay timeline
+
+Not included in MVP:
+
+- exact pass detection
+- live streaming from active devices
+- a new permanent nav tab
+- a second privacy mode
+
+This is the correct scope boundary. The first version needs to be believable and usable, not overloaded.
+
+### Backend Contract Introduced
+
+The feature now has a dedicated backend surface:
+
+- `GET /api/race-view/groups`
+- `GET /api/race-view/detail?session_ids=...`
+
+This was an important product/engineering boundary decision.
+
+Why:
+
+- Community and Trackday should not each invent their own replay grouping logic
+- the client should not be responsible for stitching together public session overlaps ad hoc
+- a future Race View tab should reuse the same contract rather than re-querying unrelated endpoints
+
+The grouping rules currently enforce:
+
+- public session only
+- same date bucket
+- same `track_id`
+- positive session overlap above threshold
+- canonical/global track layout required
+- playback sidecar must exist
+
+### Frontend Module Boundary
+
+The UI implementation was deliberately structured around one reusable internal module:
+
+- hidden view: `raceViewView`
+- entry API: `openRaceView(...)`
+
+That gives the product a real feature surface now while preserving moveability later.
+
+Current entry points:
+
+- Community discovery rail via `loadCommunityRaceViewRail`
+- Trackday CTA via `loadTrackdayRaceViewCta`
+
+The point of this split is product flexibility:
+
+- move to a dedicated tab later if usage is strong
+- keep as contextual replay if usage remains event-driven
+- add deep links later without rewriting the core rendering path
+
+### Rider Labels Were Treated As A First-Class Requirement
+
+The user requirement here was correct: anonymous dots would kill the social value.
+
+So the MVP explicitly renders:
+
+- color-coded riders
+- persistent rider labels near dots
+- a matching legend in the side rail
+- focus state for the selected rider
+
+This is not ornamental. It is the core of why the view is worth having.
+
+### What Still Needs To Improve
+
+The current synchronized replay works by deriving absolute row time from:
+
+- session `start_time`
+- playback row relative `time`
+
+That is sufficient to ship a real first version, but it is not the final architecture.
+
+The remaining important data-quality upgrade is:
+
+- persist absolute per-row `time_epoch` directly in playback export
+
+That will remove reconstruction assumptions and make future event detection more trustworthy.
+
+Other likely next steps if the feature shows traction:
+
+- overtake likelihood markers
+- richer moment cards
+- direct deep links into a chosen rider group
+- optional dedicated nav/tab if discovery volume is high enough
+
+### Product Readout
+
+Race View is no longer a future-only idea.
+
+It now exists in the product as a real, modular, first-pass public replay system:
+
+- discovered through Community
+- triggered through Trackday
+- rendered through a shared canonical map
+- built so it can move into a tab later without a redesign
+
+That is the right product shape for this stage.
+
+It is concrete enough to validate real user behavior, but still constrained enough that we have not overcommitted the navigation, privacy, or telemetry architecture too early.
+
+---
+
+### [2026-05-31] Processed Sessions Now Default To Public
+
+**Objective:** Remove the extra friction between processing a session and having it participate in community-facing features that already depend on public visibility.
+
+The previous default created a product mismatch:
+
+- processed sessions appeared successfully analyzed
+- community and Race View depend on public sessions
+- users then had to discover and flip privacy manually before those features became useful
+
+That is the wrong default for the current product shape.
+
+### Product Decision
+
+Newly processed sessions now default to `public`.
+
+Why this is the correct policy:
+
+- Community already assumes value from discoverable public riding activity
+- Race View only works from public source sessions
+- forcing a manual privacy toggle after every processed session adds avoidable friction
+
+This does **not** remove privacy control.
+
+Users can still switch a session back to private at any time. The change is only about the default state when a new processed session is first registered.
+
+### Implementation Boundary
+
+The change was applied at both layers that matter:
+
+- application default on `SessionMeta.is_public`
+- auto-registration path for newly processed sessions
+
+The database default was also updated so the policy is not dependent on one code path behaving correctly.
+
+### Product Consequence
+
+This aligns session processing with the rest of the social product:
+
+- process a session
+- it is immediately eligible for public/community surfaces
+- it can immediately participate in Race View if overlap rules match
+
+That is the simpler and more honest behavior for the product as it exists today.

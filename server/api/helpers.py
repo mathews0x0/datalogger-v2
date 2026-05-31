@@ -152,7 +152,8 @@ def register_new_sessions(user_id):
                             start_time=data.get('meta', {}).get('start_time'),
                             duration_sec=data.get('meta', {}).get('duration_sec'),
                             total_laps=data.get('summary', {}).get('total_laps') or data.get('aggregates', {}).get('total_laps') or len(data.get('laps', [])),
-                            best_lap_time=data.get('aggregates', {}).get('best_lap_time') or data.get('summary', {}).get('best_lap_time')
+                            best_lap_time=data.get('aggregates', {}).get('best_lap_time') or data.get('summary', {}).get('best_lap_time'),
+                            is_public=True,
                         )
                         db.session.add(sm)
                         new_found = True

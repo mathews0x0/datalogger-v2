@@ -109,6 +109,7 @@ def create_app(config_overrides=None):
     from api.blueprints.sync import sync_bp
     from api.blueprints.files import files_bp
     from api.blueprints.trackdays import trackdays_bp
+    from api.blueprints.race_view import race_view_bp
     from api.blueprints.core import core_bp
     from api.blueprints.auth import auth_bp, users_bp, sessions_misc_bp
 
@@ -123,6 +124,7 @@ def create_app(config_overrides=None):
     app.register_blueprint(sync_bp)
     app.register_blueprint(files_bp)
     app.register_blueprint(trackdays_bp)
+    app.register_blueprint(race_view_bp)
     app.register_blueprint(core_bp)
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(users_bp, url_prefix='/api/users')

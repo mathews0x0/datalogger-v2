@@ -4,14 +4,17 @@ This document tracks high-priority technical tasks and architectural improvement
 
 ## ⚡ Performance & Scalability
 - [ ] **Batch DB Commits for Chunked Uploads**
-    - **Current Issue**: Every 64KB chunk received via `/api/upload/chunk` triggers a `db.session.commit()` to update the sync progress. At 100Hz log speeds, this results in ~32 commits/second, causing severe SQLite write contention and "Database is locked" errors for other users/heartbeats.
+    - **Current Issue**: Frequent `db.session.commit()` calls from `/api/upload/chunk` still create avoidable database and request-path overhead during active sync, especially when device progress updates are noisy.
     - **Proposed Fix**: Only commit the `DeviceToken` state every 10-20 chunks, or exclusively during the `upload_complete` call.
 
 ## 🏗️ Architecture & Database
-- [ ] **PostgreSQL Migration**
-    - Move away from SQLite to support native row-level local and concurrent writes.
+- [ ] **Remove Stale SQLite / Legacy-Path Assumptions**
+    - PostgreSQL is already the active database path, but some docs, comments, and scripts still imply older SQLite-era behavior or directory layouts. Clean up stale assumptions so operational guidance matches the current stack.
 - [ ] **Asynchronous File Assembly**
     - Move the chunk concatenation logic from the request handler to the background worker to prevent Gunicorn worker starvation.
+
+- [ ] **Unify Analysis Package Imports**
+    - The active analysis code is under `server/core/`, but several modules still import from an old `src.analysis...` namespace that is not present in this repo. Consolidate imports and runtime entrypoints before expanding analysis-dependent tooling.
 
 ## 📱 User Experience
 - [ ] **Improved Progress Visualization**
@@ -30,9 +33,10 @@ This document tracks high-priority technical tasks and architectural improvement
     - **Target Behavior**: New devices self-identify a usable panel preset with a single touch, calibrate on the following boot, and then boot normally without needing a custom firmware build.
 
 ## 🏁 Future Features
-- [ ] **Global Race Visualization (Multi-Rider)**
-    - **Concept**: Calculate and render precise movement for all concurrent riders on a track using the synchronized absolute `gps_epoch` timestamps.
-    - **Execution**: If users are running RaceSense simultaneously and share their sessions publicly, display a live/replay "Race View" where users are accurately shown chasing each other corner-by-corner.
+- [~] **Global Race Visualization (Multi-Rider / Race View)**
+    - **Current State**: A first public `Race View` module now exists in Community and Trackday flows. It groups overlapping public sessions on the same canonical track and renders labeled rider dots on one shared replay timeline.
+    - **Remaining Work**: Persist/export absolute per-row wall-clock time (`time_epoch`) so synchronized playback no longer depends on reconstructing epoch time from `start_time + row.time`.
+    - **Next Product Layer**: Add stronger event semantics such as likely overtakes, richer moment cards, and deeper discovery if Race View proves to be a frequent destination.
 
 ## 🗺️ Canonical Track System
 - [ ] **Persist Session-to-Package Alignment Server-Side**
