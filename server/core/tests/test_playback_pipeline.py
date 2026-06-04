@@ -55,6 +55,7 @@ class TestPlaybackPipeline(unittest.TestCase):
                     "display_lat_g": [0.4, 0.45, 0.5],
                 },
             }
+            session.device_metadata = {"timestamp_source": "gps_epoch"}
 
             exporter = SessionExporter(output_dir=output_dir, tracks_dir=tracks_dir)
             track_info = {
@@ -73,6 +74,9 @@ class TestPlaybackPipeline(unittest.TestCase):
                 payload = json.load(handle)
 
             self.assertEqual(payload["meta"]["gps_lag_ms_applied"], 2000)
+            self.assertEqual(payload["meta"]["timestamp_source"], "gps_epoch")
+            self.assertEqual(payload["meta"]["duration_sec"], 2.0)
+            self.assertIsNotNone(payload["meta"]["start_time"])
             self.assertEqual(len(payload["rows"]), 3)
             self.assertEqual(payload["rows"][0]["lap_number"], 1)
             self.assertTrue(payload["rows"][0]["lap_start"])
@@ -86,6 +90,8 @@ class TestPlaybackPipeline(unittest.TestCase):
             self.assertIsNotNone(payload["rows"][1]["display_speed_kmh"])
             self.assertIsNotNone(payload["rows"][1]["display_lat"])
             self.assertIsNotNone(payload["rows"][1]["display_lon"])
+            self.assertIsNotNone(payload["rows"][1]["race_lat"])
+            self.assertIsNotNone(payload["rows"][1]["race_lon"])
             self.assertIsNotNone(payload["rows"][1]["aligned_speed_kmh"])
             self.assertIsNotNone(payload["rows"][1]["aligned_lat"])
             self.assertIsNotNone(payload["rows"][1]["aligned_lon"])
@@ -93,6 +99,14 @@ class TestPlaybackPipeline(unittest.TestCase):
             self.assertEqual(payload["rows"][1]["display_long_g"], 0.15)
             self.assertEqual(payload["rows"][1]["gps_lean_base_deg"], 11.0)
             self.assertEqual(payload["rows"][2]["heading_deg"], payload["rows"][1]["heading_deg"])
+
+            second_out_path = exporter.export(session, track_info, tbl_data, source_file="playback.csv")
+            primary_files = [
+                filename for filename in os.listdir(output_dir)
+                if filename.endswith(".json") and not filename.endswith(("_telemetry.json", "_playback.json"))
+            ]
+            self.assertEqual(second_out_path, out_path)
+            self.assertEqual(primary_files, [os.path.basename(out_path)])
 
     def test_reference_alignment_detects_lag_and_inverted_polarity(self):
         times = [index * 0.1 for index in range(120)]

@@ -6534,7 +6534,7 @@ input:checked+.toggle-slider:before {
 
 .race-view-scrubber-wrap {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 0.8rem;
   align-items: center;
 }
@@ -6548,6 +6548,17 @@ input:checked+.toggle-slider:before {
 
 .race-view-scrubber {
   width: 100%;
+}
+
+.race-view-seek-status {
+  width: 1rem;
+  color: var(--primary);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.race-view-seek-status.active {
+  opacity: 1;
 }
 
 .race-view-sidebar {
@@ -6646,6 +6657,40 @@ input:checked+.toggle-slider:before {
 
 .race-view-hidden {
   display: none !important;
+}
+
+.upload-file-hidden {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.admin-version-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.admin-version-chip strong {
+  color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
 }
 
 .leaderboard-card,

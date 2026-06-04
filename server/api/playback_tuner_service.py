@@ -190,6 +190,8 @@ def compact_playback_rows(rows, payload: Dict[str, Any], start_index: int = 0, e
         ("display_lon", "display_lon"),
         ("display_speed", "display_speed_kmh"),
         ("display_heading_deg", "display_heading_deg"),
+        ("race_lat", "race_lat"),
+        ("race_lon", "race_lon"),
         ("display_lean_deg", "display_lean_deg"),
         ("display_long_g", "display_long_g"),
         ("display_lat_g", "display_lat_g"),

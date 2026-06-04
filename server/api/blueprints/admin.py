@@ -256,6 +256,7 @@ def admin_list_tracks():
 @admin_required
 def admin_get_settings():
     return jsonify({
+        "app_version": config.get_app_version(),
         "default_sector_count": config.get_default_sector_count(),
     })
 

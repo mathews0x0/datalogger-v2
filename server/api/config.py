@@ -5,6 +5,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BASE_DIR.parent
 DATA_DIR = PROJECT_ROOT / "data"
+APP_VERSION_FILE = PROJECT_ROOT / "VERSION"
 
 # Sub-directories
 LEARNING_DIR = DATA_DIR / "learning"
@@ -80,3 +81,14 @@ def get_default_sector_count():
         return value
     except Exception:
         return SECTOR_COUNT
+
+
+def get_app_version():
+    try:
+        if APP_VERSION_FILE.exists():
+            value = APP_VERSION_FILE.read_text(encoding="utf-8").strip()
+            if value:
+                return value
+    except Exception:
+        pass
+    return "0.0.0"

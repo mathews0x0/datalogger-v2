@@ -49,6 +49,7 @@ class SessionExporter:
         st_ts = session.start_time
         et_ts = session.end_time
         dur = session.duration
+        timestamp_source = (getattr(session, "device_metadata", {}) or {}).get("timestamp_source", "unknown")
         
         # Convert timestamps to ISO8601 in IST (derived from GPS timestamp)
         st_iso = datetime.datetime.fromtimestamp(st_ts, tz=IST).isoformat() if st_ts else None
@@ -62,6 +63,7 @@ class SessionExporter:
                 "start_time": st_iso,
                 "end_time": et_iso,
                 "duration_sec": round(dur, 2),
+                "timestamp_source": timestamp_source,
                 "logger_version": "v3.6",
                 "schema_version": "1.2",
                 "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
@@ -140,7 +142,7 @@ class SessionExporter:
         registry = RegistryManager(registry_path=self.tracks_dir)
         folder_name = registry.get_folder_name(track_id) or f"track_{track_id}"
         
-        filename = self._generate_session_filename(st_ts, folder_name)
+        filename = self._find_session_filename_by_source(source_file) or self._generate_session_filename(st_ts, folder_name)
         
         # Update session_id and session_name to match filename (without .json)
         session_name = filename.replace(".json", "")
@@ -250,6 +252,9 @@ class SessionExporter:
         )
         payload = {
             "meta": {
+                "start_time": datetime.datetime.fromtimestamp(t0, tz=IST).isoformat() if t0 else None,
+                "duration_sec": round(session.duration, 2),
+                "timestamp_source": (getattr(session, "device_metadata", {}) or {}).get("timestamp_source", "unknown"),
                 "source_mode": ((getattr(session, 'calibration', {}) or {}).get("source_mode")),
                 "gps_lag_ms_applied": reference_alignment.get("gps_lag_ms_applied", playback_config.get("gpsLagMs", 0)),
                 "gps_lag_source": reference_alignment.get("gps_lag_source", "configured"),
@@ -300,6 +305,7 @@ class SessionExporter:
         }
         aligned_gps = build_aligned_gps_series_from_rows(times, raw_gps, path_offset_ms)
         display_gps = build_display_gps_series_from_rows(times, raw_gps, path_offset_ms)
+        race_gps = build_display_gps_series_from_rows(times, raw_gps, 0)
         gps_lean_ref = apply_reference_sign(
             shift_series_by_lag(times, gps_references.get("gps_lean_deg", []), gps_lag_ms),
             reference_alignment.get("gps_lean_ref_sign", 1),
@@ -351,6 +357,8 @@ class SessionExporter:
                 "display_lon": self._series_value(display_gps["lon"], index, 6),
                 "display_speed_kmh": self._series_value(display_gps["speed"], index, 1),
                 "display_heading_deg": self._series_value(display_gps["heading"], index, 1),
+                "race_lat": self._series_value(race_gps["lat"], index, 6),
+                "race_lon": self._series_value(race_gps["lon"], index, 6),
                 "aligned_lat": self._series_value(aligned_gps["lat"], index, 6),
                 "aligned_lon": self._series_value(aligned_gps["lon"], index, 6),
                 "aligned_speed_kmh": self._series_value(aligned_gps["speed"], index, 1),
@@ -805,6 +813,23 @@ class SessionExporter:
         # Next number is max + 1, or 1 if none exist
         next_num = max(existing) + 1 if existing else 1
         return f"{date_prefix}-Sess-{next_num:02d}.json"
+
+    def _find_session_filename_by_source(self, source_file: Optional[str]) -> Optional[str]:
+        if not source_file or not os.path.exists(self.output_dir):
+            return None
+        source_name = os.path.basename(source_file)
+        for filename in os.listdir(self.output_dir):
+            if not filename.endswith(".json") or filename.endswith(("_telemetry.json", "_playback.json")):
+                continue
+            try:
+                with open(os.path.join(self.output_dir, filename), "r") as handle:
+                    payload = json.load(handle)
+                existing_source = os.path.basename((payload.get("meta") or {}).get("source_file") or "")
+                if existing_source == source_name:
+                    return filename
+            except Exception:
+                continue
+        return None
 
     def _extract_gps_stats(self, session: Session) -> Dict:
         if not session.samples:

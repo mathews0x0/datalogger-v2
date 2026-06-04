@@ -20,6 +20,9 @@ REMOTE_PROD_ENV="$REMOTE_ENV_DIR/production.env"
 REMOTE_LEGACY_ENV="$REMOTE_APP_DIR/.env"
 BACKUP_DIR="${BACKUP_DIR:-/root/racesense_backups}"
 LOCAL_ROOT="$(cd "$(dirname "$0")" && pwd)"
+LOCAL_VERSION_FILE="$LOCAL_ROOT/server/VERSION"
+REMOTE_VERSION_FILE="$REMOTE_APP_DIR/server/VERSION"
+DEPLOY_MACHINE_TIME="$(date '+%d/%m/%Y %I:%M%p' | sed 's/ 0/ /' | tr 'A-Z' 'a-z')"
 
 # ─── SSH Multiplexing (cache local auth for 24h) ─────────────────────────────
 SSH_CACHE_DIR="${HOME}/.cache/racesense"
@@ -32,6 +35,25 @@ export RSYNC_RSH="ssh $SSH_OPTS"
 reset_ssh_mux_if_stale() {
     if [ -S "$SSH_SOCK" ] && ! ssh -o ControlPath="$SSH_SOCK" -O check "$SERVER" >/dev/null 2>&1; then
         rm -f "$SSH_SOCK"
+    fi
+}
+
+ensure_ssh_mux() {
+    reset_ssh_mux_if_stale
+    if ssh -o ControlPath="$SSH_SOCK" -O check "$SERVER" >/dev/null 2>&1; then
+        return
+    fi
+
+    rm -f "$SSH_SOCK"
+    ssh -fN \
+        -o ConnectTimeout=10 \
+        -o ControlMaster=yes \
+        -o ControlPath="$SSH_SOCK" \
+        -o ControlPersist=86400 \
+        "$SERVER"
+
+    if ! ssh -o ControlPath="$SSH_SOCK" -O check "$SERVER" >/dev/null 2>&1; then
+        fail "Failed to establish persistent SSH control connection"
     fi
 }
 
@@ -50,6 +72,35 @@ step()  { echo -e "\n${CYAN}${BOLD}[$1]${NC} $2"; }
 ok()    { echo -e "  ${GREEN}✓${NC} $1"; }
 warn()  { echo -e "  ${YELLOW}⚠${NC} $1"; }
 fail()  { echo -e "  ${RED}✗${NC} $1"; exit 1; }
+
+read_local_version() {
+    if [ -f "$LOCAL_VERSION_FILE" ]; then
+        tr -d '[:space:]' < "$LOCAL_VERSION_FILE"
+    else
+        echo "0"
+    fi
+}
+
+read_remote_version() {
+    remote "
+        if [ -f '$REMOTE_VERSION_FILE' ]; then
+            tr -d '[:space:]' < '$REMOTE_VERSION_FILE'
+        else
+            echo '0'
+        fi
+    " 2>/dev/null || echo "0"
+}
+
+bump_version() {
+    local current next
+    current="$(read_local_version)"
+    if [[ ! "$current" =~ ^[0-9]+$ ]]; then
+        fail "Invalid version format in $LOCAL_VERSION_FILE: $current"
+    fi
+    next="$((current + 1))"
+    printf '%s\n' "$next" > "$LOCAL_VERSION_FILE"
+    echo "$next"
+}
 
 remote() {
     ssh $SSH_OPTS -t "$SERVER" "$@"
@@ -107,9 +158,12 @@ echo -e "${BOLD}═════════════════════�
 do_upgrade() {
     # ── 0. Establish SSH connection (password prompt happens here, ONCE) ────
     step "0/5" "Connecting to server..."
-    remote "echo 'SSH OK'"
+    ensure_ssh_mux
     ok "SSH session established (all further commands reuse this connection)"
 
+    PREV_REMOTE_VERSION="$(read_remote_version)"
+    NEXT_VERSION="$(bump_version)"
+    ok "Version bump prepared: ${PREV_REMOTE_VERSION} -> ${NEXT_VERSION}"
     # ── 1. Sync files ─────────────────────────────────────────────────────────
     step "1/5" "Syncing files to production..."
 
@@ -249,6 +303,8 @@ do_upgrade() {
     "
 
     echo -e "\n${GREEN}${BOLD}  ✅ Upgrade complete!${NC}"
+    echo -e "  ${GREEN}↺${NC} version upgrade ${PREV_REMOTE_VERSION} -> ${NEXT_VERSION}"
+    echo -e "  ${CYAN}🕒${NC} time ${DEPLOY_MACHINE_TIME}"
     echo -e "  ${CYAN}→${NC} https://racesense.in"
 }
 
@@ -267,9 +323,12 @@ do_nuke() {
 
     # ── 0. Establish SSH connection ───────────────────────────────────────────
     step "0/6" "Connecting to server..."
-    remote "echo 'SSH OK'"
+    ensure_ssh_mux
     ok "SSH session established"
 
+    PREV_REMOTE_VERSION="$(read_remote_version)"
+    NEXT_VERSION="$(bump_version)"
+    ok "Version bump prepared: ${PREV_REMOTE_VERSION} -> ${NEXT_VERSION}"
     # ── 1. Backup database ────────────────────────────────────────────────────
     step "1/6" "Backing up production database..."
 
@@ -453,6 +512,8 @@ do_nuke() {
     "
 
     echo -e "\n${GREEN}${BOLD}  ✅ Nuke & rebuild complete!${NC}"
+    echo -e "  ${GREEN}↺${NC} version upgrade ${PREV_REMOTE_VERSION} -> ${NEXT_VERSION}"
+    echo -e "  ${CYAN}🕒${NC} time ${DEPLOY_MACHINE_TIME}"
     echo -e "  ${CYAN}→${NC} https://racesense.in"
 }
 

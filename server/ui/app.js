@@ -58,6 +58,7 @@ let ledTutorialCurrentSlide = 0;
 let onboardingTutorialFlow = false;
 let headerMetricsObserver = null;
 let raceViewAnimationFrame = null;
+let raceViewSeekFrame = null;
 
 const raceViewPalette = ['#ff6b35', '#66d15a', '#57b8ff', '#ffc857', '#f76ad8', '#9b8cff'];
 const raceViewState = {
@@ -3205,7 +3206,7 @@ async function loadCommunitySessions() {
 
 function raceViewGroupKey(group) {
     if (!group) return '';
-    return (group.session_ids || []).slice().sort().join('|');
+    return group.group_id || (group.session_refs || []).slice().sort().join('|');
 }
 
 function raceViewAssignColor(index) {
@@ -3221,10 +3222,12 @@ function raceViewFormatClock(epochSeconds) {
     });
 }
 
-function raceViewFormatGap(gapSeconds) {
-    if (!Number.isFinite(gapSeconds)) return '--';
-    if (gapSeconds <= 0.05) return 'Lead';
-    return `+${gapSeconds.toFixed(1)}s`;
+function raceViewParticipantKey(participant) {
+    return participant?.session_ref || participant?.session_id || '';
+}
+
+function raceViewParticipantLabel(participant) {
+    return participant?.owner_label || participant?.owner_name || 'Rider';
 }
 
 async function fetchRaceViewGroups({ trackId = null, date = '', limit = 6 } = {}) {
@@ -3237,9 +3240,11 @@ async function fetchRaceViewGroups({ trackId = null, date = '', limit = 6 } = {}
     return Array.isArray(groups) ? groups : [];
 }
 
-async function fetchRaceViewDetail(sessionIds) {
+async function fetchRaceViewDetail(sessionRefs, focusStartEpoch = null, focusEndEpoch = null) {
     const params = new URLSearchParams();
-    params.set('session_ids', (sessionIds || []).join(','));
+    params.set('session_refs', (sessionRefs || []).join(','));
+    if (Number.isFinite(focusStartEpoch)) params.set('focus_start_epoch', String(focusStartEpoch));
+    if (Number.isFinite(focusEndEpoch)) params.set('focus_end_epoch', String(focusEndEpoch));
     return apiCall(`/api/race-view/detail?${params.toString()}`, { displayError: false });
 }
 
@@ -3263,7 +3268,7 @@ async function loadCommunityRaceViewRail(trackId = null) {
                             <div>
                                 <div class="race-view-kicker"><i class="fas fa-users"></i> Race View Available</div>
                                 <h3>${group.track_name}</h3>
-                                <p>${group.rider_count} riders shared overlapping public sessions on ${formatDate(group.date)}.</p>
+                                <p>${group.rider_count} riders shared ${group.session_count || group.participants?.length || 0} overlapping public sessions on ${formatDate(group.date)}.</p>
                             </div>
                             <div class="race-view-chip">Window ${raceViewFormatClock(group.focus_start_epoch || group.start_epoch)}-${raceViewFormatClock(group.focus_end_epoch || group.end_epoch)}</div>
                         </div>
@@ -3275,7 +3280,7 @@ async function loadCommunityRaceViewRail(trackId = null) {
                             ${group.participants.map((participant, participantIndex) => `
                                 <span class="race-view-participant-pill">
                                     <span class="race-view-pill-dot" style="background:${raceViewAssignColor(participantIndex)}"></span>
-                                    ${participant.owner_name}
+                                    ${raceViewParticipantLabel(participant)}
                                 </span>
                             `).join('')}
                         </div>
@@ -3311,7 +3316,7 @@ async function loadTrackdayRaceViewCta(trackId, date, trackdayId) {
                     <div>
                         <div class="race-view-kicker"><i class="fas fa-flag-checkered"></i> Race View Ready</div>
                         <h3>Replay this trackday as one shared map</h3>
-                        <p>${group.rider_count} riders on ${group.track_name} overlap long enough to build a common playback view.</p>
+                        <p>${group.rider_count} riders across ${group.session_count || group.participants?.length || 0} public sessions on ${group.track_name} overlap long enough to build a common playback view.</p>
                     </div>
                     <div class="race-view-chip">Focus ${raceViewFormatClock(group.focus_start_epoch || group.start_epoch)}-${raceViewFormatClock(group.focus_end_epoch || group.end_epoch)}</div>
                 </div>
@@ -3319,7 +3324,7 @@ async function loadTrackdayRaceViewCta(trackId, date, trackdayId) {
                     ${group.participants.map((participant, index) => `
                         <span class="race-view-participant-pill">
                             <span class="race-view-pill-dot" style="background:${raceViewAssignColor(index)}"></span>
-                            ${participant.owner_name}
+                            ${raceViewParticipantLabel(participant)}
                         </span>
                     `).join('')}
                 </div>
@@ -3359,6 +3364,10 @@ function closeRaceView() {
         cancelAnimationFrame(raceViewAnimationFrame);
         raceViewAnimationFrame = null;
     }
+    if (raceViewSeekFrame) {
+        cancelAnimationFrame(raceViewSeekFrame);
+        raceViewSeekFrame = null;
+    }
     if (raceViewState.source === 'trackday' && raceViewState.sourceId) {
         viewTrackday(raceViewState.sourceId);
         return;
@@ -3367,7 +3376,7 @@ function closeRaceView() {
 }
 
 async function openRaceView({ source, sourceId = null, sourceLabel = '', group = null }) {
-    if (!group?.session_ids?.length) {
+    if (!group?.session_refs?.length) {
         showToast('Race View group unavailable', 'error');
         return;
     }
@@ -3391,7 +3400,11 @@ async function openRaceView({ source, sourceId = null, sourceLabel = '', group =
     }
 
     try {
-        const detail = await fetchRaceViewDetail(group.session_ids);
+        const detail = await fetchRaceViewDetail(
+            group.session_refs || [],
+            group.focus_start_epoch,
+            group.focus_end_epoch,
+        );
         prepareRaceViewDetail(detail);
         renderRaceView();
         startRaceViewPlayback(false);
@@ -3404,8 +3417,8 @@ function prepareRaceViewDetail(detail) {
     const timeline = detail?.timeline || {};
     const participants = (detail?.participants || []).map((participant, index) => {
         const columns = participant.playback?.columns || {};
-        const latSeries = columns.display_lat || columns.aligned_lat || columns.lat || [];
-        const lonSeries = columns.display_lon || columns.aligned_lon || columns.lon || [];
+        const latSeries = columns.race_lat || columns.lat || [];
+        const lonSeries = columns.race_lon || columns.lon || [];
         return {
             ...participant,
             color: raceViewAssignColor(index),
@@ -3421,7 +3434,7 @@ function prepareRaceViewDetail(detail) {
         ...detail,
         participants,
     };
-    raceViewState.selectedSessionId = participants[0]?.session_id || null;
+    raceViewState.selectedSessionId = raceViewParticipantKey(participants[0]) || null;
     const defaultStart = timeline.focus_start_epoch || timeline.start_epoch || participants[0]?.start_epoch || 0;
     raceViewState.scrubEpoch = defaultStart;
     raceViewState.baseScrubEpoch = defaultStart;
@@ -3477,9 +3490,11 @@ function renderRaceView() {
 
     const group = raceViewState.activeGroup || {};
     const timeline = detail.timeline || {};
-    const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
-    const focusEnd = timeline.focus_end_epoch || timeline.end_epoch || focusStart;
-    const maxValue = Math.max(0, (focusEnd - focusStart));
+    const timelineStart = timeline.start_epoch || timeline.focus_start_epoch || 0;
+    const timelineEnd = timeline.end_epoch || timeline.focus_end_epoch || timelineStart;
+    const focusStart = timeline.focus_start_epoch || timelineStart;
+    const focusEnd = timeline.focus_end_epoch || timelineEnd;
+    const maxValue = Math.max(0, (timelineEnd - timelineStart));
 
     mount.innerHTML = `
         <div class="race-view-shell">
@@ -3488,11 +3503,11 @@ function renderRaceView() {
                     <div class="race-view-kicker"><i class="fas fa-route"></i> ${raceViewState.sourceLabel || 'Race View'}</div>
                     <h2 style="margin: 0;">Race View</h2>
                     <div class="race-view-header-copy">
-                        ${detail.track.track_name} • ${detail.participants.length} riders • shared playback on a canonical layout.
+                        ${detail.track.track_name} • ${detail.rider_count || detail.participants.length} riders • ${detail.session_count || detail.participants.length} shared session entries on a canonical layout.
                     </div>
                 </div>
                 <div class="race-view-header-actions">
-                    <span class="race-view-chip"><i class="fas fa-clock"></i>${raceViewFormatClock(focusStart)}-${raceViewFormatClock(focusEnd)}</span>
+                    <span class="race-view-chip"><i class="fas fa-clock"></i>${raceViewFormatClock(timelineStart)}-${raceViewFormatClock(timelineEnd)}</span>
                     <button class="btn secondary btn-sm" id="raceViewSpeedBtn" onclick="cycleRaceViewSpeed()">1.0x</button>
                     <button class="btn btn-primary btn-sm" id="raceViewPlayBtn" onclick="toggleRaceViewPlayback()"><i class="fas fa-pause"></i> Pause</button>
                 </div>
@@ -3502,7 +3517,7 @@ function renderRaceView() {
                     <div class="race-view-stage-toolbar">
                         <div class="race-view-stage-meta">
                             <span class="race-view-stage-chip"><i class="fas fa-map-marker-alt"></i>${detail.track.track_name}</span>
-                            <span class="race-view-stage-chip"><i class="fas fa-users"></i>${detail.participants.length} public riders</span>
+                            <span class="race-view-stage-chip"><i class="fas fa-users"></i>${detail.rider_count || detail.participants.length} public riders</span>
                             <span class="race-view-stage-chip"><i class="fas fa-calendar-alt"></i>${formatDate(group.date || new Date(focusStart * 1000).toISOString())}</span>
                         </div>
                         <div class="race-view-transport">
@@ -3516,7 +3531,7 @@ function renderRaceView() {
                     <div class="race-view-timeline">
                         <div class="race-view-timeline-header">
                             <span>Shared timeline</span>
-                            <span id="raceViewTimelineRange">${raceViewFormatClock(focusStart)}-${raceViewFormatClock(focusEnd)}</span>
+                            <span id="raceViewTimelineRange">${raceViewFormatClock(timelineStart)}-${raceViewFormatClock(timelineEnd)}</span>
                         </div>
                         <div class="race-view-scrubber-wrap">
                             <span class="race-view-time-label" id="raceViewCurrentTime">${raceViewFormatClock(raceViewState.scrubEpoch)}</span>
@@ -3527,24 +3542,28 @@ function renderRaceView() {
                                 min="0"
                                 max="${Math.max(1, maxValue)}"
                                 step="0.1"
-                                value="${Math.max(0, (raceViewState.scrubEpoch || focusStart) - focusStart)}"
+                                value="${Math.max(0, (raceViewState.scrubEpoch || focusStart) - timelineStart)}"
                                 oninput="setRaceViewScrubber(this.value)"
                             >
-                            <span class="race-view-time-label">${raceViewFormatClock(focusEnd)}</span>
+                            <span class="race-view-time-label">${raceViewFormatClock(timelineEnd)}</span>
+                            <span class="race-view-seek-status" id="raceViewSeekStatus" aria-live="polite">
+                                <i class="fas fa-circle-notch fa-spin"></i>
+                            </span>
                         </div>
+                        <div class="race-view-inline-note">Playback opens at the shared overlap (${raceViewFormatClock(focusStart)}-${raceViewFormatClock(focusEnd)}), but the scrubber covers the full combined sessions.</div>
                     </div>
                 </div>
                 <aside class="race-view-sidebar">
                     <div class="race-view-sidebar-title">Riders On Track</div>
                     <div class="race-view-legend" id="raceViewLegend">
                         ${detail.participants.map(participant => `
-                            <div class="race-view-legend-item ${participant.session_id === raceViewState.selectedSessionId ? 'active' : ''}" data-race-session-id="${participant.session_id}" onclick="focusRaceViewParticipant('${participant.session_id}')">
+                            <div class="race-view-legend-item ${raceViewParticipantKey(participant) === raceViewState.selectedSessionId ? 'active' : ''}" data-race-session-id="${raceViewParticipantKey(participant)}" onclick="focusRaceViewParticipant('${raceViewParticipantKey(participant)}')">
                                 <span class="race-view-legend-dot" style="background:${participant.color}"></span>
                                 <div class="race-view-legend-copy">
-                                    <strong>${participant.owner_name}</strong>
+                                    <strong>${raceViewParticipantLabel(participant)}</strong>
                                     <span>${participant.bike_info || 'Bike not set'} • Best ${formatTime(participant.best_lap_time)}</span>
                                 </div>
-                                <span class="race-view-gap-chip" id="raceViewGap-${participant.session_id}">--</span>
+                                <span class="race-view-gap-chip" id="raceViewGap-${raceViewParticipantKey(participant)}">--</span>
                             </div>
                         `).join('')}
                     </div>
@@ -3578,15 +3597,35 @@ function cycleRaceViewSpeed() {
     }
 }
 
+function setRaceViewSeekStatus(active) {
+    const status = document.getElementById('raceViewSeekStatus');
+    if (!status) return;
+    status.classList.toggle('active', Boolean(active));
+}
+
 function setRaceViewScrubber(rawValue) {
     const timeline = raceViewState.detail?.timeline || {};
-    const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
-    raceViewState.scrubEpoch = focusStart + Number(rawValue || 0);
+    const timelineStart = timeline.start_epoch || timeline.focus_start_epoch || 0;
+    const timelineEnd = timeline.end_epoch || timeline.focus_end_epoch || timelineStart;
+    const nextEpoch = timelineStart + Number(rawValue || 0);
+    const wasPlaying = raceViewState.playing;
+
+    raceViewState.scrubEpoch = Math.max(timelineStart, Math.min(timelineEnd, nextEpoch));
     raceViewState.baseScrubEpoch = raceViewState.scrubEpoch;
-    raceViewState.playing = false;
-    const playBtn = document.getElementById('raceViewPlayBtn');
-    if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i> Play';
-    updateRaceViewFrame();
+    raceViewState.playbackStartMs = performance.now();
+
+    if (!wasPlaying) {
+        const playBtn = document.getElementById('raceViewPlayBtn');
+        if (playBtn) playBtn.innerHTML = '<i class="fas fa-play"></i> Play';
+    }
+
+    setRaceViewSeekStatus(true);
+    if (raceViewSeekFrame) cancelAnimationFrame(raceViewSeekFrame);
+    raceViewSeekFrame = requestAnimationFrame(() => {
+        raceViewSeekFrame = null;
+        updateRaceViewFrame();
+        setRaceViewSeekStatus(false);
+    });
 }
 
 function focusRaceViewParticipant(sessionId) {
@@ -3605,16 +3644,20 @@ function toggleRaceViewPlayback() {
         if (raceViewAnimationFrame) cancelAnimationFrame(raceViewAnimationFrame);
         return;
     }
-    startRaceViewPlayback(true);
+    startRaceViewPlayback(false);
 }
 
 function startRaceViewPlayback(resetClock) {
     const timeline = raceViewState.detail?.timeline || {};
     const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
-    if (resetClock) {
+    const timelineStart = timeline.start_epoch || focusStart;
+    const timelineEnd = timeline.end_epoch || timeline.focus_end_epoch || focusStart;
+    if (resetClock || !Number.isFinite(raceViewState.scrubEpoch)) {
         raceViewState.scrubEpoch = focusStart;
-    } else if (!Number.isFinite(raceViewState.scrubEpoch)) {
+    } else if (raceViewState.scrubEpoch >= timelineEnd) {
         raceViewState.scrubEpoch = focusStart;
+    } else if (raceViewState.scrubEpoch < timelineStart) {
+        raceViewState.scrubEpoch = timelineStart;
     }
     raceViewState.baseScrubEpoch = raceViewState.scrubEpoch;
     raceViewState.playbackStartMs = performance.now();
@@ -3629,11 +3672,11 @@ function stepRaceViewPlayback(now) {
     if (!raceViewState.playing || !raceViewState.detail) return;
     const timeline = raceViewState.detail.timeline || {};
     const focusStart = timeline.focus_start_epoch || timeline.start_epoch || 0;
-    const focusEnd = timeline.focus_end_epoch || timeline.end_epoch || focusStart;
+    const timelineEnd = timeline.end_epoch || timeline.focus_end_epoch || focusStart;
     const elapsedSec = ((now - raceViewState.playbackStartMs) / 1000) * raceViewState.speed;
-    raceViewState.scrubEpoch = Math.min(focusEnd, (raceViewState.baseScrubEpoch || focusStart) + elapsedSec);
+    raceViewState.scrubEpoch = Math.min(timelineEnd, (raceViewState.baseScrubEpoch || focusStart) + elapsedSec);
     updateRaceViewFrame();
-    if (raceViewState.scrubEpoch >= focusEnd) {
+    if (raceViewState.scrubEpoch >= timelineEnd) {
         raceViewState.playing = false;
         const playBtn = document.getElementById('raceViewPlayBtn');
         if (playBtn) playBtn.innerHTML = '<i class="fas fa-rotate-left"></i> Replay';
@@ -3647,15 +3690,11 @@ function updateRaceViewFrame() {
     const svg = document.getElementById('raceViewMapSvg');
     if (!detail || !svg) return;
 
-    const visibleParticipants = detail.participants.filter(participant => !raceViewState.hiddenSessionIds.has(participant.session_id));
+    const visibleParticipants = detail.participants.filter(participant => !raceViewState.hiddenSessionIds.has(raceViewParticipantKey(participant)));
     const points = visibleParticipants.map(participant => ({
         participant,
         point: raceViewPointForParticipant(participant, raceViewState.scrubEpoch),
     })).filter(item => item.point);
-
-    const leadEpoch = points.length
-        ? Math.max(...points.map(item => Number(item.participant.playbackColumns.time_epoch?.[item.point.index] || 0)))
-        : 0;
 
     svg.innerHTML = `
         ${!points.length ? `<text class="race-view-stage-label" x="${(detail.layout.layout_width || 1000) / 2 - 90}" y="${(detail.layout.layout_height || 700) / 2}" fill="#ffffff">No riders active at this moment</text>` : ''}
@@ -3663,8 +3702,8 @@ function updateRaceViewFrame() {
             const trail = raceViewTrailPath(participant, point.index);
             return `
                 ${trail ? `<polyline class="race-view-rider-trail" points="${trail}" stroke="${participant.color}" />` : ''}
-                <circle class="race-view-rider-dot" cx="${point.x}" cy="${point.y}" r="${participant.session_id === raceViewState.selectedSessionId ? 10 : 8}" fill="${participant.color}" style="color:${participant.color}"></circle>
-                <text class="race-view-stage-label" x="${point.x + 14}" y="${point.y - 14}" fill="${participant.color}">${participant.owner_name}</text>
+                <circle class="race-view-rider-dot" cx="${point.x}" cy="${point.y}" r="${raceViewParticipantKey(participant) === raceViewState.selectedSessionId ? 10 : 8}" fill="${participant.color}" style="color:${participant.color}"></circle>
+                <text class="race-view-stage-label" x="${point.x + 14}" y="${point.y - 14}" fill="${participant.color}">${raceViewParticipantLabel(participant)}</text>
             `;
         }).join('')}
     `;
@@ -3674,20 +3713,19 @@ function updateRaceViewFrame() {
 
     const scrubber = document.getElementById('raceViewScrubber');
     if (scrubber) {
-        const focusStart = detail.timeline?.focus_start_epoch || detail.timeline?.start_epoch || 0;
-        scrubber.value = Math.max(0, (raceViewState.scrubEpoch || focusStart) - focusStart);
+        const timelineStart = detail.timeline?.start_epoch || detail.timeline?.focus_start_epoch || 0;
+        scrubber.value = Math.max(0, (raceViewState.scrubEpoch || timelineStart) - timelineStart);
     }
 
     detail.participants.forEach(participant => {
-        const gapEl = document.getElementById(`raceViewGap-${participant.session_id}`);
+        const gapEl = document.getElementById(`raceViewGap-${raceViewParticipantKey(participant)}`);
         if (!gapEl) return;
         const point = raceViewPointForParticipant(participant, raceViewState.scrubEpoch);
         if (!point) {
             gapEl.textContent = 'Off';
             return;
         }
-        const rowEpoch = Number(participant.playbackColumns.time_epoch?.[point.index] || 0);
-        gapEl.textContent = raceViewFormatGap(Math.max(0, leadEpoch - rowEpoch));
+        gapEl.textContent = 'On';
     });
 }
 
@@ -9535,29 +9573,41 @@ function drawFrame() {
 /**
  * Manual CSV Upload Handling
  */
-function triggerFileUpload() {
-    const input = document.getElementById('manualCsvUpload');
-    if (input) input.click();
-}
-
 async function handleManualUpload(event) {
     const files = Array.from(event.target.files || []);
+    await handleManualUploadFiles(files, 'input');
+
+    // Clear the input so the same files can be selected again
+    event.target.value = '';
+}
+
+async function handleManualUploadFiles(files, source = 'unknown') {
     if (!files || files.length === 0) return;
 
-    showToast(`Uploading ${files.length} file(s)...`, 'info');
+    const csvFiles = files.filter(file => {
+        const name = String(file?.name || '').toLowerCase();
+        return name.endsWith('.csv') || file?.type === 'text/csv';
+    });
+
+    if (csvFiles.length === 0) {
+        showToast('Drop or select one or more CSV files', 'warning');
+        return;
+    }
+
+    showToast(`Uploading ${csvFiles.length} file(s)...`, 'info');
     updateProcessQueueCount({
         totalFiles: window.currentFiles?.length || 0,
         processedFiles: window.processedFiles?.size || 0,
         archivedView: isArchivesView,
-        message: `Uploading ${files.length} CSV file${files.length === 1 ? '' : 's'}...`
+        message: `Uploading ${csvFiles.length} CSV file${csvFiles.length === 1 ? '' : 's'}...`
     });
 
     let successCount = 0;
     let failCount = 0;
 
-    for (let i = 0; i < files.length; i++) {
+    for (let i = 0; i < csvFiles.length; i++) {
         try {
-            const success = await uploadOneFile(files[i]);
+            const success = await uploadOneFile(csvFiles[i]);
             if (success) successCount++;
             else failCount++;
         } catch (e) {
@@ -9588,9 +9638,6 @@ async function handleManualUpload(event) {
             message: `${failCount} upload${failCount === 1 ? '' : 's'} failed.`
         });
     }
-
-    // Clear the input so the same files can be selected again
-    event.target.value = '';
 }
 
 async function uploadOneFile(file) {
@@ -9608,14 +9655,17 @@ async function uploadOneFile(file) {
                         skip_analysis: true // Just save it to learning folder
                     })
                 });
-                resolve(res && res.success);
+                if (!res || !res.success) {
+                    console.error('Upload API returned unsuccessful response for', file.name, res);
+                }
+                resolve(Boolean(res && res.success));
             } catch (err) {
-                console.error('apiCall error:', err);
+                console.error('apiCall error while uploading', file.name, err);
                 resolve(false);
             }
         };
         reader.onerror = () => {
-            console.error('FileReader error');
+            console.error('FileReader error while uploading', file.name);
             resolve(false);
         };
         reader.readAsText(file);
@@ -10081,7 +10131,9 @@ async function loadAdminTrackData() {
         adminUnmatchedTracks = reportsResult.reports || [];
         adminSettings = settingsResult || {};
         const sectorInput = document.getElementById('adminDefaultSectorCount');
+        const appVersionEl = document.getElementById('adminAppVersionValue');
         if (sectorInput) sectorInput.value = adminSettings.default_sector_count || '';
+        if (appVersionEl) appVersionEl.textContent = adminSettings.app_version || '--';
         renderAdminTracks();
         renderAdminUnmatchedTracks();
     } catch (error) {

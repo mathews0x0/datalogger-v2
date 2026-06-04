@@ -85,3 +85,20 @@ def test_register_new_sessions_ignores_playback_sidecar(client, app):
         assert [meta.session_id for meta in metas] == ['sess_real']
         assert metas[0].duration_sec == 852.0
         assert metas[0].total_laps == 6
+
+        metas[0].is_public = False
+        db.session.commit()
+        real_session['meta']['start_time'] = '2026-05-25 09:00:00'
+        real_session['meta']['duration_sec'] = 900.0
+        real_session['summary']['total_laps'] = 7
+        real_session['summary']['best_lap_time'] = 94.123
+        (sessions_dir / 'sess_real.json').write_text(json.dumps(real_session))
+
+        register_new_sessions(user.id)
+
+        refreshed = SessionMeta.query.filter_by(user_id=user.id, session_id='sess_real').one()
+        assert refreshed.start_time == '2026-05-25 09:00:00'
+        assert refreshed.duration_sec == 900.0
+        assert refreshed.total_laps == 7
+        assert refreshed.best_lap_time == 94.123
+        assert refreshed.is_public is False

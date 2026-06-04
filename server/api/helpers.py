@@ -140,22 +140,31 @@ def register_new_sessions(user_id):
                                     except Exception as write_err:
                                         print(f"    Failed to sync track name to session JSON: {write_err}")
 
-                    # 2. Register session if missing for this user
+                    # 2. Register or refresh session metadata for this user.
+                    # Re-analysis must update timing and lap summaries without
+                    # resetting the rider's public/private choice.
                     existing = SessionMeta.query.filter_by(session_id=session_id, user_id=user_id).first()
+                    session_values = {
+                        "track_id": track_id,
+                        "session_name": data.get('meta', {}).get('session_name'),
+                        "start_time": data.get('meta', {}).get('start_time'),
+                        "duration_sec": data.get('meta', {}).get('duration_sec'),
+                        "total_laps": data.get('summary', {}).get('total_laps') or data.get('aggregates', {}).get('total_laps') or len(data.get('laps', [])),
+                        "best_lap_time": data.get('aggregates', {}).get('best_lap_time') or data.get('summary', {}).get('best_lap_time'),
+                    }
                     if not existing:
                         print(f"    Registering new session {session_id} for user {user_id}")
                         sm = SessionMeta(
                             session_id=session_id,
                             user_id=user_id,
-                            track_id=track_id,
-                            session_name=data.get('meta', {}).get('session_name'),
-                            start_time=data.get('meta', {}).get('start_time'),
-                            duration_sec=data.get('meta', {}).get('duration_sec'),
-                            total_laps=data.get('summary', {}).get('total_laps') or data.get('aggregates', {}).get('total_laps') or len(data.get('laps', [])),
-                            best_lap_time=data.get('aggregates', {}).get('best_lap_time') or data.get('summary', {}).get('best_lap_time'),
+                            **session_values,
                             is_public=True,
                         )
                         db.session.add(sm)
+                        new_found = True
+                    else:
+                        for key, value in session_values.items():
+                            setattr(existing, key, value)
                         new_found = True
 
                         if track_id and track_scope == 'user_fallback':

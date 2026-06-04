@@ -50,6 +50,7 @@ class TestCSVLoader(unittest.TestCase):
         self.assertAlmostEqual(s_gps.timestamp, 0.1)
         self.assertAlmostEqual(s_gps.gps.lat, 12.0000)
         self.assertAlmostEqual(s_gps.gps.speed, 80.0)
+        self.assertEqual(session.device_metadata["timestamp_source"], "relative_fallback")
     
     def test_fixed_100hz_hermite_sparse_promotion(self):
         """Promote only the maximum Hermite-supported subset of I rows."""
@@ -106,6 +107,17 @@ class TestCSVLoader(unittest.TestCase):
         self.assertAlmostEqual(session.samples[0].gps.lat, 0.0)
         self.assertAlmostEqual(session.samples[0].gps.lon, 0.0)
         self.assertFalse(session.samples[0].gps_is_valid)
+        self.assertEqual(session.device_metadata["timestamp_source"], "relative_fallback")
+
+    def test_fixed_100hz_records_gps_epoch_timestamp_source(self):
+        csv_data = """tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch
+1000,G,0.10,0.20,1.00,1.0,2.0,3.0,12.0000,77.0000,920.0,80.0,8,3.80,1770000000.0
+1100,G,0.20,0.30,1.10,2.0,3.0,4.0,12.0010,77.0010,921.0,82.0,9,3.79,1770000000.1
+"""
+        session = CSVLoader().load(io.StringIO(csv_data))
+
+        self.assertEqual(session.device_metadata["timestamp_source"], "gps_epoch")
+        self.assertAlmostEqual(session.samples[0].timestamp, 1770000000.0)
 
     def test_fixed_100hz_marker_metadata(self):
         csv_data = """tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,speed,sats,vbat,gps_epoch

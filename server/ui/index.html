@@ -10,8 +10,8 @@
   <meta name="keywords" content="motorcycle telemetry, trackday analytics, lap timer, data logger, racing, racesense" />
   <title>RaceSense — Ride Faster. Ride Smarter.</title>
   <link rel="icon" type="image/png" href="assets/logoSmall.png" />
-  <link rel="stylesheet" href="styles.css?v=13" />
-  <script src="app.js?v=54"></script>
+  <link rel="stylesheet" href="styles.css?v=15" />
+  <script src="app.js?v=57" defer></script>
 </head>
 
 <body>
@@ -574,18 +574,17 @@
                 <span class="toggle-slider"></span>
               </div>
             </label>
-            <button class="btn btn-secondary btn-sm" onclick="triggerFileUpload()"
-              title="Upload CSV files manually">
+            <input id="manualCsvUpload" type="file" accept=".csv,text/csv" multiple
+              class="upload-file-hidden" onchange="handleManualUpload(event)" onclick="this.value=''" />
+            <label for="manualCsvUpload" class="btn btn-secondary btn-sm" title="Upload CSV files manually">
               <i class="fas fa-file-upload"></i> Upload CSV
-            </button>
+            </label>
             <button class="btn btn-primary btn-sm" onclick="loadLearningFiles()"
               title="Check for newly uploaded files from your RS-Core">
               <i class="fas fa-sync-alt"></i> Refresh
             </button>
           </div>
         </div>
-        <input type="file" id="manualCsvUpload" style="display: none;" multiple accept=".csv"
-          onchange="handleManualUpload(event)">
         <div id="learningFilesList" class="files-list">
           <div class="loading">Loading files...</div>
         </div>
@@ -824,6 +823,9 @@
           <h3 style="margin-top: 0;">Central Track Packages</h3>
           <div style="display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 1rem; align-items: start;">
             <div>
+              <div class="admin-version-chip" id="adminAppVersionChip">
+                App Version: <strong id="adminAppVersionValue">--</strong>
+              </div>
               <label for="adminDefaultSectorCount" class="help-text" style="display:block; margin-bottom:0.35rem;">Default sector count for non-canonical tracks</label>
               <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.75rem; flex-wrap:wrap;">
                 <input type="number" id="adminDefaultSectorCount" class="filter-select" min="1" max="16" step="1" style="width: 120px;">
@@ -1973,8 +1975,6 @@
       </div>
     </div>
   </div>
-
-  <script src="app.js?v=48"></script>
 
 </body>
 

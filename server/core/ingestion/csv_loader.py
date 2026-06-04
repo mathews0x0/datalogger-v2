@@ -171,6 +171,7 @@ class CSVLoader:
             "gps_fix_count": len(gps_rows),
             "gps_hermite_max_factor": max_factor,
             "gps_hermite_promoted_count": len(promoted_ticks),
+            "timestamp_source": "gps_epoch" if gps_epoch_anchor is not None else "relative_fallback",
         }
         if gps_rows:
             session.device_metadata["gps_fix_span_s"] = max(0.0, (gps_rows[-1][0] - gps_rows[0][0]) / 1000.0)

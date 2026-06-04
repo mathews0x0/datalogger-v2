@@ -4,6 +4,7 @@ const state = {
   layoutImageUrl: "",
   layoutDataUrl: "",
   layoutSvgText: "",
+  layoutIsSvg: false,
   layoutWidth: 0,
   layoutHeight: 0,
   layoutPixelPoints: [],
@@ -227,6 +228,24 @@ function bounds(points) {
   };
 }
 
+function spanFromBounds(box) {
+  return {
+    width: Math.max(1e-6, box.maxX - box.minX),
+    height: Math.max(1e-6, box.maxY - box.minY),
+  };
+}
+
+function rmsRadius(points, center = pointCentroid(points)) {
+  if (!points.length) return 0;
+  let sumSq = 0;
+  for (const point of points) {
+    const dx = point.x - center.x;
+    const dy = point.y - center.y;
+    sumSq += dx * dx + dy * dy;
+  }
+  return Math.sqrt(sumSq / points.length);
+}
+
 function transformMetersPoint(point, transform) {
   const theta = (transform.rotationDeg * Math.PI) / 180;
   const ct = Math.cos(theta);
@@ -250,6 +269,33 @@ function nearestPoint(point, cloud) {
     }
   }
   return { point: best, distance: Math.sqrt(bestDistSq) };
+}
+
+function meanNearestDistance(sourcePoints, targetPoints) {
+  if (!sourcePoints.length || !targetPoints.length) return Number.POSITIVE_INFINITY;
+  let total = 0;
+  for (const point of sourcePoints) {
+    total += nearestPoint(point, targetPoints).distance;
+  }
+  return total / sourcePoints.length;
+}
+
+function transformedTelemetryPoints(points, transform) {
+  const theta = (transform.rotationDeg * Math.PI) / 180;
+  const ct = Math.cos(theta);
+  const st = Math.sin(theta);
+  return points.map((point) => ({
+    x: transform.translateX + transform.scale * (point.x * ct - point.y * st),
+    y: transform.translateY + transform.scale * (point.x * st + point.y * ct),
+  }));
+}
+
+function symmetricFitError(transform, telemetrySample, layoutSample) {
+  if (!transform) return Number.POSITIVE_INFINITY;
+  const projectedTelemetry = transformedTelemetryPoints(telemetrySample, transform);
+  const telemetryToLayout = meanNearestDistance(projectedTelemetry, layoutSample);
+  const layoutToTelemetry = meanNearestDistance(layoutSample, projectedTelemetry);
+  return (telemetryToLayout + layoutToTelemetry) / 2;
 }
 
 function solveSimilarityTransform(sourcePoints, targetPoints) {
@@ -292,22 +338,20 @@ function refineAutoAlign(initialTransform) {
 
   let current = { ...initialTransform };
   let best = { ...initialTransform };
-  let bestError = Number.POSITIVE_INFINITY;
+  let bestError = symmetricFitError(best, telemetrySample, layoutSample);
 
   for (let iter = 0; iter < 7; iter += 1) {
-    const transformed = telemetrySample.map((point) => transformMetersPoint(point, current));
+    const transformed = transformedTelemetryPoints(telemetrySample, current);
     const targets = [];
-    let totalError = 0;
 
     for (let i = 0; i < transformed.length; i += 1) {
       const nearest = nearestPoint(transformed[i], layoutSample);
       targets.push(nearest.point);
-      totalError += nearest.distance;
     }
 
-    const meanError = totalError / transformed.length;
-    if (meanError < bestError) {
-      bestError = meanError;
+    const currentError = symmetricFitError(current, telemetrySample, layoutSample);
+    if (currentError < bestError) {
+      bestError = currentError;
       best = { ...current };
     }
 
@@ -320,13 +364,11 @@ function refineAutoAlign(initialTransform) {
     current = solved;
 
     if (rotationShift < 0.02 && scaleShift < 0.0005 && translateShift < 0.2) {
-      const finalProjected = telemetrySample.map((point) => transformMetersPoint(point, current));
-      let finalError = 0;
-      for (let i = 0; i < finalProjected.length; i += 1) {
-        finalError += nearestPoint(finalProjected[i], layoutSample).distance;
+      const finalError = symmetricFitError(current, telemetrySample, layoutSample);
+      if (finalError < bestError) {
+        bestError = finalError;
+        best = { ...current };
       }
-      bestError = finalError / finalProjected.length;
-      best = { ...current };
       break;
     }
   }
@@ -428,10 +470,11 @@ function parseSvgSize(svgText) {
 
 async function loadLayout(file) {
   state.layoutFile = file;
+  state.layoutIsSvg = file.name.toLowerCase().endsWith(".svg") || file.type === "image/svg+xml";
   els.layoutFileName.textContent = file.name;
   state.layoutDataUrl = await fileToDataUrl(file);
   state.layoutSvgText = "";
-  if (file.name.toLowerCase().endsWith(".svg") || file.type === "image/svg+xml") {
+  if (state.layoutIsSvg) {
     state.layoutSvgText = await file.text();
     const size = parseSvgSize(state.layoutSvgText);
     state.layoutWidth = size.width;
@@ -463,10 +506,10 @@ function extractLayoutPixels() {
   offCtx.drawImage(state.layoutImage, 0, 0, off.width, off.height);
   const { data, width, height } = offCtx.getImageData(0, 0, off.width, off.height);
   const threshold = Number(els.darkThreshold.value);
-  const points = [];
+  const allPoints = [];
+  const croppedPoints = [];
   for (let y = 0; y < height; y += 2) {
     for (let x = 0; x < width; x += 2) {
-      if (x < 320 && y < 220) continue;
       const idx = (y * width + x) * 4;
       const r = data[idx];
       const g = data[idx + 1];
@@ -474,11 +517,16 @@ function extractLayoutPixels() {
       const a = data[idx + 3];
       const lum = 0.299 * r + 0.587 * g + 0.114 * b;
       if (a > 0 && lum < threshold) {
-        points.push({ x, y });
+        const point = { x, y };
+        allPoints.push(point);
+        if (!(x < 320 && y < 220)) {
+          croppedPoints.push(point);
+        }
       }
     }
   }
-  state.layoutPixelPoints = points;
+  const cropRetainsMajority = croppedPoints.length >= allPoints.length * 0.75;
+  state.layoutPixelPoints = state.layoutIsSvg || !cropRetainsMajority ? allPoints : croppedPoints;
 }
 
 async function loadTelemetry(file) {
@@ -508,21 +556,53 @@ function autoAlign() {
   const telemetryBounds = bounds(state.telemetryPointsMeters);
   const layoutCenter = pointCentroid(state.layoutPixelPoints);
   const telemetryCenter = pointCentroid(state.telemetryPointsMeters);
-  const scaleX = (layoutBounds.maxX - layoutBounds.minX) / (telemetryBounds.maxX - telemetryBounds.minX);
-  const scaleY = (layoutBounds.maxY - layoutBounds.minY) / (telemetryBounds.maxY - telemetryBounds.minY);
-  const scale = Math.min(scaleX, scaleY);
-  const rotationDeg = ((layoutAngle - telemetryAngle) * 180) / Math.PI;
-  const theta = (rotationDeg * Math.PI) / 180;
-  const ct = Math.cos(theta);
-  const st = Math.sin(theta);
+  const layoutSpan = spanFromBounds(layoutBounds);
+  const telemetrySpan = spanFromBounds(telemetryBounds);
+  const boxScale = Math.min(
+    layoutSpan.width / telemetrySpan.width,
+    layoutSpan.height / telemetrySpan.height
+  );
+  const radiusScale = rmsRadius(state.layoutPixelPoints, layoutCenter) /
+    Math.max(1e-6, rmsRadius(state.telemetryPointsMeters, telemetryCenter));
+  const initialScale = [boxScale, radiusScale]
+    .filter((value) => Number.isFinite(value) && value > 0)
+    .reduce((sum, value, index, values) => sum + value / values.length, 0);
 
-  const initialTransform = {
-    scale,
-    rotationDeg,
-    translateX: layoutCenter.x - scale * (telemetryCenter.x * ct - telemetryCenter.y * st),
-    translateY: layoutCenter.y - scale * (telemetryCenter.x * st + telemetryCenter.y * ct),
-  };
-  const refined = refineAutoAlign(initialTransform);
+  const baseRotationDeg = ((layoutAngle - telemetryAngle) * 180) / Math.PI;
+  const candidateRotations = [
+    baseRotationDeg,
+    baseRotationDeg + 180,
+    baseRotationDeg + 90,
+    baseRotationDeg - 90,
+  ];
+  const candidateScales = [
+    initialScale * 0.5,
+    initialScale * 0.8,
+    initialScale,
+    initialScale * 1.25,
+    initialScale * 1.6,
+    initialScale * 2,
+  ].filter((value) => Number.isFinite(value) && value > 0);
+
+  let refined = null;
+  for (const rotationDeg of candidateRotations) {
+    for (const scale of candidateScales) {
+      const theta = (rotationDeg * Math.PI) / 180;
+      const ct = Math.cos(theta);
+      const st = Math.sin(theta);
+      const initialTransform = {
+        scale,
+        rotationDeg,
+        translateX: layoutCenter.x - scale * (telemetryCenter.x * ct - telemetryCenter.y * st),
+        translateY: layoutCenter.y - scale * (telemetryCenter.x * st + telemetryCenter.y * ct),
+      };
+      const candidate = refineAutoAlign(initialTransform);
+      if (!refined || (candidate.meanError ?? Number.POSITIVE_INFINITY) < (refined.meanError ?? Number.POSITIVE_INFINITY)) {
+        refined = candidate;
+      }
+    }
+  }
+
   state.telemetryAutoAlign = refined.transform;
   const refinedTheta = (state.telemetryAutoAlign.rotationDeg * Math.PI) / 180;
   const refinedCt = Math.cos(refinedTheta);
