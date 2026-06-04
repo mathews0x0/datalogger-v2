@@ -35,6 +35,20 @@ Then open `http://localhost:8080`.
 6. Add anchor points by enabling `Anchor Mode` and clicking.
 7. Export JSON and optionally SVG preview.
 
+## Generated Layout V2 Workflow
+
+The tool can also synthesize a layout directly from RaceSense CSV telemetry:
+
+1. Upload a primary CSV in `Generated Layout V2`.
+2. Click `Generate V1` to isolate the first complete lap. The start/end closure must be within `Closure Max`; keep this strict, usually `2m`, to avoid connecting pit exit/entry into the layout.
+3. Visually validate V1. It uses the lap centerline with `V1 Half Width` on each side.
+4. Click `Generate V2` to trim the session to the V1 start point, isolate valid laps, infer lateral spread, and build a smoothed layout ribbon.
+5. Use `Enhance With More CSVs` to add more sessions from the same track. Extra files are projected into the primary CSV's geo-reference before lap extraction.
+
+`Reject Deviation` is a hard lap-level threshold. If a lap deviates laterally beyond that threshold from the reference line, it is excluded from the V2 envelope. The info table reports the observed min/median/max delta from the original line and the final layout width range.
+
+Generated layouts still support the normal anchor, start/finish, sector generation, JSON export, SVG preview export, and package export paths.
+
 ## Export Format
 
 The JSON export is intended to become the canonical track reference for RaceSense admin upload. It includes:

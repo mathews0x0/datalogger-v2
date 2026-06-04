@@ -12,6 +12,10 @@ const state = {
   telemetryGeoReference: null,
   telemetryPointsMeters: [],
   telemetryWorldPoints: [],
+  generatedLayout: null,
+  generatedCsv: null,
+  generatedRows: [],
+  generatedExtraFiles: [],
   anchors: [],
   sectors: [],
   selectedLapTrace: [],
@@ -48,6 +52,18 @@ const els = {
   layoutFileName: document.getElementById("layoutFileName"),
   csvFile: document.getElementById("csvFile"),
   csvFileName: document.getElementById("csvFileName"),
+  generatedCsvFile: document.getElementById("generatedCsvFile"),
+  generatedCsvFileName: document.getElementById("generatedCsvFileName"),
+  closureMax: document.getElementById("closureMax"),
+  deviationReject: document.getElementById("deviationReject"),
+  v1HalfWidth: document.getElementById("v1HalfWidth"),
+  minLayoutWidth: document.getElementById("minLayoutWidth"),
+  generateV1Btn: document.getElementById("generateV1Btn"),
+  generateV2Btn: document.getElementById("generateV2Btn"),
+  enhanceCsvFiles: document.getElementById("enhanceCsvFiles"),
+  enhanceCsvFileName: document.getElementById("enhanceCsvFileName"),
+  enhanceLayoutBtn: document.getElementById("enhanceLayoutBtn"),
+  generatedInfoTable: document.getElementById("generatedInfoTable"),
   minSpeed: document.getElementById("minSpeed"),
   darkThreshold: document.getElementById("darkThreshold"),
   autoAlignBtn: document.getElementById("autoAlignBtn"),
@@ -78,6 +94,7 @@ const els = {
   exportJsonBtn: document.getElementById("exportJsonBtn"),
   exportSvgBtn: document.getElementById("exportSvgBtn"),
   exportPackageBtn: document.getElementById("exportPackageBtn"),
+  exportPackagePreviewBtn: document.getElementById("exportPackagePreviewBtn"),
   anchorList: document.getElementById("anchorList"),
   status: document.getElementById("status"),
   stage: document.getElementById("stage"),
@@ -153,6 +170,10 @@ function parseCsv(text) {
   });
 }
 
+function parseCsvRows(text) {
+  return parseCsv(text).filter((row) => row.row_type || row.tick_ms);
+}
+
 function telemetryToMeters(rows, minSpeed) {
   const gps = rows.filter((row) => {
     return row.row_type === "G" && row.lat && row.lon && Number(row.speed || 0) >= minSpeed;
@@ -164,7 +185,9 @@ function telemetryToMeters(rows, minSpeed) {
   const metersPerDegLon = 111320 * Math.cos((lat0 * Math.PI) / 180);
   return {
     geoReference: { lat0, lon0, metersPerDegLat, metersPerDegLon },
-    points: gps.map((row) => ({
+    points: gps.map((row, index) => ({
+      index,
+      tick: Number(row.tick_ms || 0),
       x: (Number(row.lon) - lon0) * metersPerDegLon,
       y: -(Number(row.lat) - lat0) * metersPerDegLat,
       speed: Number(row.speed || 0),
@@ -450,6 +473,455 @@ function fileToDataUrl(file) {
   });
 }
 
+function generatedGpsPoints(rows, minSpeed = 0, existingGeoReference = null) {
+  const gps = rows
+    .filter((row) => row.row_type === "G" && row.lat && row.lon && Number(row.speed || 0) >= minSpeed)
+    .map((row, index) => ({
+      index,
+      tick: Number(row.tick_ms || 0),
+      lat: Number(row.lat),
+      lon: Number(row.lon),
+      speed: Number(row.speed || 0),
+    }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon) && point.lat !== 0 && point.lon !== 0);
+
+  if (!gps.length) return { points: [], geoReference: null };
+  const lat0 = existingGeoReference?.lat0 ?? gps.reduce((sum, point) => sum + point.lat, 0) / gps.length;
+  const lon0 = existingGeoReference?.lon0 ?? gps.reduce((sum, point) => sum + point.lon, 0) / gps.length;
+  const metersPerDegLat = existingGeoReference?.metersPerDegLat ?? 111320;
+  const metersPerDegLon = existingGeoReference?.metersPerDegLon ?? 111320 * Math.cos((lat0 * Math.PI) / 180);
+  gps.forEach((point) => {
+    point.x = (point.lon - lon0) * metersPerDegLon;
+    point.y = -(point.lat - lat0) * metersPerDegLat;
+  });
+  return { points: gps, geoReference: { lat0, lon0, metersPerDegLat, metersPerDegLon } };
+}
+
+function euclideanDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function cumulativeMeterDistances(points) {
+  if (!points.length) return [];
+  const cumulative = [0];
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += euclideanDistance(points[i - 1], points[i]);
+    cumulative.push(total);
+  }
+  return cumulative;
+}
+
+function headingAt(points, index) {
+  const point = points[index];
+  let back = null;
+  let forward = null;
+  for (let i = index - 1; i >= Math.max(0, index - 30); i -= 1) {
+    if (euclideanDistance(point, points[i]) >= 5) {
+      back = points[i];
+      break;
+    }
+  }
+  for (let i = index + 1; i < Math.min(points.length, index + 30); i += 1) {
+    if (euclideanDistance(points[i], point) >= 5) {
+      forward = points[i];
+      break;
+    }
+  }
+  if (back && forward) return Math.atan2(forward.y - back.y, forward.x - back.x);
+  if (back) return Math.atan2(point.y - back.y, point.x - back.x);
+  if (forward) return Math.atan2(forward.y - point.y, forward.x - point.x);
+  return null;
+}
+
+function angleDiffDeg(a, b) {
+  if (a == null || b == null) return Number.POSITIVE_INFINITY;
+  return Math.abs((((a - b + Math.PI) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) - Math.PI) * 180 / Math.PI;
+}
+
+function detectFirstCompleteLap(points, options = {}) {
+  const closureMaxM = Number(options.closureMaxM || 2);
+  const relaxedClosureMaxM = Math.max(closureMaxM, Number(options.relaxedClosureMaxM || closureMaxM));
+  const minSpeed = Number(options.minSpeed || 3);
+  const minLapSeconds = Number(options.minLapSeconds || 40);
+  const maxLapSeconds = Number(options.maxLapSeconds || 250);
+  const minLapDistanceM = Number(options.minLapDistanceM || 500);
+  const cumulative = cumulativeMeterDistances(points);
+  const firstTick = points[0]?.tick || 0;
+  let relaxedCandidate = null;
+
+  for (let i = 0; i < points.length; i += 1) {
+    const candidate = points[i];
+    if (((candidate.tick - firstTick) / 1000) < 20 || candidate.speed < minSpeed) continue;
+    const candidateHeading = headingAt(points, i);
+
+    for (let j = i + 150; j < points.length; j += 3) {
+      const lapSeconds = (points[j].tick - candidate.tick) / 1000;
+      if (lapSeconds < minLapSeconds) continue;
+      if (lapSeconds > maxLapSeconds) break;
+      const lapDistanceM = cumulative[j] - cumulative[i];
+      if (lapDistanceM < minLapDistanceM) continue;
+      if (Math.abs(points[j].x - candidate.x) > relaxedClosureMaxM + 20 || Math.abs(points[j].y - candidate.y) > relaxedClosureMaxM + 20) continue;
+
+      const closureDistanceM = euclideanDistance(candidate, points[j]);
+      if (closureDistanceM > relaxedClosureMaxM) continue;
+      const headingDiff = angleDiffDeg(candidateHeading, headingAt(points, j));
+      if (headingDiff > 90) continue;
+
+      const result = {
+        startIndex: i,
+        endIndex: j,
+        startPoint: candidate,
+        endPoint: points[j],
+        referenceHeading: candidateHeading,
+        lapSeconds,
+        lapDistanceM,
+        closureDistanceM,
+        headingDiff,
+        strict: closureDistanceM <= closureMaxM,
+      };
+      if (result.strict) return result;
+      if (!relaxedCandidate || result.closureDistanceM < relaxedCandidate.closureDistanceM) {
+        relaxedCandidate = result;
+      }
+    }
+  }
+  return relaxedCandidate;
+}
+
+function dedupeSequentialGps(points) {
+  const clean = [];
+  let last = null;
+  points.forEach((point) => {
+    const key = `${point.lat.toFixed(8)},${point.lon.toFixed(8)}`;
+    if (key !== last) {
+      clean.push(point);
+      last = key;
+    }
+  });
+  return clean;
+}
+
+function interpolateMeterPoint(points, cumulative, targetDistance) {
+  if (targetDistance <= 0) return { ...points[0] };
+  if (targetDistance >= cumulative[cumulative.length - 1]) return { ...points[points.length - 1] };
+  let lo = 0;
+  let hi = cumulative.length - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (cumulative[mid] < targetDistance) lo = mid + 1;
+    else hi = mid;
+  }
+  const index = Math.max(1, lo);
+  const span = Math.max(1e-9, cumulative[index] - cumulative[index - 1]);
+  const ratio = (targetDistance - cumulative[index - 1]) / span;
+  const start = points[index - 1];
+  const end = points[index];
+  return {
+    tick: start.tick + (end.tick - start.tick) * ratio,
+    lat: start.lat + (end.lat - start.lat) * ratio,
+    lon: start.lon + (end.lon - start.lon) * ratio,
+    speed: start.speed + (end.speed - start.speed) * ratio,
+    x: start.x + (end.x - start.x) * ratio,
+    y: start.y + (end.y - start.y) * ratio,
+  };
+}
+
+function normalAtMeterPoint(points, index) {
+  const start = index === 0 ? points[0] : points[index - 1];
+  const end = index === points.length - 1 ? points[points.length - 1] : points[index + 1];
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const length = Math.hypot(dx, dy) || 1;
+  return { x: -dy / length, y: dx / length };
+}
+
+function smoothValues(values, radius = 4) {
+  return values.map((_, index) => {
+    const start = Math.max(0, index - radius);
+    const end = Math.min(values.length, index + radius + 1);
+    let sum = 0;
+    for (let i = start; i < end; i += 1) sum += values[i];
+    return sum / (end - start);
+  });
+}
+
+function detectLapsFromStart(points, startIndex, referenceHeading, options = {}) {
+  const radiusM = Number(options.radiusM || 30);
+  const minLapSeconds = Number(options.minLapSeconds || 60);
+  const headingToleranceDeg = Number(options.headingToleranceDeg || 90);
+  const crossings = [startIndex];
+  let inZone = true;
+  const startPoint = points[startIndex];
+
+  for (let i = startIndex + 1; i < points.length; i += 1) {
+    const distanceM = euclideanDistance(points[i], startPoint);
+    if (distanceM < radiusM) {
+      if (inZone) continue;
+      if (angleDiffDeg(referenceHeading, headingAt(points, i)) > headingToleranceDeg) continue;
+      const elapsed = (points[i].tick - points[crossings[crossings.length - 1]].tick) / 1000;
+      if (elapsed < minLapSeconds) continue;
+      crossings.push(i);
+      inZone = true;
+    } else {
+      inZone = false;
+    }
+  }
+  return crossings;
+}
+
+function buildValidLaps(points, crossings, options = {}) {
+  const laps = [];
+  const minLapSeconds = Number(options.minLapSeconds || 70);
+  const maxLapSeconds = Number(options.maxLapSeconds || 220);
+  const minLapDistanceM = Number(options.minLapDistanceM || 500);
+  const maxLapDistanceM = Number(options.maxLapDistanceM || 6000);
+
+  for (let i = 0; i < crossings.length - 1; i += 1) {
+    const startIndex = crossings[i];
+    const endIndex = crossings[i + 1];
+    const rawPoints = points.slice(startIndex, endIndex + 1);
+    const lapSeconds = (points[endIndex].tick - points[startIndex].tick) / 1000;
+    const cumulative = cumulativeMeterDistances(rawPoints);
+    const lapDistanceM = cumulative[cumulative.length - 1];
+    if (lapSeconds < minLapSeconds || lapSeconds > maxLapSeconds) continue;
+    if (lapDistanceM < minLapDistanceM || lapDistanceM > maxLapDistanceM) continue;
+    const clean = dedupeSequentialGps(rawPoints);
+    if (clean.length < 100) continue;
+    laps.push({
+      number: i + 1,
+      startIndex,
+      endIndex,
+      time_s: lapSeconds,
+      distance_m: lapDistanceM,
+      points: clean,
+      cumulative: cumulativeMeterDistances(clean),
+    });
+  }
+  return laps;
+}
+
+function inferEnvelopeFromLaps(laps, options = {}) {
+  const stationCount = Number(options.stationCount || 360);
+  const deviationRejectM = Number(options.deviationRejectM || 30);
+  const minLayoutWidthM = Number(options.minLayoutWidthM || 8);
+  const edgeMarginM = Number(options.edgeMarginM || 1.5);
+  const medianDistance = [...laps].sort((a, b) => a.distance_m - b.distance_m)[Math.floor(laps.length / 2)].distance_m;
+  const referenceLap = laps.reduce((best, lap) => (
+    Math.abs(lap.distance_m - medianDistance) < Math.abs(best.distance_m - medianDistance) ? lap : best
+  ), laps[0]);
+  const reference = [];
+  for (let i = 0; i < stationCount; i += 1) {
+    reference.push(interpolateMeterPoint(referenceLap.points, referenceLap.cumulative, referenceLap.cumulative[referenceLap.cumulative.length - 1] * i / (stationCount - 1)));
+  }
+  const normals = reference.map((_, index) => normalAtMeterPoint(reference, index));
+  const acceptedLaps = [];
+  const rejectedLaps = [];
+  laps.forEach((lap) => {
+    let maxDeviation = 0;
+    for (let station = 0; station < stationCount; station += 1) {
+      const ref = reference[station];
+      const normal = normals[station];
+      const sample = interpolateMeterPoint(lap.points, lap.cumulative, lap.cumulative[lap.cumulative.length - 1] * station / (stationCount - 1));
+      const offset = (sample.x - ref.x) * normal.x + (sample.y - ref.y) * normal.y;
+      maxDeviation = Math.max(maxDeviation, Math.abs(offset));
+    }
+    if (maxDeviation <= deviationRejectM) acceptedLaps.push({ ...lap, maxDeviationM: maxDeviation });
+    else rejectedLaps.push({ ...lap, maxDeviationM: maxDeviation });
+  });
+  const envelopeLaps = acceptedLaps.length >= 2 ? acceptedLaps : laps;
+  const rawMin = [];
+  const rawMax = [];
+
+  for (let station = 0; station < stationCount; station += 1) {
+    const ref = reference[station];
+    const normal = normals[station];
+    const offsets = [];
+    envelopeLaps.forEach((lap) => {
+      const sample = interpolateMeterPoint(lap.points, lap.cumulative, lap.cumulative[lap.cumulative.length - 1] * station / (stationCount - 1));
+      const offset = (sample.x - ref.x) * normal.x + (sample.y - ref.y) * normal.y;
+      offsets.push(offset);
+    });
+    const usable = offsets.length ? offsets : [0];
+    rawMin.push(Math.min(...usable));
+    rawMax.push(Math.max(...usable));
+  }
+
+  const observedMin = smoothValues(rawMin, 5);
+  const observedMax = smoothValues(rawMax, 5);
+  const layoutMin = [];
+  const layoutMax = [];
+  for (let i = 0; i < stationCount; i += 1) {
+    let min = observedMin[i];
+    let max = observedMax[i];
+    if (max - min < minLayoutWidthM) {
+      const center = (min + max) / 2;
+      min = center - minLayoutWidthM / 2;
+      max = center + minLayoutWidthM / 2;
+    } else {
+      min -= edgeMarginM;
+      max += edgeMarginM;
+    }
+    layoutMin.push(min);
+    layoutMax.push(max);
+  }
+
+  const observedWidths = observedMin.map((value, index) => Math.max(0, observedMax[index] - value));
+  const layoutWidths = layoutMin.map((value, index) => Math.max(0, layoutMax[index] - value));
+  return {
+    reference,
+    normals,
+    observedMin,
+    observedMax,
+    layoutMin,
+    layoutMax,
+    observedWidths,
+    layoutWidths,
+    acceptedLaps: envelopeLaps,
+    rejectedLaps,
+    rejectedLapCount: rejectedLaps.length,
+    referenceLap,
+  };
+}
+
+function stats(values) {
+  if (!values.length) return { min: 0, median: 0, max: 0 };
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    min: sorted[0],
+    median: sorted[Math.floor(sorted.length / 2)],
+    max: sorted[sorted.length - 1],
+  };
+}
+
+function buildRibbonGeometry(centerline, normals, minOffsets, maxOffsets) {
+  const left = centerline.map((point, index) => ({
+    x: point.x + normals[index].x * maxOffsets[index],
+    y: point.y + normals[index].y * maxOffsets[index],
+  }));
+  const right = centerline.map((point, index) => ({
+    x: point.x + normals[index].x * minOffsets[index],
+    y: point.y + normals[index].y * minOffsets[index],
+  }));
+  return { left, right };
+}
+
+function generatedCoordinateFrame(points, padding = 60) {
+  const box = bounds(points);
+  const width = Math.max(1, box.maxX - box.minX) + padding * 2;
+  const height = Math.max(1, box.maxY - box.minY) + padding * 2;
+  const toCanonical = (point) => ({
+    x: point.x - box.minX + padding,
+    y: point.y - box.minY + padding,
+  });
+  return { width, height, toCanonical };
+}
+
+function svgPolyline(points) {
+  return points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ");
+}
+
+function svgPolygon(points) {
+  return svgPolyline(points);
+}
+
+function installGeneratedLayout({ mode, centerline, normals, minOffsets, maxOffsets, observedWidths = [], laps = [], sourceFiles = [] }) {
+  const ribbon = buildRibbonGeometry(centerline, normals, minOffsets, maxOffsets);
+  const frame = generatedCoordinateFrame([...ribbon.left, ...ribbon.right, ...centerline], 80);
+  const canonicalCenterline = centerline.map((point) => ({ ...point, canonical: frame.toCanonical(point) }));
+  const canonicalLeft = ribbon.left.map(frame.toCanonical);
+  const canonicalRight = ribbon.right.map(frame.toCanonical);
+  const layoutWidth = Math.ceil(frame.width);
+  const layoutHeight = Math.ceil(frame.height);
+  const sourceLabel = sourceFiles.map((file) => file.name || file).join(", ");
+
+  const packageSvgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${layoutWidth}" height="${layoutHeight}" viewBox="0 0 ${layoutWidth} ${layoutHeight}">
+  <rect width="100%" height="100%" fill="#111417"/>
+  <polygon points="${svgPolygon(canonicalLeft.concat([...canonicalRight].reverse()))}" fill="#2a2f33"/>
+  <polyline points="${svgPolyline(canonicalLeft)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <polyline points="${svgPolyline(canonicalRight)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>`;
+  const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${layoutWidth}" height="${layoutHeight}" viewBox="0 0 ${layoutWidth} ${layoutHeight}">
+  <rect width="100%" height="100%" fill="#111417"/>
+  <polygon points="${svgPolygon(canonicalLeft.concat([...canonicalRight].reverse()))}" fill="#2a2f33"/>
+  <polyline points="${svgPolyline(canonicalLeft)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <polyline points="${svgPolyline(canonicalRight)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <polyline points="${svgPolyline(canonicalCenterline.map((point) => point.canonical))}" fill="none" stroke="#f4f4f5" stroke-width="1.5" stroke-opacity="0.8"/>
+</svg>`;
+  const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`;
+  const packageDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(packageSvgText)))}`;
+  const img = new Image();
+  img.onload = () => {
+    state.layoutImage = img;
+    state.layoutImageUrl = dataUrl;
+    state.layoutDataUrl = dataUrl;
+    state.layoutSvgText = svgText;
+    state.layoutIsSvg = true;
+    state.layoutWidth = layoutWidth;
+    state.layoutHeight = layoutHeight;
+    state.layoutPixelPoints = canonicalLeft.concat(canonicalRight);
+    state.layoutFile = { name: `${mode}-generated-layout.svg` };
+    state.telemetryAutoAlign = {
+      scale: 1,
+      rotationDeg: 0,
+      translateX: frame.toCanonical({ x: 0, y: 0 }).x,
+      translateY: frame.toCanonical({ x: 0, y: 0 }).y,
+    };
+    state.telemetryWorldPoints = canonicalCenterline.map((point) => point.canonical);
+    state.telemetryPointsMeters = canonicalCenterline.map((point, index) => ({
+      index,
+      tick: point.tick,
+      x: point.x,
+      y: point.y,
+      lat: point.lat,
+      lon: point.lon,
+      speed: point.speed,
+    }));
+    state.selectedLapTrace = state.telemetryPointsMeters.map((point, index) => ({
+      index,
+      lat: point.lat,
+      lon: point.lon,
+      localMeters: { x: point.x, y: point.y },
+      canonical: { ...state.telemetryWorldPoints[index] },
+    }));
+    state.sectors = [];
+    state.generatedLayout = {
+      mode,
+      sourceFiles: sourceLabel,
+      laps,
+      observedWidths,
+      layoutWidths: maxOffsets.map((max, index) => max - minOffsets[index]),
+      packageLayoutDataUrl: packageDataUrl,
+      packageSvgText,
+    };
+    setPivotToCenter();
+    fitViewToContent();
+    updateSectorList();
+    updateGeneratedInfoTable();
+    redraw();
+  };
+  img.src = dataUrl;
+}
+
+function updateGeneratedInfoTable() {
+  if (!els.generatedInfoTable) return;
+  const generated = state.generatedLayout;
+  if (!generated) {
+    els.generatedInfoTable.innerHTML = "<tr><th>Mode</th><td>Not generated</td></tr>";
+    return;
+  }
+  const observed = stats(generated.observedWidths || []);
+  const layout = stats(generated.layoutWidths || []);
+  els.generatedInfoTable.innerHTML = `
+    <tr><th>Mode</th><td>${generated.mode}</td></tr>
+    <tr><th>Files</th><td>${generated.sourceFiles || "n/a"}</td></tr>
+    <tr><th>Laps</th><td>${generated.laps?.length || 1}</td></tr>
+    <tr><th>Original delta</th><td>${observed.min.toFixed(1)}m min / ${observed.median.toFixed(1)}m median / ${observed.max.toFixed(1)}m max</td></tr>
+    <tr><th>Layout width</th><td>${layout.min.toFixed(1)}m min / ${layout.median.toFixed(1)}m median / ${layout.max.toFixed(1)}m max</td></tr>
+  `;
+}
+
+
 function parseSvgSize(svgText) {
   const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
   const svg = doc.documentElement;
@@ -542,6 +1014,184 @@ async function loadTelemetry(file) {
   updateSectorList();
   redraw();
   setStatus(`Loaded telemetry: ${file.name}\nFiltered GPS points: ${state.telemetryPointsMeters.length}`);
+}
+
+async function loadGeneratedCsv(file) {
+  state.generatedCsv = file;
+  els.generatedCsvFileName.textContent = file.name;
+  state.generatedRows = parseCsvRows(await file.text());
+  state.generatedExtraFiles = [];
+  if (els.enhanceCsvFiles) els.enhanceCsvFiles.value = "";
+  if (els.enhanceCsvFileName) els.enhanceCsvFileName.textContent = "No extra files selected";
+  state.generatedLayout = null;
+  updateGeneratedInfoTable();
+  setStatus(`Loaded generated-layout CSV: ${file.name}\nRows: ${state.generatedRows.length}`);
+}
+
+function generatedOptions() {
+  return {
+    closureMaxM: Math.max(0.5, Number(els.closureMax?.value) || 2),
+    deviationRejectM: Math.max(1, Number(els.deviationReject?.value) || 30),
+    v1HalfWidthM: Math.max(0.25, Number(els.v1HalfWidth?.value) || 1),
+    minLayoutWidthM: Math.max(1, Number(els.minLayoutWidth?.value) || 8),
+  };
+}
+
+function generatedPrimaryPoints() {
+  if (!state.generatedRows.length) return null;
+  const telemetry = generatedGpsPoints(state.generatedRows, 0);
+  if (telemetry.geoReference) state.telemetryGeoReference = telemetry.geoReference;
+  return telemetry;
+}
+
+function buildV1FromGeneratedCsv() {
+  const options = generatedOptions();
+  const telemetry = generatedPrimaryPoints();
+  if (!telemetry || telemetry.points.length < 200) {
+    setStatus("Load a generated-layout CSV with enough GPS points first.");
+    return null;
+  }
+  const closure = detectFirstCompleteLap(telemetry.points, {
+    closureMaxM: options.closureMaxM,
+    relaxedClosureMaxM: options.closureMaxM,
+    minSpeed: 3,
+    minLapSeconds: 40,
+    maxLapSeconds: 250,
+    minLapDistanceM: 500,
+  });
+  if (!closure || !closure.strict) {
+    setStatus(`No V1 lap found with closure <= ${options.closureMaxM.toFixed(1)}m.\nIncrease Closure Max only if you are sure the lap is not connecting pit entry/exit.`);
+    return null;
+  }
+
+  const lap = dedupeSequentialGps(telemetry.points.slice(closure.startIndex, closure.endIndex + 1));
+  const normals = lap.map((_, index) => normalAtMeterPoint(lap, index));
+  const minOffsets = lap.map(() => -options.v1HalfWidthM);
+  const maxOffsets = lap.map(() => options.v1HalfWidthM);
+  installGeneratedLayout({
+    mode: "v1_single_lap",
+    centerline: lap,
+    normals,
+    minOffsets,
+    maxOffsets,
+    observedWidths: lap.map(() => 0),
+    laps: [{
+      number: 1,
+      time_s: closure.lapSeconds,
+      distance_m: closure.lapDistanceM,
+      closureDistanceM: closure.closureDistanceM,
+    }],
+    sourceFiles: [state.generatedCsv],
+  });
+  setStatus(`Generated V1 from first complete lap.\nClosure: ${closure.closureDistanceM.toFixed(2)}m\nLap: ${closure.lapSeconds.toFixed(1)}s / ${closure.lapDistanceM.toFixed(0)}m\nWidth: ${options.v1HalfWidthM.toFixed(1)}m each side`);
+  return { telemetry, closure, lap };
+}
+
+function collectLapsForGeneratedV2(filePointSets, closure, options) {
+  const laps = [];
+  filePointSets.forEach((entry) => {
+    if (!entry.points.length) return;
+    let startIndex = 0;
+    let referenceHeading = closure.referenceHeading;
+    const startReference = closure.startPoint;
+    if (entry.isPrimary) {
+      startIndex = closure.startIndex;
+    } else {
+      let bestIndex = -1;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < entry.points.length; i += 1) {
+        const distance = euclideanDistance(entry.points[i], startReference);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestIndex = i;
+        }
+      }
+      if (bestIndex < 0 || bestDistance > Math.max(options.closureMaxM, 30)) return;
+      startIndex = bestIndex;
+      referenceHeading = headingAt(entry.points, startIndex);
+    }
+    const crossings = detectLapsFromStart(entry.points, startIndex, referenceHeading, {
+      radiusM: Math.max(options.closureMaxM, 30),
+      minLapSeconds: 60,
+      headingToleranceDeg: 90,
+    });
+    const fileLaps = buildValidLaps(entry.points, crossings, {
+      minLapSeconds: 70,
+      maxLapSeconds: 250,
+      minLapDistanceM: 500,
+      maxLapDistanceM: 6000,
+    });
+    fileLaps.forEach((lap) => {
+      laps.push({ ...lap, sourceFile: entry.file?.name || "primary" });
+    });
+  });
+  return laps;
+}
+
+async function generatedFilePointSets(includeEnhancementFiles) {
+  const options = generatedOptions();
+  const primary = generatedPrimaryPoints();
+  if (!primary?.points.length || !primary.geoReference) return [];
+  const sets = [{ file: state.generatedCsv, isPrimary: true, points: primary.points }];
+  if (!includeEnhancementFiles) return sets;
+  for (const file of state.generatedExtraFiles) {
+    const rows = parseCsvRows(await file.text());
+    const telemetry = generatedGpsPoints(rows, 0, primary.geoReference);
+    sets.push({ file, isPrimary: false, points: telemetry.points });
+  }
+  return sets.filter((set) => set.points.length >= 200);
+}
+
+async function buildV2FromGeneratedCsv(includeEnhancementFiles = false) {
+  const options = generatedOptions();
+  const primary = generatedPrimaryPoints();
+  if (!primary || primary.points.length < 200) {
+    setStatus("Load a generated-layout CSV with enough GPS points first.");
+    return;
+  }
+  const closure = detectFirstCompleteLap(primary.points, {
+    closureMaxM: options.closureMaxM,
+    relaxedClosureMaxM: options.closureMaxM,
+    minSpeed: 3,
+    minLapSeconds: 40,
+    maxLapSeconds: 250,
+    minLapDistanceM: 500,
+  });
+  if (!closure || !closure.strict) {
+    setStatus(`Generate/validate V1 first: no first lap found with closure <= ${options.closureMaxM.toFixed(1)}m.`);
+    return;
+  }
+
+  const pointSets = await generatedFilePointSets(includeEnhancementFiles);
+  const laps = collectLapsForGeneratedV2(pointSets, closure, options);
+  if (laps.length < 2) {
+    setStatus(`Could not isolate multiple valid laps from ${pointSets.length} file(s).\nTry a larger Closure Max only if the V1 loop is valid.`);
+    return;
+  }
+  const envelope = inferEnvelopeFromLaps(laps, {
+    stationCount: 360,
+    deviationRejectM: options.deviationRejectM,
+    minLayoutWidthM: options.minLayoutWidthM,
+  });
+  installGeneratedLayout({
+    mode: includeEnhancementFiles ? "v2_enhanced_multi_csv" : "v2_multi_lap",
+    centerline: envelope.reference,
+    normals: envelope.normals,
+    minOffsets: envelope.layoutMin,
+    maxOffsets: envelope.layoutMax,
+    observedWidths: envelope.observedWidths,
+    laps: envelope.acceptedLaps,
+    sourceFiles: pointSets.map((set) => set.file),
+  });
+  const observed = stats(envelope.observedWidths);
+  const layout = stats(envelope.layoutWidths);
+  setStatus(
+    `Generated ${includeEnhancementFiles ? "enhanced " : ""}V2 layout.\n` +
+    `Files: ${pointSets.length}\nLaps accepted: ${envelope.acceptedLaps.length} / ${laps.length}\n` +
+    `Original delta: ${observed.min.toFixed(1)}m min / ${observed.median.toFixed(1)}m median / ${observed.max.toFixed(1)}m max\n` +
+    `Layout width: ${layout.min.toFixed(1)}m min / ${layout.median.toFixed(1)}m median / ${layout.max.toFixed(1)}m max\n` +
+    `Rejected deviation threshold: ${options.deviationRejectM.toFixed(1)}m`
+  );
 }
 
 function autoAlign() {
@@ -1364,6 +2014,7 @@ function updateSectorRadius() {
 }
 
 function buildCanonicalPayload(includeEmbeddedLayout = false) {
+  const embeddedLayoutDataUrl = state.generatedLayout?.packageLayoutDataUrl || state.layoutDataUrl;
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -1371,7 +2022,7 @@ function buildCanonicalPayload(includeEmbeddedLayout = false) {
       fileName: state.layoutFile?.name || null,
       width: state.layoutWidth || null,
       height: state.layoutHeight || null,
-      embeddedDataUrl: includeEmbeddedLayout ? state.layoutDataUrl : undefined,
+      embeddedDataUrl: includeEmbeddedLayout ? embeddedLayoutDataUrl : undefined,
     },
     telemetry: {
       fileName: state.telemetryFile?.name || null,
@@ -1420,6 +2071,33 @@ function exportPackage() {
     "track-layout-package.json",
     new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
   );
+}
+
+function exportPackagePreview() {
+  if (!state.layoutDataUrl) {
+    setStatus("Load or generate a layout first.");
+    return;
+  }
+  if (state.generatedLayout?.packageSvgText) {
+    downloadBlob(
+      "track-layout-package-preview.svg",
+      new Blob([state.generatedLayout.packageSvgText], { type: "image/svg+xml" })
+    );
+    return;
+  }
+  if (state.layoutSvgText) {
+    downloadBlob(
+      "track-layout-package-preview.svg",
+      new Blob([state.layoutSvgText], { type: "image/svg+xml" })
+    );
+    return;
+  }
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${state.layoutWidth} ${state.layoutHeight}">
+  <image href="${state.layoutDataUrl}" x="0" y="0" width="${state.layoutWidth}" height="${state.layoutHeight}"/>
+</svg>`;
+  downloadBlob("track-layout-package-preview.svg", new Blob([svg], { type: "image/svg+xml" }));
 }
 
 function exportSvg() {
@@ -1480,7 +2158,22 @@ els.csvFile.addEventListener("change", (event) => {
   if (file) loadTelemetry(file);
 });
 
+els.generatedCsvFile?.addEventListener("change", (event) => {
+  const file = event.target.files[0];
+  if (file) loadGeneratedCsv(file);
+});
+
+els.enhanceCsvFiles?.addEventListener("change", (event) => {
+  state.generatedExtraFiles = Array.from(event.target.files || []);
+  els.enhanceCsvFileName.textContent = state.generatedExtraFiles.length
+    ? `${state.generatedExtraFiles.length} file(s) selected`
+    : "No extra files selected";
+});
+
 els.autoAlignBtn.addEventListener("click", autoAlign);
+els.generateV1Btn?.addEventListener("click", buildV1FromGeneratedCsv);
+els.generateV2Btn?.addEventListener("click", () => buildV2FromGeneratedCsv(false));
+els.enhanceLayoutBtn?.addEventListener("click", () => buildV2FromGeneratedCsv(true));
 els.centerPivotBtn.addEventListener("click", setPivotToCenter);
 els.resetTransformBtn.addEventListener("click", resetTransform);
 els.fitViewBtn.addEventListener("click", fitViewToContent);
@@ -1506,6 +2199,7 @@ els.clearAnchorsBtn.addEventListener("click", () => {
 els.exportJsonBtn.addEventListener("click", exportJson);
 els.exportSvgBtn.addEventListener("click", exportSvg);
 els.exportPackageBtn.addEventListener("click", exportPackage);
+els.exportPackagePreviewBtn?.addEventListener("click", exportPackagePreview);
 els.autoAddSectorsBtn.addEventListener("click", autoGenerateSectors);
 els.updateSectorRadiusBtn.addEventListener("click", updateSectorRadius);
 els.anchorLabel.addEventListener("input", updateSelectedAnchorFields);
