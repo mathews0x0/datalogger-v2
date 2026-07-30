@@ -58,6 +58,8 @@ const els = {
   deviationReject: document.getElementById("deviationReject"),
   v1HalfWidth: document.getElementById("v1HalfWidth"),
   minLayoutWidth: document.getElementById("minLayoutWidth"),
+  layoutSmooth: document.getElementById("layoutSmooth"),
+  cornerApexBias: document.getElementById("cornerApexBias"),
   generateV1Btn: document.getElementById("generateV1Btn"),
   generateV2Btn: document.getElementById("generateV2Btn"),
   enhanceCsvFiles: document.getElementById("enhanceCsvFiles"),
@@ -628,8 +630,8 @@ function interpolateMeterPoint(points, cumulative, targetDistance) {
 }
 
 function normalAtMeterPoint(points, index) {
-  const start = index === 0 ? points[0] : points[index - 1];
-  const end = index === points.length - 1 ? points[points.length - 1] : points[index + 1];
+  const start = points[(index - 1 + points.length) % points.length];
+  const end = points[(index + 1) % points.length];
   const dx = end.x - start.x;
   const dy = end.y - start.y;
   const length = Math.hypot(dx, dy) || 1;
@@ -644,6 +646,86 @@ function smoothValues(values, radius = 4) {
     for (let i = start; i < end; i += 1) sum += values[i];
     return sum / (end - start);
   });
+}
+
+function smoothClosedValues(values, radius = 4) {
+  if (!values.length || radius <= 0) return [...values];
+  return values.map((_, index) => {
+    let sum = 0;
+    let count = 0;
+    for (let offset = -radius; offset <= radius; offset += 1) {
+      const wrapped = (index + offset + values.length) % values.length;
+      sum += values[wrapped];
+      count += 1;
+    }
+    return sum / count;
+  });
+}
+
+function resampleClosedPolyline(points, count = 360) {
+  const cumulative = cumulativeMeterDistances(points);
+  const total = cumulative[cumulative.length - 1] || 0;
+  if (!total) return [...points];
+  const samples = [];
+  for (let i = 0; i < count; i += 1) {
+    samples.push(interpolateMeterPoint(points, cumulative, total * i / count));
+  }
+  return samples;
+}
+
+function smoothClosedPoints(points, radius = 6, iterations = 2) {
+  if (points.length < 3 || radius <= 0 || iterations <= 0) return points.map((point) => ({ ...point }));
+  let smoothed = points.map((point) => ({ ...point }));
+  for (let pass = 0; pass < iterations; pass += 1) {
+    const xs = smoothClosedValues(smoothed.map((point) => point.x), radius);
+    const ys = smoothClosedValues(smoothed.map((point) => point.y), radius);
+    const lats = smoothClosedValues(smoothed.map((point) => point.lat || 0), radius);
+    const lons = smoothClosedValues(smoothed.map((point) => point.lon || 0), radius);
+    const speeds = smoothClosedValues(smoothed.map((point) => point.speed || 0), radius);
+    smoothed = smoothed.map((point, index) => ({
+      ...point,
+      x: xs[index],
+      y: ys[index],
+      lat: lats[index] || point.lat,
+      lon: lons[index] || point.lon,
+      speed: speeds[index],
+    }));
+  }
+  return smoothed;
+}
+
+function signedTurnValues(points) {
+  if (points.length < 3) return points.map(() => 0);
+  return points.map((point, index) => {
+    const prev = points[(index - 1 + points.length) % points.length];
+    const next = points[(index + 1) % points.length];
+    const ax = point.x - prev.x;
+    const ay = point.y - prev.y;
+    const bx = next.x - point.x;
+    const by = next.y - point.y;
+    const alen = Math.hypot(ax, ay) || 1;
+    const blen = Math.hypot(bx, by) || 1;
+    const cross = (ax / alen) * (by / blen) - (ay / alen) * (bx / blen);
+    const dot = (ax / alen) * (bx / blen) + (ay / alen) * (by / blen);
+    return Math.atan2(cross, dot) * 180 / Math.PI;
+  });
+}
+
+function widthMarginsForTurn(widthM, signedTurnDeg, apexBias = 0.65) {
+  const bias = Math.max(0, Math.min(1, Number(apexBias) || 0));
+  const turnStrength = Math.min(1, Math.abs(signedTurnDeg) / 8);
+  const outsideShare = 0.5 + 0.35 * bias * turnStrength;
+  const insideShare = 1 - outsideShare;
+  if (signedTurnDeg >= 0) {
+    return {
+      left: widthM * insideShare,
+      right: widthM * outsideShare,
+    };
+  }
+  return {
+    left: widthM * outsideShare,
+    right: widthM * insideShare,
+  };
 }
 
 function detectLapsFromStart(points, startIndex, referenceHeading, options = {}) {
@@ -706,15 +788,19 @@ function inferEnvelopeFromLaps(laps, options = {}) {
   const deviationRejectM = Number(options.deviationRejectM || 30);
   const minLayoutWidthM = Number(options.minLayoutWidthM || 8);
   const edgeMarginM = Number(options.edgeMarginM || 1.5);
+  const smoothRadius = Math.max(0, Number(options.smoothRadius || 6));
+  const apexBias = Math.max(0, Math.min(1, Number(options.apexBias ?? 0.65)));
   const medianDistance = [...laps].sort((a, b) => a.distance_m - b.distance_m)[Math.floor(laps.length / 2)].distance_m;
   const referenceLap = laps.reduce((best, lap) => (
     Math.abs(lap.distance_m - medianDistance) < Math.abs(best.distance_m - medianDistance) ? lap : best
   ), laps[0]);
-  const reference = [];
+  let reference = [];
   for (let i = 0; i < stationCount; i += 1) {
-    reference.push(interpolateMeterPoint(referenceLap.points, referenceLap.cumulative, referenceLap.cumulative[referenceLap.cumulative.length - 1] * i / (stationCount - 1)));
+    reference.push(interpolateMeterPoint(referenceLap.points, referenceLap.cumulative, referenceLap.cumulative[referenceLap.cumulative.length - 1] * i / stationCount));
   }
+  reference = smoothClosedPoints(reference, smoothRadius, 2);
   const normals = reference.map((_, index) => normalAtMeterPoint(reference, index));
+  const turnValues = smoothClosedValues(signedTurnValues(reference), smoothRadius);
   const acceptedLaps = [];
   const rejectedLaps = [];
   laps.forEach((lap) => {
@@ -747,21 +833,16 @@ function inferEnvelopeFromLaps(laps, options = {}) {
     rawMax.push(Math.max(...usable));
   }
 
-  const observedMin = smoothValues(rawMin, 5);
-  const observedMax = smoothValues(rawMax, 5);
+  const observedMin = smoothClosedValues(rawMin, Math.max(2, smoothRadius));
+  const observedMax = smoothClosedValues(rawMax, Math.max(2, smoothRadius));
   const layoutMin = [];
   const layoutMax = [];
   for (let i = 0; i < stationCount; i += 1) {
-    let min = observedMin[i];
-    let max = observedMax[i];
-    if (max - min < minLayoutWidthM) {
-      const center = (min + max) / 2;
-      min = center - minLayoutWidthM / 2;
-      max = center + minLayoutWidthM / 2;
-    } else {
-      min -= edgeMarginM;
-      max += edgeMarginM;
-    }
+    const margins = widthMarginsForTurn(minLayoutWidthM, turnValues[i], apexBias);
+    const observedMinWithEdge = observedMin[i] - edgeMarginM;
+    const observedMaxWithEdge = observedMax[i] + edgeMarginM;
+    let min = Math.min(observedMinWithEdge, -margins.right);
+    let max = Math.max(observedMaxWithEdge, margins.left);
     layoutMin.push(min);
     layoutMax.push(max);
   }
@@ -825,7 +906,7 @@ function svgPolygon(points) {
   return svgPolyline(points);
 }
 
-function installGeneratedLayout({ mode, centerline, normals, minOffsets, maxOffsets, observedWidths = [], laps = [], sourceFiles = [] }) {
+function installGeneratedLayout({ mode, centerline, normals, minOffsets, maxOffsets, observedWidths = [], laps = [], sourceFiles = [], generationSettings = {} }) {
   const ribbon = buildRibbonGeometry(centerline, normals, minOffsets, maxOffsets);
   const frame = generatedCoordinateFrame([...ribbon.left, ...ribbon.right, ...centerline], 80);
   const canonicalCenterline = centerline.map((point) => ({ ...point, canonical: frame.toCanonical(point) }));
@@ -841,21 +922,13 @@ function installGeneratedLayout({ mode, centerline, normals, minOffsets, maxOffs
   <polyline points="${svgPolyline(canonicalLeft)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
   <polyline points="${svgPolyline(canonicalRight)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
 </svg>`;
-  const svgText = `<svg xmlns="http://www.w3.org/2000/svg" width="${layoutWidth}" height="${layoutHeight}" viewBox="0 0 ${layoutWidth} ${layoutHeight}">
-  <rect width="100%" height="100%" fill="#111417"/>
-  <polygon points="${svgPolygon(canonicalLeft.concat([...canonicalRight].reverse()))}" fill="#2a2f33"/>
-  <polyline points="${svgPolyline(canonicalLeft)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
-  <polyline points="${svgPolyline(canonicalRight)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
-  <polyline points="${svgPolyline(canonicalCenterline.map((point) => point.canonical))}" fill="none" stroke="#f4f4f5" stroke-width="1.5" stroke-opacity="0.8"/>
-</svg>`;
-  const dataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgText)))}`;
   const packageDataUrl = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(packageSvgText)))}`;
   const img = new Image();
   img.onload = () => {
     state.layoutImage = img;
-    state.layoutImageUrl = dataUrl;
-    state.layoutDataUrl = dataUrl;
-    state.layoutSvgText = svgText;
+    state.layoutImageUrl = packageDataUrl;
+    state.layoutDataUrl = packageDataUrl;
+    state.layoutSvgText = packageSvgText;
     state.layoutIsSvg = true;
     state.layoutWidth = layoutWidth;
     state.layoutHeight = layoutHeight;
@@ -891,8 +964,13 @@ function installGeneratedLayout({ mode, centerline, normals, minOffsets, maxOffs
       laps,
       observedWidths,
       layoutWidths: maxOffsets.map((max, index) => max - minOffsets[index]),
+      canonicalLeft,
+      canonicalRight,
+      canonicalCenterline: canonicalCenterline.map((point) => point.canonical),
       packageLayoutDataUrl: packageDataUrl,
       packageSvgText,
+      fixedAuthoringOverlays: true,
+      generationSettings,
     };
     setPivotToCenter();
     fitViewToContent();
@@ -900,7 +978,7 @@ function installGeneratedLayout({ mode, centerline, normals, minOffsets, maxOffs
     updateGeneratedInfoTable();
     redraw();
   };
-  img.src = dataUrl;
+  img.src = packageDataUrl;
 }
 
 function updateGeneratedInfoTable() {
@@ -918,6 +996,8 @@ function updateGeneratedInfoTable() {
     <tr><th>Laps</th><td>${generated.laps?.length || 1}</td></tr>
     <tr><th>Original delta</th><td>${observed.min.toFixed(1)}m min / ${observed.median.toFixed(1)}m median / ${observed.max.toFixed(1)}m max</td></tr>
     <tr><th>Layout width</th><td>${layout.min.toFixed(1)}m min / ${layout.median.toFixed(1)}m median / ${layout.max.toFixed(1)}m max</td></tr>
+    <tr><th>Smoothing</th><td>${generated.generationSettings?.smoothRadius ?? "n/a"}</td></tr>
+    <tr><th>Apex bias</th><td>${generated.generationSettings?.apexBias?.toFixed?.(2) ?? "n/a"}</td></tr>
   `;
 }
 
@@ -1034,6 +1114,8 @@ function generatedOptions() {
     deviationRejectM: Math.max(1, Number(els.deviationReject?.value) || 30),
     v1HalfWidthM: Math.max(0.25, Number(els.v1HalfWidth?.value) || 1),
     minLayoutWidthM: Math.max(1, Number(els.minLayoutWidth?.value) || 8),
+    smoothRadius: Math.max(0, Number(els.layoutSmooth?.value) || 0),
+    apexBias: Math.max(0, Math.min(1, Number(els.cornerApexBias?.value) || 0)),
   };
 }
 
@@ -1064,10 +1146,17 @@ function buildV1FromGeneratedCsv() {
     return null;
   }
 
-  const lap = dedupeSequentialGps(telemetry.points.slice(closure.startIndex, closure.endIndex + 1));
+  const rawLap = dedupeSequentialGps(telemetry.points.slice(closure.startIndex, closure.endIndex + 1));
+  const lap = smoothClosedPoints(resampleClosedPolyline(rawLap, 360), options.smoothRadius, 2);
   const normals = lap.map((_, index) => normalAtMeterPoint(lap, index));
-  const minOffsets = lap.map(() => -options.v1HalfWidthM);
-  const maxOffsets = lap.map(() => options.v1HalfWidthM);
+  const turnValues = smoothClosedValues(signedTurnValues(lap), options.smoothRadius);
+  const minOffsets = [];
+  const maxOffsets = [];
+  for (let i = 0; i < lap.length; i += 1) {
+    const margins = widthMarginsForTurn(options.v1HalfWidthM * 2, turnValues[i], options.apexBias);
+    minOffsets.push(-margins.right);
+    maxOffsets.push(margins.left);
+  }
   installGeneratedLayout({
     mode: "v1_single_lap",
     centerline: lap,
@@ -1082,8 +1171,12 @@ function buildV1FromGeneratedCsv() {
       closureDistanceM: closure.closureDistanceM,
     }],
     sourceFiles: [state.generatedCsv],
+    generationSettings: {
+      smoothRadius: options.smoothRadius,
+      apexBias: options.apexBias,
+    },
   });
-  setStatus(`Generated V1 from first complete lap.\nClosure: ${closure.closureDistanceM.toFixed(2)}m\nLap: ${closure.lapSeconds.toFixed(1)}s / ${closure.lapDistanceM.toFixed(0)}m\nWidth: ${options.v1HalfWidthM.toFixed(1)}m each side`);
+  setStatus(`Generated V1 from first complete lap.\nClosure: ${closure.closureDistanceM.toFixed(2)}m\nLap: ${closure.lapSeconds.toFixed(1)}s / ${closure.lapDistanceM.toFixed(0)}m\nWidth: ${options.v1HalfWidthM.toFixed(1)}m nominal half-width\nSmoothing: ${options.smoothRadius}\nApex bias: ${options.apexBias.toFixed(2)}`);
   return { telemetry, closure, lap };
 }
 
@@ -1172,6 +1265,8 @@ async function buildV2FromGeneratedCsv(includeEnhancementFiles = false) {
     stationCount: 360,
     deviationRejectM: options.deviationRejectM,
     minLayoutWidthM: options.minLayoutWidthM,
+    smoothRadius: options.smoothRadius,
+    apexBias: options.apexBias,
   });
   installGeneratedLayout({
     mode: includeEnhancementFiles ? "v2_enhanced_multi_csv" : "v2_multi_lap",
@@ -1182,6 +1277,12 @@ async function buildV2FromGeneratedCsv(includeEnhancementFiles = false) {
     observedWidths: envelope.observedWidths,
     laps: envelope.acceptedLaps,
     sourceFiles: pointSets.map((set) => set.file),
+    generationSettings: {
+      smoothRadius: options.smoothRadius,
+      apexBias: options.apexBias,
+      deviationRejectM: options.deviationRejectM,
+      minLayoutWidthM: options.minLayoutWidthM,
+    },
   });
   const observed = stats(envelope.observedWidths);
   const layout = stats(envelope.layoutWidths);
@@ -1190,7 +1291,8 @@ async function buildV2FromGeneratedCsv(includeEnhancementFiles = false) {
     `Files: ${pointSets.length}\nLaps accepted: ${envelope.acceptedLaps.length} / ${laps.length}\n` +
     `Original delta: ${observed.min.toFixed(1)}m min / ${observed.median.toFixed(1)}m median / ${observed.max.toFixed(1)}m max\n` +
     `Layout width: ${layout.min.toFixed(1)}m min / ${layout.median.toFixed(1)}m median / ${layout.max.toFixed(1)}m max\n` +
-    `Rejected deviation threshold: ${options.deviationRejectM.toFixed(1)}m`
+    `Rejected deviation threshold: ${options.deviationRejectM.toFixed(1)}m\n` +
+    `Smoothing: ${options.smoothRadius}\nApex bias: ${options.apexBias.toFixed(2)}`
   );
 }
 
@@ -1395,10 +1497,17 @@ function drawPivot() {
   ctx.restore();
 }
 
+function anchorWorldPoint(anchor) {
+  if (state.generatedLayout?.fixedAuthoringOverlays) {
+    return anchor.layoutPoint;
+  }
+  return applyLayoutTransform(anchor.layoutPoint, state.layoutTransform);
+}
+
 function drawAnchors() {
   ctx.save();
   for (const anchor of state.anchors) {
-    const world = applyLayoutTransform(anchor.layoutPoint, state.layoutTransform);
+    const world = anchorWorldPoint(anchor);
     const p = worldToScreen(world);
     ctx.fillStyle = "#c3472c";
     ctx.beginPath();
@@ -1415,8 +1524,8 @@ function drawStartFinishLine() {
   const anchors = findStartFinishAnchors();
   const draftPoints = state.startFinishDraft || [];
   const points = anchors.length >= 2
-    ? anchors.slice(0, 2).map((anchor) => worldToScreen(applyLayoutTransform(anchor.layoutPoint, state.layoutTransform)))
-    : draftPoints.map((point) => worldToScreen(applyLayoutTransform(point, state.layoutTransform)));
+    ? anchors.slice(0, 2).map((anchor) => worldToScreen(anchorWorldPoint(anchor)))
+    : draftPoints.map((point) => worldToScreen(state.generatedLayout?.fixedAuthoringOverlays ? point : applyLayoutTransform(point, state.layoutTransform)));
 
   if (!points.length) return;
 
@@ -1528,7 +1637,7 @@ function canvasPointFromEvent(event) {
 
 function pickAnchorAtScreenPoint(screenPoint, radius = 12) {
   for (let i = 0; i < state.anchors.length; i += 1) {
-    const world = applyLayoutTransform(state.anchors[i].layoutPoint, state.layoutTransform);
+    const world = anchorWorldPoint(state.anchors[i]);
     const p = worldToScreen(world);
     const dx = p.x - screenPoint.x;
     const dy = p.y - screenPoint.y;
@@ -1545,7 +1654,9 @@ function handleStageMouseDown(event) {
 
   if (state.startFinishCaptureActive) {
     pushAnchorHistory();
-    const layoutPoint = inverseLayoutTransform(worldPoint, state.layoutTransform);
+    const layoutPoint = state.generatedLayout?.fixedAuthoringOverlays
+      ? worldPoint
+      : inverseLayoutTransform(worldPoint, state.layoutTransform);
     state.startFinishDraft.push(layoutPoint);
     if (state.startFinishDraft.length === 2) {
       replaceStartFinishAnchors(state.startFinishDraft);
@@ -1562,7 +1673,9 @@ function handleStageMouseDown(event) {
 
   if (els.anchorMode.checked) {
     pushAnchorHistory();
-    const layoutPoint = inverseLayoutTransform(worldPoint, state.layoutTransform);
+    const layoutPoint = state.generatedLayout?.fixedAuthoringOverlays
+      ? worldPoint
+      : inverseLayoutTransform(worldPoint, state.layoutTransform);
     state.anchors.push({
       id: nextAnchorId(),
       name: "",
@@ -2046,6 +2159,12 @@ function buildCanonicalPayload(includeEmbeddedLayout = false) {
       radius_m: Math.max(5, Number(els.sectorRadius.value) || 15),
       source: state.sectors.length ? "ordered_trace_auto" : null,
     },
+    generatedLayout: state.generatedLayout ? {
+      mode: state.generatedLayout.mode,
+      sourceFiles: state.generatedLayout.sourceFiles,
+      generationSettings: state.generatedLayout.generationSettings,
+      fixedAuthoringOverlays: state.generatedLayout.fixedAuthoringOverlays,
+    } : undefined,
     sectors: state.sectors.map((sector) => ({
       id: sector.id,
       sector_index: sector.sector_index,
@@ -2073,15 +2192,42 @@ function exportPackage() {
   );
 }
 
+function generatedPackagePreviewSvg() {
+  const generated = state.generatedLayout;
+  if (!generated?.canonicalLeft?.length || !generated?.canonicalRight?.length) {
+    return generated?.packageSvgText || null;
+  }
+  const transformedLeft = generated.canonicalLeft.map((point) => applyLayoutTransform(point, state.layoutTransform));
+  const transformedRight = generated.canonicalRight.map((point) => applyLayoutTransform(point, state.layoutTransform));
+  const transformedPoints = transformedLeft.concat(transformedRight);
+  const box = bounds(transformedPoints);
+  const padding = 24;
+  const width = Math.ceil(Math.max(1, box.maxX - box.minX) + padding * 2);
+  const height = Math.ceil(Math.max(1, box.maxY - box.minY) + padding * 2);
+  const shift = (point) => ({
+    x: point.x - box.minX + padding,
+    y: point.y - box.minY + padding,
+  });
+  const left = transformedLeft.map(shift);
+  const right = transformedRight.map(shift);
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="#111417"/>
+  <polygon points="${svgPolygon(left.concat([...right].reverse()))}" fill="#2a2f33"/>
+  <polyline points="${svgPolyline(left)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <polyline points="${svgPolyline(right)}" fill="none" stroke="#c85b12" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>`;
+}
+
 function exportPackagePreview() {
   if (!state.layoutDataUrl) {
     setStatus("Load or generate a layout first.");
     return;
   }
-  if (state.generatedLayout?.packageSvgText) {
+  const generatedPreview = generatedPackagePreviewSvg();
+  if (generatedPreview) {
     downloadBlob(
       "track-layout-package-preview.svg",
-      new Blob([state.generatedLayout.packageSvgText], { type: "image/svg+xml" })
+      new Blob([generatedPreview], { type: "image/svg+xml" })
     );
     return;
   }
@@ -2121,7 +2267,7 @@ function exportSvg() {
     .join("");
   const anchors = state.anchors
     .map((anchor) => {
-      const world = applyLayoutTransform(anchor.layoutPoint, state.layoutTransform);
+      const world = anchorWorldPoint(anchor);
       const s = worldToScreen(world);
       return `<g><circle cx="${s.x.toFixed(2)}" cy="${s.y.toFixed(2)}" r="5" fill="#c3472c"/><text x="${(s.x + 8).toFixed(2)}" y="${(s.y - 8).toFixed(2)}" font-size="12" fill="#1b1b19">${anchor.id}</text></g>`;
     })

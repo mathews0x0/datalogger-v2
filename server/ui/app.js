@@ -77,6 +77,7 @@ const raceViewState = {
     baseScrubEpoch: null,
     selectedSessionId: null,
     hiddenSessionIds: new Set(),
+    mapZoom: 1,
 };
 
 function saveUiState(key, value) {
@@ -3392,6 +3393,7 @@ async function openRaceView({ source, sourceId = null, sourceLabel = '', group =
     raceViewState.baseScrubEpoch = null;
     raceViewState.selectedSessionId = null;
     raceViewState.hiddenSessionIds = new Set();
+    raceViewState.mapZoom = 1;
 
     showView('raceView', { persist: false, loadData: false });
     const mount = document.getElementById('raceViewContent');
@@ -3508,6 +3510,7 @@ function renderRaceView() {
                 </div>
                 <div class="race-view-header-actions">
                     <span class="race-view-chip"><i class="fas fa-clock"></i>${raceViewFormatClock(timelineStart)}-${raceViewFormatClock(timelineEnd)}</span>
+                    <button class="btn secondary btn-sm race-view-back-btn" onclick="closeRaceView()"><i class="fas fa-arrow-left"></i> Back</button>
                     <button class="btn secondary btn-sm" id="raceViewSpeedBtn" onclick="cycleRaceViewSpeed()">1.0x</button>
                     <button class="btn btn-primary btn-sm" id="raceViewPlayBtn" onclick="toggleRaceViewPlayback()"><i class="fas fa-pause"></i> Pause</button>
                 </div>
@@ -3525,8 +3528,15 @@ function renderRaceView() {
                         </div>
                     </div>
                     <div class="race-view-map-frame">
-                        ${detail.layout.preview_svg_data_url || detail.layout.svg_data_url ? `<img src="${detail.layout.preview_svg_data_url || detail.layout.svg_data_url}" alt="${detail.track.track_name}" style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; object-position:center;">` : ''}
-                        <svg class="race-view-map-svg" id="raceViewMapSvg" viewBox="0 0 ${detail.layout.layout_width || 1000} ${detail.layout.layout_height || 700}" preserveAspectRatio="xMidYMid meet"></svg>
+                        <div class="race-view-map-layer" id="raceViewMapLayer">
+                            ${detail.layout.preview_svg_data_url || detail.layout.svg_data_url ? `<img src="${detail.layout.preview_svg_data_url || detail.layout.svg_data_url}" alt="${detail.track.track_name}" class="race-view-layout-img">` : ''}
+                            <svg class="race-view-map-svg" id="raceViewMapSvg" viewBox="0 0 ${detail.layout.layout_width || 1000} ${detail.layout.layout_height || 700}" preserveAspectRatio="xMidYMid meet"></svg>
+                        </div>
+                        <div class="race-view-map-zoom">
+                            <button type="button" onclick="zoomRaceViewMap(1.25)" aria-label="Zoom in">+</button>
+                            <button type="button" onclick="zoomRaceViewMap(0.8)" aria-label="Zoom out">-</button>
+                            <button type="button" id="raceViewZoomReset" onclick="resetRaceViewMapZoom()" aria-label="Reset zoom">1x</button>
+                        </div>
                     </div>
                     <div class="race-view-timeline">
                         <div class="race-view-timeline-header">
@@ -3570,13 +3580,6 @@ function renderRaceView() {
                     <div class="race-view-sidebar-note">
                         Only riders who shared publicly are included here. This module can move to another tab later without changing the data contract.
                     </div>
-                    <div class="race-view-sidebar-title">Moments</div>
-                    <div class="race-view-moment-list" id="raceViewMoments">
-                        <div class="race-view-moment-card">
-                            <h4>Shared replay mode</h4>
-                            <p>The first version focuses on synchronized rider positions, labels, and timeline control. Overtake annotations can layer on later.</p>
-                        </div>
-                    </div>
                 </aside>
             </div>
         </div>
@@ -3601,6 +3604,29 @@ function setRaceViewSeekStatus(active) {
     const status = document.getElementById('raceViewSeekStatus');
     if (!status) return;
     status.classList.toggle('active', Boolean(active));
+}
+
+function updateRaceViewMapZoom() {
+    const zoom = Math.max(0.5, Math.min(6, Number(raceViewState.mapZoom || 1)));
+    raceViewState.mapZoom = zoom;
+    const layer = document.getElementById('raceViewMapLayer');
+    if (layer) {
+        layer.style.transform = `scale(${zoom})`;
+    }
+    const reset = document.getElementById('raceViewZoomReset');
+    if (reset) {
+        reset.textContent = `${zoom.toFixed(1).replace(/\.0$/, '')}x`;
+    }
+}
+
+function zoomRaceViewMap(multiplier) {
+    raceViewState.mapZoom = Math.max(0.5, Math.min(6, (raceViewState.mapZoom || 1) * multiplier));
+    updateRaceViewMapZoom();
+}
+
+function resetRaceViewMapZoom() {
+    raceViewState.mapZoom = 1;
+    updateRaceViewMapZoom();
 }
 
 function setRaceViewScrubber(rawValue) {
@@ -3689,6 +3715,7 @@ function updateRaceViewFrame() {
     const detail = raceViewState.detail;
     const svg = document.getElementById('raceViewMapSvg');
     if (!detail || !svg) return;
+    updateRaceViewMapZoom();
 
     const visibleParticipants = detail.participants.filter(participant => !raceViewState.hiddenSessionIds.has(raceViewParticipantKey(participant)));
     const points = visibleParticipants.map(participant => ({
@@ -5194,6 +5221,7 @@ async function processFile(filename) {
 
             // Poll for completion
             let isComplete = false;
+            let retryNoticeShown = false;
             while (!isComplete) {
                 await new Promise(res => setTimeout(res, 2000));
                 try {
@@ -5216,6 +5244,15 @@ async function processFile(filename) {
                             archivedView: isArchivesView,
                             isError: true,
                             message: `${filename} failed to analyze. Please retry.`
+                        });
+                    } else if (statusRes.status === 'running' && statusRes.error && !retryNoticeShown) {
+                        retryNoticeShown = true;
+                        showToast(statusRes.error, 'warning');
+                        updateProcessQueueCount({
+                            totalFiles: window.currentFiles?.length || 0,
+                            processedFiles: window.processedFiles?.size || 0,
+                            archivedView: isArchivesView,
+                            message: statusRes.error
                         });
                     }
                 } catch (e) {
@@ -5277,6 +5314,7 @@ async function processAllFiles() {
 
             if (result.details && result.details.job_ids) {
                 let pendingJobs = [...result.details.job_ids];
+                const retryNoticesShown = new Set();
                 while (pendingJobs.length > 0) {
                     await new Promise(res => setTimeout(res, 3000));
 
@@ -5285,6 +5323,9 @@ async function processAllFiles() {
                             const statusRes = await apiCall(`/api/jobs/${pendingJobs[i]}`);
                             if (statusRes.status === 'complete' || statusRes.status === 'failed') {
                                 pendingJobs.splice(i, 1);
+                            } else if (statusRes.status === 'running' && statusRes.error && !retryNoticesShown.has(pendingJobs[i])) {
+                                retryNoticesShown.add(pendingJobs[i]);
+                                showToast(statusRes.error, 'warning');
                             }
                         } catch (e) {
                             pendingJobs.splice(i, 1);
@@ -7256,6 +7297,8 @@ let pbState = {
     duration: 0,
     laps: [],
     selectedLap: 'all',
+    animationFrame: null,
+    mapZoom: 1,
 
     // Canvas
     canvas: null,
@@ -7457,6 +7500,8 @@ async function openPlayback(sessionId, shareToken = null) {
         mapMode: 'speed',
         pathSource: 'aligned',
         selectedLap: 'all',
+        animationFrame: null,
+        mapZoom: 1,
         rawPlaybackPayload: null,
         playbackManifest: null,
         lapCache: {},
@@ -7668,6 +7713,10 @@ function activatePlaybackData(data, selectedLap) {
 function closePlaybackModal() {
     pbState.active = false;
     pbState.playing = false;
+    if (pbState.animationFrame) {
+        cancelAnimationFrame(pbState.animationFrame);
+        pbState.animationFrame = null;
+    }
     if (pbState.tuner?.previewTimer) {
         clearTimeout(pbState.tuner.previewTimer);
         pbState.tuner.previewTimer = null;
@@ -8642,6 +8691,40 @@ function initPlaybackUI() {
     for (let input of pathSourceInputs) {
         input.checked = input.value === (pbState.pathSource || 'aligned');
     }
+    updatePlaybackZoomLabel();
+}
+
+function applyPlaybackMapZoom(baseScale, contentWidth, contentHeight, canvasWidth, canvasHeight, padding = 20) {
+    const zoom = Math.max(0.5, Math.min(8, Number(pbState.mapZoom || 1)));
+    const scale = baseScale * zoom;
+    const availW = canvasWidth - padding * 2;
+    const availH = canvasHeight - padding * 2;
+    pbState.scale = scale;
+    pbState.offsetX = padding + (availW - contentWidth * scale) / 2;
+    pbState.offsetY = padding + (availH - contentHeight * scale) / 2;
+}
+
+function updatePlaybackZoomLabel() {
+    const btn = document.querySelector('.playback-zoom-controls .map-zoom-reset');
+    if (btn) btn.textContent = `${Number(pbState.mapZoom || 1).toFixed(1).replace(/\.0$/, '')}×`;
+}
+
+function setPlaybackMapZoom(nextZoom) {
+    if (!pbState.active) return;
+    pbState.mapZoom = Math.max(0.5, Math.min(8, Number(nextZoom) || 1));
+    pbState.pathCache = null;
+    pbState.renderedLapKey = null;
+    updatePlaybackZoomLabel();
+    fitTrackMap();
+    drawFrame();
+}
+
+function zoomPlaybackMap(multiplier) {
+    setPlaybackMapZoom((pbState.mapZoom || 1) * multiplier);
+}
+
+function resetPlaybackMapZoom() {
+    setPlaybackMapZoom(1);
 }
 
 function fitTrackMap() {
@@ -8664,9 +8747,7 @@ function fitTrackMap() {
         const layoutH = pbState.canonicalLayout.layout_height || 1;
         const scaleX = availW / layoutW;
         const scaleY = availH / layoutH;
-        pbState.scale = Math.min(scaleX, scaleY);
-        pbState.offsetX = padding + (availW - layoutW * pbState.scale) / 2;
-        pbState.offsetY = padding + (availH - layoutH * pbState.scale) / 2;
+        applyPlaybackMapZoom(Math.min(scaleX, scaleY), layoutW, layoutH, w, h, padding);
         pbState.bounds = null;
         renderStaticMap();
         return;
@@ -8709,13 +8790,7 @@ function fitTrackMap() {
     const scaleX = availW / correctedLonSpan;
     const scaleY = availH / latSpan;
 
-    pbState.scale = Math.min(scaleX, scaleY);
-
-    const usedW = correctedLonSpan * pbState.scale;
-    const usedH = latSpan * pbState.scale;
-
-    pbState.offsetX = padding + (availW - usedW) / 2;
-    pbState.offsetY = padding + (availH - usedH) / 2;
+    applyPlaybackMapZoom(Math.min(scaleX, scaleY), correctedLonSpan, latSpan, w, h, padding);
 
     pbState.bounds = { minLat, maxLat, minLon, maxLon, latCorrection };
 
@@ -9140,16 +9215,25 @@ function togglePlayback(forceState = null) {
                 pbState.playbackTime = t;
             }
         }
-        pbAnimationLoop();
+        startPlaybackLoop();
+    } else if (pbState.animationFrame) {
+        cancelAnimationFrame(pbState.animationFrame);
+        pbState.animationFrame = null;
     }
 }
 
 function seekPlayback(val) {
-    pbState.currentIndex = parseInt(val);
+    const wasPlaying = Boolean(pbState.playing);
+    const maxIndex = Math.max(0, (pbState.data?.time?.length || 1) - 1);
+    pbState.currentIndex = Math.max(0, Math.min(maxIndex, parseInt(val, 10) || 0));
     if (pbState.data && pbState.data.time) {
         pbState.playbackTime = pbState.data.time[pbState.currentIndex];
     }
+    pbState.lastTick = performance.now();
     drawFrame();
+    if (wasPlaying) {
+        startPlaybackLoop();
+    }
 }
 
 async function jumpToLap(val) {
@@ -9231,6 +9315,7 @@ async function nextLapPlay() {
 }
 
 function pbAnimationLoop() {
+    pbState.animationFrame = null;
     if (!pbState.active || !pbState.playing || pbState.lapSwitchPending) return;
 
     const now = performance.now();
@@ -9239,7 +9324,7 @@ function pbAnimationLoop() {
 
     if (dt > 1.0) {
         // Lag spike (e.g. tab background), do not jump
-        requestAnimationFrame(pbAnimationLoop);
+        pbState.animationFrame = requestAnimationFrame(pbAnimationLoop);
         return;
     }
 
@@ -9272,7 +9357,16 @@ function pbAnimationLoop() {
     const slider = document.getElementById('pbSeek');
     if (slider) slider.value = pbState.currentIndex;
 
-    requestAnimationFrame(pbAnimationLoop);
+    pbState.animationFrame = requestAnimationFrame(pbAnimationLoop);
+}
+
+function startPlaybackLoop() {
+    if (!pbState.active || !pbState.playing || pbState.lapSwitchPending) return;
+    if (pbState.animationFrame) {
+        cancelAnimationFrame(pbState.animationFrame);
+    }
+    pbState.lastTick = performance.now();
+    pbState.animationFrame = requestAnimationFrame(pbAnimationLoop);
 }
 
 function drawFrame() {

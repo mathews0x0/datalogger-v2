@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -109,6 +110,49 @@ class TestJobs(unittest.TestCase):
         fetched = Job.query.first()
         self.assertEqual(fetched.status, 'failed')
         self.assertIn("Error output", fetched.error)
+
+    @patch('worker.subprocess.run')
+    @patch('worker.register_new_sessions')
+    def test_process_job_retries_once_after_timeout(self, mock_register, mock_subprocess):
+        success = MagicMock()
+        success.returncode = 0
+        success.stdout = "Success after retry"
+        mock_subprocess.side_effect = [
+            subprocess.TimeoutExpired(cmd=["analysis"], timeout=120),
+            success,
+        ]
+
+        job = Job(user_id=self.user.id, type='analysis', input_data=json.dumps({"csv_path": "dummy.csv"}))
+        db.session.add(job)
+        db.session.commit()
+
+        process_job(job)
+
+        fetched = Job.query.first()
+        self.assertEqual(fetched.status, 'complete')
+        self.assertIsNone(fetched.error)
+        self.assertIn("Success after retry", fetched.result)
+        self.assertEqual(mock_subprocess.call_count, 2)
+        mock_register.assert_called_once_with(self.user.id)
+
+    @patch('worker.subprocess.run')
+    def test_process_job_fails_after_timeout_retry_exhausted(self, mock_subprocess):
+        mock_subprocess.side_effect = [
+            subprocess.TimeoutExpired(cmd=["analysis"], timeout=120),
+            subprocess.TimeoutExpired(cmd=["analysis"], timeout=120),
+        ]
+
+        job = Job(user_id=self.user.id, type='analysis', input_data=json.dumps({"csv_path": "dummy.csv"}))
+        db.session.add(job)
+        db.session.commit()
+
+        process_job(job)
+
+        fetched = Job.query.first()
+        self.assertEqual(fetched.status, 'failed')
+        self.assertIn("exceeded 120 seconds", fetched.error)
+        self.assertIn("2 attempts", fetched.error)
+        self.assertEqual(mock_subprocess.call_count, 2)
 
 if __name__ == '__main__':
     unittest.main()

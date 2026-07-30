@@ -1069,7 +1069,6 @@
   </div>
 
   <div class="view" id="raceViewView">
-    <button class="back-btn" onclick="closeRaceView()">← Back</button>
     <div id="raceViewContent">
       <div class="loading">Loading Race View...</div>
     </div>
@@ -1138,14 +1137,17 @@
   <!-- Playback Modal -->
   <div class="modal" id="playbackModal">
     <div class="modal-content playback-shell">
-      <span class="modal-close" onclick="closePlaybackModal()">&times;</span>
-
       <div class="playback-header">
         <h3 class="playback-title">
           <i class="fas fa-play-circle"></i> Telemetry Analysis
         </h3>
-        <div id="pbLapNumber" class="playback-lap-chip">
-          LAP -/-</div>
+        <div class="playback-header-actions">
+          <div id="pbLapNumber" class="playback-lap-chip">
+            LAP -/-</div>
+          <button type="button" class="btn secondary playback-back-btn" onclick="closePlaybackModal()">
+            <i class="fas fa-arrow-left"></i> Back
+          </button>
+        </div>
       </div>
 
       <!-- Top Controls -->
@@ -1187,6 +1189,17 @@
                   Display</label>
                 <label><input type="radio" name="pbPathSource" value="rawfix" onchange="updatePlaybackPathSource()" />
                   Raw Fixes</label>
+              </div>
+              <div class="map-controls playback-zoom-controls" style="left:14px; right:auto;">
+                <button type="button" class="map-zoom-btn" onclick="zoomPlaybackMap(1.25)" aria-label="Zoom in">
+                  +
+                </button>
+                <button type="button" class="map-zoom-btn" onclick="zoomPlaybackMap(0.8)" aria-label="Zoom out">
+                  -
+                </button>
+                <button type="button" class="map-zoom-btn map-zoom-reset" onclick="resetPlaybackMapZoom()" aria-label="Reset zoom">
+                  1×
+                </button>
               </div>
             </div>
           </div>

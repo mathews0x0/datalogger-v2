@@ -9,7 +9,7 @@ bind = '127.0.0.1:6969'
 workers = 2
 worker_class = 'sync'
 
-# Timeout — analysis subprocess can take up to 60s
+# Timeout — analysis subprocess can take up to 120s per attempt
 timeout = 120
 graceful_timeout = 30
 

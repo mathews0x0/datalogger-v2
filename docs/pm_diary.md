@@ -2,7 +2,7 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2026-05-10
+**Last Updated:** 2026-06-05
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
@@ -5649,3 +5649,96 @@ This aligns session processing with the rest of the social product:
 - it can immediately participate in Race View if overlap rules match
 
 That is the simpler and more honest behavior for the product as it exists today.
+
+---
+
+### [2026-06-05] Track Layout Generator V2: Layouts From Live CSV Data
+
+**Objective:** Reduce the manual effort required to create canonical track layouts by letting real RaceSense telemetry synthesize the track ribbon itself.
+
+The previous canonical package workflow depended on a clean per-track layout asset. That worked, but it made every new track an authoring task:
+
+- find or draw a usable layout
+- align it to a real telemetry CSV
+- tune transform values
+- export the package
+
+PM raised the correct product issue: if RaceSense already has repeated rider lines around a circuit, those traces should help define the track width instead of requiring a hand-made canonical map every time.
+
+### Product Concept
+
+The new generator model treats rider laps as evidence of usable track surface:
+
+- one complete lap can produce a first-pass centerline layout
+- multiple laps expose lateral spread where riders choose different lines
+- the widest observed offset across laps becomes the basis for the track ribbon at that station
+- more CSVs from the same track can improve the inferred layout over time
+
+This is now called **Generated Layout V2** inside the local authoring tool.
+
+### Implementation Boundary
+
+The local `track-layout-generator/` app now supports a telemetry-first layout workflow:
+
+- upload a primary RaceSense CSV
+- detect the first complete lap with strict start/end closure, defaulting to `2m`
+- generate V1 from that lap using a configurable half-width, defaulting to `1m` each side
+- validate V1 visually before building the wider V2 layout
+- trim the session against the V1 reference point so pit exit and pit entry are not included in the envelope
+- detect valid laps from the same start basis
+- reject laps with hard lateral deviation beyond a configurable threshold
+- infer a smoothed multi-lap ribbon from accepted lap offsets
+- enhance the layout by adding more CSVs from the same track
+
+The information table reports the min/median/max original lateral delta and final layout width, so the author can see whether the generated package is based on real observed spread or mostly minimum-width padding.
+
+### Smoothing And Racing-Line Bias
+
+PM identified two important geometry problems after the first V2 implementation:
+
+- raw GPS-derived boundaries can be too jagged unless the generated loop is smoothed
+- rider traces are usually racing lines, not geometric track centers
+
+The second point matters most in corners. If a rider is taking a right-hand apex, the GPS trace is likely close to the inside of the track at that point. Equal left/right extrapolation incorrectly treats that apex trace as the center of the road.
+
+Decision:
+
+- Generated Layout V2 now exposes a smoothing control for closed-loop centerline and offset smoothing.
+- Generated Layout V2 now exposes a corner apex-bias control.
+- Straight sections remain close to centered.
+- Corner sections allocate more inferred width to the outside of the turn and less to the likely apex side.
+
+This does not magically infer exact painted track edges from one rider line, but it gives the author a better default model that reflects how real riders produce telemetry.
+
+### Package Export Decision
+
+PM clarified that the generated centerline is an authoring aid, not part of the final package visual.
+
+Decision:
+
+- editor preview may show the centerline for validation
+- exported package layout contains only the track ribbon
+- package preview export is available as a clean SVG before uploading
+- for generated layouts, translate/rotate/scale move the ribbon relative to the fixed centerline and GPS anchors during authoring
+
+This keeps the canonical package visually aligned with product rendering needs while preserving the centerline during authoring.
+
+### UX Adjustment
+
+The generator settings/options rail is now independently scrollable on desktop while the main track canvas remains fixed.
+
+This matters because Generated Layout V2 adds more controls and diagnostics. Authors can tune options, inspect the info table, and export previews without losing visual context of the track.
+
+### Product Consequence
+
+Canonical layout creation is no longer blocked on manually sourced track artwork.
+
+RaceSense now has a path where:
+
+- a single clean lap creates a usable first pass
+- a full session creates a better inferred ribbon
+- multiple sessions improve the canonical shape
+- bad/off-track laps can be excluded before they contaminate the layout
+- the final package still supports start/finish, sector generation, and admin upload
+
+This is the right direction for building a scalable shared track catalog from real rider data.

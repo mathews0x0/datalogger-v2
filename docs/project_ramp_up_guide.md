@@ -144,14 +144,24 @@ Track-resolution layering as of the canonical package rollout:
 - Fallback generation also creates an admin review signal so a missing shared master track can be uploaded later.
 
 ### 3. Canonical Track Package System
-- **Authoring Tool**: `track-layout-generator/` is a static local app used to align layout artwork to telemetry and export canonical package JSON.
+- **Authoring Tool**: `track-layout-generator/` is a static local app used to align layout artwork to telemetry, generate track ribbons from RaceSense CSV laps, and export canonical package JSON.
 - **Launcher**: `./track-generator.sh` starts that authoring tool on port `8080` by default.
+- **Generated Layout V2**:
+  - upload a primary RaceSense CSV
+  - generate V1 from the first complete lap, with strict start/end closure defaulting to `2m`
+  - generate V2 by trimming the session to the V1 start basis, detecting valid laps, rejecting hard deviations, smoothing the closed loop, and inferring track width from observed lap spread
+  - use corner apex bias to allocate more generated width to the outside of corners because rider GPS traces usually follow racing lines, not geometric track centers
+  - enhance the inferred layout with more CSVs from the same track
+  - inspect min/median/max observed delta and final layout width before export
 - **Package Contents**:
   - embedded layout SVG
   - geo-reference basis
   - manual transform metadata
   - semantic anchors such as start/finish or pit markers
   - sampled GPS anchor points mapped into canonical layout space
+- **Package Preview Rule**:
+  - generated-layout editor keeps the inferred centerline and GPS anchors fixed while translate/rotate/scale adjust the generated ribbon
+  - exported package SVG contains only the track ribbon, not the centerline
 - **Admin Flow**:
   - upload package in Admin
   - package becomes a `GlobalTrack`

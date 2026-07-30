@@ -27,6 +27,8 @@ print(f"Time: {datetime.now()}")
 print(f"Using server path: {server_path}")
 
 STALL_TIMEOUT_MINUTES = 5
+ANALYSIS_SUBPROCESS_TIMEOUT_SECONDS = 120
+ANALYSIS_TIMEOUT_RETRIES = 1
 
 def check_stalled_jobs():
     """Mark jobs that have been running for too long as failed."""
@@ -61,17 +63,36 @@ def process_job(job):
             child_env = os.environ.copy()
             child_env[config.DEFAULT_SECTOR_COUNT_ENV_KEY] = str(config.get_default_sector_count())
             
-            # Execute subprocess identically as before
-            print(f"[Worker] Running analysis on {csv_path}...")
-            result = subprocess.run([
-                sys.executable, script_path, csv_path,
-                '--output', output_dir,
-                '--tracks', tracks_dir
-            ], capture_output=True, text=True, timeout=60, env=child_env)
+            result = None
+            for attempt in range(ANALYSIS_TIMEOUT_RETRIES + 1):
+                try:
+                    print(
+                        f"[Worker] Running analysis on {csv_path} "
+                        f"(attempt {attempt + 1}/{ANALYSIS_TIMEOUT_RETRIES + 1}, "
+                        f"timeout={ANALYSIS_SUBPROCESS_TIMEOUT_SECONDS}s)..."
+                    )
+                    result = subprocess.run([
+                        sys.executable, script_path, csv_path,
+                        '--output', output_dir,
+                        '--tracks', tracks_dir
+                    ], capture_output=True, text=True, timeout=ANALYSIS_SUBPROCESS_TIMEOUT_SECONDS, env=child_env)
+                    break
+                except subprocess.TimeoutExpired:
+                    if attempt < ANALYSIS_TIMEOUT_RETRIES:
+                        message = (
+                            f"Processing timed out after {ANALYSIS_SUBPROCESS_TIMEOUT_SECONDS} seconds; "
+                            "retrying once..."
+                        )
+                        print(f"[Worker] Job {job.id}: {message}")
+                        job.error = message
+                        db.session.commit()
+                        continue
+                    raise
             
             if result.returncode == 0:
                 print(f"[Worker] Job {job.id} completed successfully.")
                 job.status = 'complete'
+                job.error = None
                 job.result = json.dumps({
                     "message": "Session processed successfully",
                     "output": result.stdout
@@ -94,7 +115,10 @@ def process_job(job):
     except subprocess.TimeoutExpired:
         print(f"[Worker] Job {job.id} timed out during subprocess execution")
         job.status = 'failed'
-        job.error = "Processing timeout (exceeded 60 seconds)"
+        job.error = (
+            f"Processing timeout (exceeded {ANALYSIS_SUBPROCESS_TIMEOUT_SECONDS} seconds "
+            f"after {ANALYSIS_TIMEOUT_RETRIES + 1} attempts)"
+        )
     except Exception as e:
         print(f"[Worker] Job {job.id} encountered exception: {e}")
         job.status = 'failed'
