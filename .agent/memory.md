@@ -30,6 +30,7 @@ The AI is mandated to update this file automatically whenever the user corrects 
 - **Workflow**: Prefers explicit control over the agent's actions; avoids "black box" automated decisions.
 - **Verification**: User-driven testing and approval is mandatory before any code is finalized.
 - **Documentation Standard**: Update `docs/pm_diary.md` (non-technical summaries) and core `/docs/` files as logic evolves.
+- **Display Behavior**: Stealth Logging Mode (turning off screen/LEDs during logging) is obsolete and should be ignored; the display remains active for live rider feedback.
 
 ---
 
