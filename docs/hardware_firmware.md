@@ -1,6 +1,6 @@
 # 🏍️ RaceSense Hardware & Firmware (RS-Core)
 
-This document details the physical data acquisition module (**RS-Core V2**) and the **MicroPython-based** firmware that powers it.
+This document details the physical data acquisition hardware (**RS-Core V4.2 / V2 & ESP32-P4**) and the **Native C/C++ ESP-IDF v5.3 Firmware** (with historical MicroPython reference) that powers it.
 
 ---
 
@@ -60,17 +60,25 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 
 ---
 
-## 🧠 Firmware Architecture
+## 🧠 Firmware Architecture (Native C/C++ ESP-IDF v5.3)
 
-The firmware is written in **MicroPython** and operates in one of two **exclusive modes**, selected by the hardware Sync Button (IO5) during a 10-second boot window.
+The RaceSense firmware has transitioned from legacy MicroPython to **Native C/C++ under ESP-IDF v5.3 with FreeRTOS SMP**. This architectural upgrade resolves historical cadence limitations and introduces seamless dual-target support across hardware platforms.
 
-### **MicroPython Build Requirement**
-For this exact module, standardize on a vetted local copy of the **ESP32_GENERIC_S3 "spiram-oct"** variant and flash only from the repository.
+### **Dual-Target Hardware Abstraction (`bsp.h` / `bsp_display_target.h`)**
+The codebase compiled under `firmware_p4/firmware/` operates as a unified target-agnostic repository:
+*   **ESP32-S3 (`idf.py set-target esp32s3`)**: Target 2 configuration for RS-Core V4.2 PCB. Automatically routes I2C0 to IO21/39, UART1 to IO17/18, Battery ADC to IO7 (CH6, 100k/100k divider @ 2.0x scale), and configures the 2.8" SPI ILI9341 (320x240) + XPT2046 resistive touch controller on dedicated SPI pins. Supports soft-power self-hold latch on **IO41** (`PWR_HOLD`) and button intent sense on **IO8** (`PWR_SENSE`).
+*   **ESP32-P4 (`idf.py set-target esp32p4`)**: Target 0 configuration for Waveshare 4.3" development board. Automatically routes I2C0 to IO7/8, UART1 to IO3/4, Battery ADC to IO5 (CH4 @ 2.1x scale), SDMMC to Slot 0 4-bit (IO39-44 + IO45 load switch), and configures the 4.3" MIPI-DSI ST7701 (800x480) + GT911 capacitive touch controller.
 
-Operationally, that means:
-*   Preferred local filename: `firmware/esp32s3-micropython-psram-oct.bin`
+### **Core Allocation & Deterministic Sampling (Core 0 vs Core 1)**
+*   **Core 0 (Hard Real-Time Telemetry)**: Dedicated exclusively to high-frequency sensor acquisition via `sensors.c`. Runs an unperturbed FreeRTOS timer/task loop sampling the BMI323 6-DOF IMU at an exact **100 Hz** and the Neo-M8N GNSS module at **10 Hz**. This deterministically overcomes the legacy MicroPython field loop degradation (where May 2026 field validation logs observed ~53-58Hz IMU and 4-7Hz GPS drift due to GC and interpreter overhead).
+*   **Core 1 (Application, UI & Storage Flush)**: Houses the top-level application state machine (`main.c`), drains sensor rows from the FreeRTOS ring-queue to SDMMC (`storage.c`), processes Wi-Fi 6 / HTTPS persistent chunked syncing (`network.c`), and drives the 12-screen LVGL 8.4 user interface (`ui/`).
+
+### **Legacy MicroPython Reference (Firmware V2)**
+Historically, firmware operated under an exclusive two-mode structure in MicroPython v1.22 on the ESP32_GENERIC_S3 "spiram-oct" variant:
+*   Preferred legacy archive: `firmware/esp32s3-micropython-psram-oct.bin`
 *   Accepted local fallbacks: `firmware/esp32s3-micropython.bin`, `firmware/micropython.bin`
-*   After flashing, the firmware should print a boot-time memory line with `PSRAM=yes`
+*   After flashing, legacy builds printed a boot-time memory line with `PSRAM=yes`.
+*(Note: For current development and deployment, native ESP-IDF binaries compiled via `idf.py build` replace these legacy runtimes.)*
 
 ### **Boot Sequence**
 1.  **Power-hold assertion**: `boot.py` drives **IO41** high immediately so the soft-latched V4.2 board stays on after the momentary power button is released.

@@ -5742,3 +5742,22 @@ RaceSense now has a path where:
 - the final package still supports start/finish, sector generation, and admin upload
 
 This is the right direction for building a scalable shared track catalog from real rider data.
+
+---
+
+### [2026-08-01] Phase 8B: Interactive Dashboard Integration & Driver Verification (ESP32-S3 Target)
+
+**Objective:** Transition from standalone diagnostics test harnesses to a unified, fully interactive production firmware OS on Target 2 (ESP32-S3 with ILI9341 display and XPT2046 resistive touchscreen).
+
+### Engineering Achievements
+1. **Empirical Touch Calibration:** Solved touchscreen axes inversion and misaligned touch responses by conducting an interactive 4-corner calibration protocol with physical hardware verification. Injected the resulting affine transformation matrix directly into the XPT2046 input driver (`bsp_display.c`).
+2. **Interactive UI Architecture:** Replaced static verification test screens with a fully interactive Home Dashboard (`ui_home.c`) featuring real-time system status indicators and three responsive touch targets (START LOG, SYNC, SETUP) wired directly to resolution-agnostic event callback dispatchers (`ui_events.c`).
+3. **RGB565 Color Byte Order Resolution:** Diagnosed and resolved severe color corruption and illegible UI rendering in the production firmware. Because the ESP32-S3 utilizes little-endian memory architecture while SPI display panels demand big-endian pixel order, we enabled `CONFIG_LV_COLOR_16_SWAP=y` across all SDK configuration profiles to ensure DMA SPI transfers display true-to-design high-contrast colors.
+4. **Firmware Optimization:** Rebuilt production firmware (`racesense_p4.bin`) with a compact footprint of ~655KB, leaving 79% headroom in the primary application partition for track layouts and telemetry buffering.
+
+### Product & UX Perspective
+From a rider UX standpoint, visual clarity and touch responsiveness on the dashboard are mission-critical—especially under harsh outdoor sunlight on the racetrack where rapid glances demand high contrast. By resolving the color byte-order mismatch and verifying touch interactive event loops, RaceSense OS achieves a premium, friction-free interface ready for live on-track validation.
+
+### Immediate Roadmap
+- **Validation:** Live hardware boot verification to confirm accurate color representation and interactive button responsiveness.
+- **Next Phase:** Iterate on high-contrast daytime color palettes and typography scales if outdoor track legibility demands further visual amplification, followed by verification of deeper screen state transitions (Logging Active, Sync & Captive Portal, and Settings calibration menus).

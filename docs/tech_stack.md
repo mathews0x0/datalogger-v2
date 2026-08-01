@@ -35,12 +35,14 @@ This document provides a deep dive into the technology stack, deployment process
 *   **DNS**: Production DNS points the public RaceSense domain to the Host.co.in server before Nginx/Gunicorn routing takes over.
 
 ### **Hardware & Firmware (RS-Core)**
-*   **MCU**: ESP32-S3 (Dual-core 240MHz).
-*   **OS**: MicroPython v1.22.
-*   **Key Drivers**: BMI323 (IMU), Neo-M8N (GPS), SPI SD Card.
-*   **Display Baseline**: TFT-only rider-facing UI in the active firmware; legacy OLED support has been retired from the current codebase.
-*   **High-Speed Uplink**: Custom uploader using **Raw SSL Sockets** and **Persistent Connections** for high-throughput (64KB chunks) telemetry sync.
-*   **Documentation**: See [hardware_firmware.md](file:///Users/mj/Documents/datalogger-v2/docs/hardware_firmware.md) for pinouts and flashing guides.
+*   **MCU (Dual-Target)**: 
+    *   **ESP32-S3**: RS-Core V4.2 PCB (Dual-core Xtensa 240MHz, 16MB Flash, 8MB Octal PSRAM).
+    *   **ESP32-P4**: Waveshare 4.3" MIPI-DSI (Dual-core RISC-V 400MHz, 16MB Flash, 32MB PSRAM).
+*   **OS / Framework**: **Native C/C++ on ESP-IDF v5.3 / FreeRTOS SMP** (migrated from legacy MicroPython v1.22 for deterministic real-time sampling).
+*   **Core Allocation**: Core 0 strictly reserved for hard real-time telemetry (100Hz BMI323 IMU + 10Hz Neo-M8N GPS). Core 1 assigned to LVGL rendering, SD card buffer draining, and Wi-Fi 6/SSL networking.
+*   **Display & UI**: LVGL 8.4 responsive UI engine supporting 12 modular rider screens across both 2.8" SPI ILI9341 (320x240) and 4.3" MIPI-DSI ST7701 (800x480) panels with zero code changes.
+*   **High-Speed Uplink**: Consolidated native HTTPS uploader (`network.c`) utilizing persistent SSL sessions, adaptive buffering, and resumable transfers (`X-Upload-Offset`).
+*   **Documentation**: See [hardware_firmware.md](file:///Users/mj/Documents/datalogger-v2/docs/hardware_firmware.md) for dual-target pinouts, architecture details, and flashing instructions.
 
 ---
 

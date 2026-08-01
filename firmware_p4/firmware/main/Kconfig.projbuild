@@ -1,0 +1,45 @@
+menu "RaceSense Configuration"
+
+    config RS_IMU_SAMPLE_RATE_HZ
+        int "IMU sampling rate in Hz"
+        default 100
+        help
+            BMI323 accelerometer and gyroscope sampling frequency.
+
+    config RS_GPS_RATE_HZ
+        int "GPS measurement rate in Hz"
+        default 10
+        help
+            Neo-M8N GNSS measurement rate configured via UBX CFG-RATE.
+
+    config RS_GPS_BAUD
+        int "GPS UART baud rate"
+        default 38400
+        help
+            Target baud rate for Neo-M8N UART after UBX CFG-PRT init.
+
+    config RS_AUTO_LOG_DELAY_MS
+        int "Auto-log countdown delay in ms"
+        default 10000
+        help
+            Time after GPS lock before auto-logging starts (if enabled).
+
+    config RS_STORAGE_CRITICAL_PCT
+        int "Storage critical threshold percentage"
+        default 90
+        help
+            Percentage of SD card usage that triggers STORAGE_CRITICAL state.
+
+    config RS_STORAGE_HARD_STOP_PCT
+        int "Storage hard stop threshold percentage"
+        default 98
+        help
+            Percentage of SD card usage that triggers HARD_STOP (no more writes).
+
+    config RS_SECTOR_FLASH_DURATION_MS
+        int "Sector crossing flash overlay duration in ms"
+        default 3000
+        help
+            Duration the sector crossing color flash overlays the logging screen.
+
+endmenu

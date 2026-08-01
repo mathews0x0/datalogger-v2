@@ -31,6 +31,7 @@ The AI is mandated to update this file automatically whenever the user corrects 
 - **Verification**: User-driven testing and approval is mandatory before any code is finalized.
 - **Documentation Standard**: Update `docs/pm_diary.md` (non-technical summaries) and core `/docs/` files as logic evolves.
 - **Display Behavior**: Stealth Logging Mode (turning off screen/LEDs during logging) is obsolete and should be ignored; the display remains active for live rider feedback.
+- **Display Orientation**: Waveshare 4.3" 800×480 Landscape (Horizontal) orientation for all UI/UX designs and LVGL layouts.
 
 ---
 

@@ -1,0 +1,1472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RaceSense Adaptive LVGL Multi-Resolution Web Simulator</title>
+<style>
+  :root {
+    --bg-main: #050508;
+    --panel-bg: #121216;
+    --text-main: #E0E0E0;
+    --text-muted: #9A9AA6;
+    --orange: #FF6B35;
+    --green: #00E676;
+    --amber: #FFD200;
+    --red: #FF3B30;
+    --blue: #2997FF;
+    --border: #2A2A35;
+    --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  
+  body {
+    font-family: var(--font-stack);
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+    overflow-x: hidden;
+  }
+
+  header {
+    width: 100%;
+    max-width: 1100px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+  }
+
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .logo-title {
+    font-size: 22px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .logo-title span { color: var(--orange); }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .btn-res, .btn-mode {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .btn-res.active {
+    background: var(--orange);
+    color: #FFF;
+    border-color: var(--orange);
+    box-shadow: 0 0 12px rgba(255, 107, 53, 0.4);
+  }
+
+  .btn-mode.active {
+    background: var(--blue);
+    color: #FFF;
+    border-color: var(--blue);
+    box-shadow: 0 0 12px rgba(0, 122, 255, 0.4);
+  }
+
+  /* Calibration Drawer */
+  .calibration-drawer {
+    background: #0E0E14;
+    border: 1px solid var(--blue);
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+
+  .calib-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 20px;
+    border-top: 1px solid #1A1A24;
+    padding-top: 14px;
+  }
+
+  .calib-slider {
+    flex: 1;
+    min-width: 180px;
+    max-width: 300px;
+  }
+
+  .btn-fine {
+    background: #20202E;
+    border: 1px solid var(--border);
+    color: #FFF;
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    font-weight: 900;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .btn-fine:active { background: var(--orange); }
+
+  .credit-card-ref {
+    background: linear-gradient(135deg, #1C1C2D, #0B0B13);
+    border: 2px dashed var(--amber);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    text-align: center;
+    font-size: 11px;
+    font-weight: 800;
+    color: var(--amber);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.8);
+    position: relative;
+    user-select: none;
+    transition: width 0.1s ease, height 0.1s ease;
+  }
+
+  .ruler-ref {
+    height: 40px;
+    background: #14141E;
+    border: 1px solid #333344;
+    border-radius: 6px;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  .display-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 24px;
+    width: 100%;
+    min-height: 450px;
+    position: relative;
+  }
+
+  .stage-info {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--amber);
+    margin-bottom: 16px;
+    background: rgba(255, 184, 0, 0.1);
+    padding: 8px 18px;
+    border-radius: 20px;
+    border: 1px solid rgba(255, 184, 0, 0.3);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .bezel-frame {
+    background: #0D0D12;
+    padding: 8px;
+    border-radius: 16px;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: padding 0.25s ease, border-color 0.25s ease;
+  }
+
+  .bezel-label {
+    position: absolute;
+    bottom: -32px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+
+  .scale-container {
+    position: relative;
+    overflow: hidden;
+    background: #09090D;
+    border-radius: 4px;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+    transition: width 0.25s ease, height 0.25s ease;
+  }
+
+  .screen-frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: #09090D;
+    overflow: hidden;
+    border: none;
+    transform-origin: top left;
+    transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /* Resolution Classes */
+  .res-800x480 { width: 800px; height: 480px; }
+  .res-480x320 { width: 480px; height: 320px; }
+  .res-320x240 { width: 320px; height: 240px; }
+
+  .screen-view {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    display: none;
+    flex-direction: column;
+    padding: 16px;
+  }
+  .res-480x320 .screen-view { padding: 12px; }
+  .res-320x240 .screen-view { padding: 8px; }
+
+  .screen-view.active { display: flex; }
+
+  /* ──────────────────────────────────────────────────────────────────────────
+   * ENHANCED TYPOGRAPHY & LEGIBILITY RULES (FOR 1:1 HARDWARE DISPLAY)
+   * ────────────────────────────────────────────────────────────────────────*/
+  .ui-top-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-muted);
+    border-bottom: 2px solid rgba(255,255,255,0.12);
+    padding-bottom: 8px;
+    margin-bottom: 12px;
+    letter-spacing: 0.5px;
+  }
+  .res-480x320 .ui-top-bar { font-size: 14px; padding-bottom: 6px; margin-bottom: 8px; }
+  .res-320x240 .ui-top-bar { font-size: 12px; padding-bottom: 4px; margin-bottom: 6px; border-bottom-width: 1px; }
+  
+  .status-badge { color: var(--green); font-weight: 900; }
+
+  .ui-grid {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    overflow-y: auto;
+    padding-bottom: 6px;
+  }
+  .res-480x320 .ui-grid { gap: 10px; }
+  .res-320x240 .ui-grid { grid-template-columns: 1fr; gap: 6px; }
+
+  .ui-card {
+    background: rgba(255, 255, 255, 0.06);
+    border: 2px solid rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .res-480x320 .ui-card { padding: 10px; border-radius: 12px; border-width: 1px; }
+  .res-320x240 .ui-card { padding: 8px; border-radius: 8px; border-width: 1px; }
+
+  .card-title {
+    font-size: 16px;
+    font-weight: 800;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .res-480x320 .card-title { font-size: 13px; gap: 6px; }
+  .res-320x240 .card-title { font-size: 12px; gap: 4px; }
+
+  .card-value {
+    font-size: 32px;
+    font-weight: 900;
+    color: #FFF;
+    margin-top: 6px;
+    letter-spacing: -0.5px;
+  }
+  .res-480x320 .card-value { font-size: 22px; margin-top: 4px; }
+  .res-320x240 .card-value { font-size: 17px; margin-top: 2px; }
+
+  .card-sub {
+    font-size: 14px;
+    font-weight: 700;
+    color: #A5A5B5;
+    margin-top: 6px;
+  }
+  .res-480x320 .card-sub { font-size: 12px; margin-top: 4px; }
+  .res-320x240 .card-sub { font-size: 11px; margin-top: 2px; }
+
+  .ui-dock {
+    display: flex;
+    gap: 14px;
+    margin-top: 10px;
+  }
+  .res-480x320 .ui-dock { gap: 8px; margin-top: 8px; }
+  .res-320x240 .ui-dock { flex-direction: column; gap: 5px; margin-top: 6px; }
+
+  .btn-touch {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.12);
+    color: #FFF;
+    border: 2px solid rgba(255, 255, 255, 0.22);
+    border-radius: 14px;
+    padding: 16px;
+    font-size: 18px;
+    font-weight: 900;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: transform 0.1s, background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .res-480x320 .btn-touch { padding: 10px; font-size: 14px; border-radius: 10px; border-width: 1px; }
+  .res-320x240 .btn-touch { padding: 7px; font-size: 12px; border-radius: 8px; border-width: 1px; }
+  
+  .btn-touch:active { transform: scale(0.97); }
+  .btn-primary { background: var(--orange); border-color: var(--orange); color: #FFF; }
+  .btn-icon { flex: 0 0 70px; font-size: 22px; }
+  .res-480x320 .btn-icon { flex: 0 0 50px; font-size: 18px; }
+  .res-320x240 .btn-icon { flex: 1; font-size: 14px; }
+
+  .splash-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+  }
+
+  .splash-logo { font-size: 48px; font-weight: 900; letter-spacing: -1px; font-style: italic; }
+  .splash-logo span { color: var(--orange); }
+  .res-480x320 .splash-logo { font-size: 34px; }
+  .res-320x240 .splash-logo { font-size: 26px; }
+
+  .splash-bar { width: 60%; height: 10px; background: rgba(255,255,255,0.15); border-radius: 10px; overflow: hidden; }
+  .splash-bar-fill { width: 75%; height: 100%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+
+  .hero-timer {
+    font-size: 110px;
+    font-weight: 900;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    color: #FFF;
+    margin: 6px 0;
+    text-shadow: 0 0 25px rgba(255,255,255,0.25);
+  }
+  .res-480x320 .hero-timer { font-size: 64px; margin: 4px 0; }
+  .res-320x240 .hero-timer { font-size: 38px; margin: 2px 0; }
+
+  .sector-flash-overlay {
+    position: absolute;
+    top: 50px; left: 14px; right: 14px; bottom: 65px;
+    background: rgba(0, 230, 118, 0.96);
+    border: 4px solid #FFF;
+    border-radius: 18px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 50px rgba(0, 230, 118, 0.9);
+    z-index: 100;
+    animation: flashPulse 0.3s ease-in-out;
+  }
+  .res-320x240 .sector-flash-overlay { top: 25px; bottom: 45px; left: 6px; right: 6px; border-radius: 10px; }
+
+  @keyframes flashPulse {
+    0% { transform: scale(0.9); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+
+  /* Motorcycle Calibration Reference Box (Enlarged & Detailed) */
+  .moto-ref-box {
+    width: 220px; height: 135px;
+    background: rgba(255,255,255,0.05);
+    border: 2px solid rgba(255,255,255,0.15);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+    box-shadow: inset 0 0 25px rgba(0,0,0,0.6);
+    margin: 6px 0;
+  }
+  .res-480x320 .moto-ref-box { width: 150px; height: 95px; border-width: 1px; }
+  .res-320x240 .moto-ref-box { width: 110px; height: 70px; border-width: 1px; }
+
+  /* Heartbeat ECG Animation Box & Themes */
+  .ecg-box {
+    width: 360px; height: 80px;
+    border-radius: 12px;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 10px 0;
+    transition: all 0.3s ease;
+  }
+  .res-480x320 .ecg-box { width: 280px; height: 60px; }
+  .res-320x240 .ecg-box { width: 230px; height: 50px; }
+
+  .ecg-line { width: 100%; height: 2px; position: absolute; top: 50%; }
+  
+  .ecg-svg {
+    width: 100%; height: 100%;
+    stroke-width: 3;
+    fill: none;
+    animation: ecgScroll 1.8s linear infinite;
+    transition: stroke 0.3s ease, filter 0.3s ease;
+  }
+
+  @keyframes ecgScroll {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-40%); }
+  }
+
+  .heartbeat-pulse {
+    font-size: 38px;
+    display: inline-block;
+    animation: heartThrob 0.8s ease-in-out infinite;
+    transition: color 0.3s ease, text-shadow 0.3s ease;
+  }
+  .res-480x320 .heartbeat-pulse { font-size: 28px; }
+  .res-320x240 .heartbeat-pulse { font-size: 22px; }
+
+  @keyframes heartThrob {
+    0%, 100% { transform: scale(1); }
+    15% { transform: scale(1.35); }
+    30% { transform: scale(1.1); }
+    45% { transform: scale(1.4); }
+  }
+
+  .ecg-theme-red { background: #1C0606; border: 2px solid #8A1515; box-shadow: 0 0 20px rgba(255, 59, 48, 0.4); }
+  .ecg-theme-red .ecg-line { background: rgba(255, 59, 48, 0.25); }
+  .ecg-theme-red .ecg-svg { stroke: #FF3B30; filter: drop-shadow(0 0 8px #FF3B30); }
+  .ecg-theme-red .heartbeat-pulse { color: #FF3B30; text-shadow: 0 0 15px #FF3B30; }
+
+  .ecg-theme-green { background: #02180A; border: 2px solid #006030; box-shadow: 0 0 20px rgba(0, 230, 118, 0.4); }
+  .ecg-theme-green .ecg-line { background: rgba(0, 230, 118, 0.25); }
+  .ecg-theme-green .ecg-svg { stroke: #00E676; filter: drop-shadow(0 0 8px #00E676); }
+  .ecg-theme-green .heartbeat-pulse { color: #00E676; text-shadow: 0 0 15px #00E676; }
+
+  .ecg-theme-dead { background: #121216; border: 2px solid #3A3A46; box-shadow: none; }
+  .ecg-theme-dead .ecg-line { background: #555; }
+  .ecg-theme-dead .ecg-svg { stroke: #666; animation: none; filter: none; }
+  .ecg-theme-dead .heartbeat-pulse { color: #666; animation: none; text-shadow: none; }
+
+  .wifi-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255,255,255,0.06);
+    border: 2px solid rgba(255,255,255,0.12);
+    padding: 12px 16px;
+    border-radius: 12px;
+    margin-bottom: 10px;
+    transition: background 0.2s ease;
+  }
+  .wifi-item:hover { background: rgba(255,255,255,0.12); }
+  .res-480x320 .wifi-item { padding: 8px 12px; margin-bottom: 6px; border-width: 1px; }
+  .res-320x240 .wifi-item { padding: 6px 10px; margin-bottom: 4px; border-width: 1px; }
+
+  .qr-box {
+    width: 140px; height: 140px;
+    background: #FFF;
+    border: 6px solid #FFF;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-image: radial-gradient(#000 35%, transparent 35%), radial-gradient(#000 35%, transparent 35%);
+    background-size: 14px 14px;
+    background-position: 0 0, 7px 7px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+  }
+  .res-480x320 .qr-box { width: 100px; height: 100px; background-size: 12px 12px; }
+  .res-320x240 .qr-box { width: 80px; height: 80px; background-size: 10px 10px; }
+
+  /* Debug Console & Event Logger */
+  .logger-panel {
+    width: 100%;
+    max-width: 1100px;
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    height: 200px;
+    display: flex;
+    flex-direction: column;
+    margin-top: 24px;
+  }
+
+  .logger-header {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .logger-content {
+    flex: 1;
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 13px;
+    color: #A0A0B0;
+    overflow-y: auto;
+    background: #09090C;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid #1A1A22;
+    line-height: 1.5;
+  }
+
+  .log-line { margin-bottom: 4px; }
+  .log-line span.tag { color: var(--orange); font-weight: bold; }
+  .log-line span.event { color: var(--green); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-top">
+    <div class="logo-title">Race<span>Sense</span> UI Simulator</div>
+    <div class="toolbar">
+      <!-- Target Selector -->
+      <button class="btn-res active" onclick="setResolution('800x480', this)">4.3" (800×480)</button>
+      <button class="btn-res" onclick="setResolution('480x320', this)">3.5" (480×320)</button>
+      <button class="btn-res" onclick="setResolution('320x240', this)">2.8" (320×240)</button>
+      
+      <span style="width: 1px; height: 24px; background: var(--border); margin: 0 4px;"></span>
+      
+      <!-- View Mode Selector -->
+      <button id="btnModePixel" class="btn-mode active" onclick="setMode('pixel')">🖥️ Native Pixel View</button>
+      <button id="btnModePhysical" class="btn-mode" onclick="setMode('physical')">📏 1:1 Physical Hardware Size</button>
+      <button class="btn-mode" onclick="toggleCalibration()" style="background:#20202E; border-color:#40405A;">⚙️ Calibrate Screen & Ruler</button>
+    </div>
+  </div>
+
+  <!-- Monitor Precision Calibration Drawer -->
+  <div id="calibDrawer" class="calibration-drawer" style="display: none;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <span style="font-size: 15px; font-weight: 900; color: #FFF;">📐 Precision Screen & Ruler Calibration (MacBook & External Displays)</span>
+        <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+          Different screens and macOS scaled modes change pixel density. To ensure 100% real-world accuracy for 4.3", 3.5", and 2.8" hardware displays:
+          <br><strong>Step 1:</strong> Hold a standard credit/bank card against the yellow box below (or measure the ruler with an actual desk ruler/tape).
+          <br><strong>Step 2:</strong> Adjust the calibration buttons/slider until the physical card matches the yellow box (exactly 85.6 mm × 54.0 mm).
+        </div>
+      </div>
+      <button onclick="document.getElementById('calibDrawer').style.display='none'" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;">✕</button>
+    </div>
+
+    <div class="calib-row">
+      <div style="display: flex; flex-direction: column; gap: 10px; min-width: 300px; flex: 1;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 13px; font-weight: 700; color: var(--text-muted);">Monitor Density:</span>
+          <button class="btn-fine" onclick="stepDPI(-1)">-</button>
+          <input id="dpiSlider" type="range" min="70" max="260" step="0.5" value="114" class="calib-slider" oninput="updateDPI(this.value)">
+          <button class="btn-fine" onclick="stepDPI(1)">+</button>
+          <span id="dpiVal" style="font-size: 15px; font-weight: 900; color: var(--amber); min-width: 80px;">114.0 DPI</span>
+        </div>
+        <div style="font-size: 12px; color: #707080;">
+          💡 <em>MacBook Air / Pro default Retina displays typically calibrate between <strong>110 DPI - 130 DPI</strong> depending on your macOS display scaling settings ("More Space" vs "Default").</em>
+        </div>
+        <div style="margin-top: 8px;">
+          <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px;">📏 100 mm (10 cm) Verification Ruler:</div>
+          <div id="ruler100mm" class="ruler-ref" style="width: 350px;">
+            <div id="rulerTicks" style="width:100%; height:100%; display:flex; position:absolute; bottom:0;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; align-items: center;">
+        <div style="font-size: 11px; font-weight: 700; color: var(--text-muted); margin-bottom: 6px;">💳 STANDARD CREDIT / ID CARD REFERENCE</div>
+        <div id="cardReference" class="credit-card-ref">
+          <div style="font-size: 14px; margin-bottom: 4px;">💳 STANDARD BANK CARD</div>
+          <div style="color: #FFF; font-size: 13px;">85.6 mm × 54.0 mm</div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">(3.370" × 2.125" ISO 7810 ID-1)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="display-stage">
+  <div id="stageInfo" class="stage-info">
+    <span>🖥️ Mode: Native Pixel Resolution (800×480 CSS pixels)</span>
+  </div>
+
+  <div id="bezelFrame" class="bezel-frame">
+    <!-- Active TFT screen constraint box -->
+    <div id="scaleContainer" class="scale-container" style="width: 800px; height: 480px;">
+      <!-- Absolute positioned pixel raster scaled via CSS transform -->
+      <div id="screenFrame" class="screen-frame res-800x480">
+        
+        <!-- Screen 1: Boot Splash -->
+        <div id="screen-splash" class="screen-view active">
+          <div class="splash-container">
+            <div class="splash-logo">Race<span>Sense</span></div>
+            <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+            <div style="font-size: 16px; font-weight: 700; color: #A0A0B0;">Initializing SDIO 3.0... Calibrating IMU (Core 0)...</div>
+          </div>
+        </div>
+
+        <!-- Screen 2: Home Dashboard (Enlarged Fonts, Icons on Tiles, and 'READY') -->
+        <div id="screen-home" class="screen-view">
+          <div class="ui-top-bar">
+            <span>🔋 BATTERY: 88%</span>
+            <span>RACESENSE DASHBOARD</span>
+            <span class="status-badge">📡 12 SATS LOCK</span>
+          </div>
+          <div class="ui-grid">
+            <div class="ui-card">
+              <div class="card-title"><span>⚡</span> SYSTEM STATUS</div>
+              <div class="card-value" style="color: var(--green);">READY</div>
+              <div class="card-sub">SD Mounted • 100Hz IMU Online</div>
+            </div>
+            <div class="ui-card">
+              <div class="card-title"><span>🏁</span> ACTIVE CIRCUIT</div>
+              <div class="card-value">BUDDH INT.</div>
+              <div class="card-sub" style="color: var(--green);">TBL Best: 1:54.320</div>
+            </div>
+            <div class="ui-card">
+              <div class="card-title"><span>📐</span> IMU PROFILE</div>
+              <div class="card-value">TANK MOUNT</div>
+              <div class="card-sub">Pitch -10.7° / Roll +5.0°</div>
+            </div>
+            <div class="ui-card">
+              <div class="card-title"><span>💾</span> SD STORAGE</div>
+              <div class="card-value">18.5 GB FREE</div>
+              <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.15); border-radius: 4px; margin-top: 8px;"><div style="width: 42%; height: 100%; background: var(--blue);"></div></div>
+              <div class="card-sub">42% Used (High Speed Class 10)</div>
+            </div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" style="flex: 1.2;" onclick="startSyncSequence(false)">☁️ SYNC CLOUD</button>
+            <button class="btn-touch" style="background: #381212; border-color: #7A2424; flex: 1.2;" onclick="startSyncSequence(true)">💥 TEST SYNC 3X FAIL</button>
+            <button class="btn-touch btn-icon" onclick="triggerEvent('UI_EVENT_SETTINGS_CLICKED', 'screen-settings')">⚙️</button>
+            <button class="btn-touch btn-primary" style="flex: 1.4;" onclick="startLogSequence()">🏁 START LOG</button>
+          </div>
+        </div>
+
+        <!-- Screen 4: IMU Validation Diagnostic Overlay -->
+        <div id="screen-validation" class="screen-view">
+          <div class="ui-top-bar">
+            <span style="color: var(--amber);">⚡ PRE-FLIGHT DIAGNOSTICS</span>
+            <span>RACESENSE ENGINE</span>
+            <span class="status-badge">📡 12 SATS LOCK</span>
+          </div>
+          <div class="splash-container" style="gap: 14px; text-align: center;">
+            <div style="font-size: 26px; font-weight: 900; color: #FFF;">IMU VALIDATION CHECK</div>
+            <div style="display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; margin-top: 8px;">
+              <div style="background: rgba(0,230,118,0.12); border: 2px solid var(--green); padding: 12px 20px; border-radius: 12px;">
+                <div style="font-size: 13px; font-weight: 800; color: var(--text-muted);">VIBRATION NOISE FLOOR</div>
+                <div style="font-size: 24px; font-weight: 900; color: var(--green); margin-top: 4px;">0.02 G (PASS)</div>
+              </div>
+              <div style="background: rgba(41,151,255,0.12); border: 2px solid var(--blue); padding: 12px 20px; border-radius: 12px;">
+                <div style="font-size: 13px; font-weight: 800; color: var(--text-muted);">MOUNT ALIGNMENT</div>
+                <div style="font-size: 24px; font-weight: 900; color: #FFF; margin-top: 4px;">PITCH -10.7° / ROLL +5.0°</div>
+              </div>
+            </div>
+            <div style="font-size: 15px; font-weight: 800; color: var(--amber); margin-top: 8px;">⚡ Auto-launching Live Logging Cockpit in 3 seconds...</div>
+            <button class="btn-touch" style="flex: 0 0 auto; width: 240px; padding: 12px; font-size: 15px; background: var(--green); border-color: var(--green); color:#002211;" onclick="switchScreen('screen-logging')">SKIP & GO TO DASH →</button>
+          </div>
+        </div>
+
+        <!-- Screen 3: Live Logging v4 Hero Cockpit -->
+        <div id="screen-logging" class="screen-view">
+          <div class="ui-top-bar">
+            <span style="color: var(--red);">● REC 100Hz (CORE 0)</span>
+            <span>BUDDH INT. CIRCUIT</span>
+            <span>LAP 4</span>
+          </div>
+          
+          <div class="hero-timer" id="liveTimer">1:53.120</div>
+          
+          <div class="ui-grid" id="loggingGrid">
+            <div class="ui-card" style="align-items: center; justify-content: center;">
+              <div class="card-title"><span>🏁</span> LAP DELTA VS TBL</div>
+              <div class="card-value" style="color: var(--green); font-size: 32px;" id="deltaDisplay">Δ -0.48s (FASTER)</div>
+            </div>
+            <div class="ui-card" style="align-items: center; justify-content: center;">
+              <div class="card-title"><span>🏍️</span> LIVE LEAN ANGLE</div>
+              <div class="card-value" style="color: var(--blue); font-size: 32px;" id="leanDisplay">44° LEFT</div>
+            </div>
+          </div>
+
+          <div id="sectorFlashBox" class="sector-flash-overlay" style="display: none;">
+            <div style="font-size: 18px; font-weight: 900; color: #003B1E; text-transform: uppercase;">⚡ SECTOR 2 CROSSING DETECTED!</div>
+            <div style="font-size: 56px; font-weight: 900; color: #FFF; text-shadow: 0 2px 8px rgba(0,0,0,0.3); margin: 6px 0;">Δ -0.48s</div>
+            <div style="font-size: 24px; font-weight: 800; color: #FFF; background: #008D46; padding: 6px 20px; border-radius: 20px;">PERSONAL BEST SECTOR!</div>
+            <div style="font-size: 15px; font-weight: 800; color: #003B1E; margin-top: 10px;">Split Time: 34.12s (TBL Ref: 34.60s) • Auto-closing in 3s...</div>
+          </div>
+
+          <div class="ui-dock">
+            <button class="btn-touch" style="background: var(--green); border-color: #00E676; color:#052512;" onclick="triggerSectorFlash()">⚡ SECTOR FLASH DELTA</button>
+            <button class="btn-touch" style="background: #381212; border-color: #7A2424;" onclick="triggerEvent('UI_EVENT_STOP_LOG_HELD (Hold-to-Stop Confirmed)', 'screen-home')">■ STOP LOG (HOLD 2S)</button>
+          </div>
+        </div>
+
+        <!-- Screen 10: Settings Configuration Grid -->
+        <div id="screen-settings" class="screen-view">
+          <div class="ui-top-bar">
+            <span>⚙️ SYSTEM SETTINGS</span>
+            <span style="color: var(--blue);">NVS: /data/metadata/device.json</span>
+          </div>
+          <div class="ui-grid">
+            <div class="ui-card">
+              <div class="card-title"><span>📡</span> WIFI PROVISIONING & AP SELECT</div>
+              <div class="card-value" style="font-size: 20px;" id="activeWifiLabel">Paddock-5G (Connected -52dBm)</div>
+              <div style="display: flex; gap: 10px; margin-top: 10px;">
+                <button class="btn-touch" style="padding: 10px; font-size: 13px; background: #203050; border-color: var(--blue);" onclick="openWifiPicker()">🔍 CHANGE WIFI</button>
+                <button class="btn-touch" style="padding: 10px; font-size: 13px; background: var(--blue); border-color: var(--blue);" onclick="startCaptivePortal()">📱 CAPTIVE PORTAL</button>
+              </div>
+            </div>
+            <div class="ui-card">
+              <div class="card-title"><span>🏍️</span> IMU MOUNT CALIBRATION</div>
+              <div class="card-value" style="font-size: 22px;">6-Stage Wizard</div>
+              <div class="card-sub">Includes Roll-Forward +X alignment</div>
+              <button class="btn-touch" style="margin-top: 10px; padding: 10px; font-size: 14px;" onclick="startCalibrationWizard()">START 6-STAGE WIZARD</button>
+            </div>
+            <div class="ui-card" style="grid-column: span 1;">
+              <div class="card-title"><span>🔴</span> AUTO-LOGGING (10S GPS LOCK)</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
+                <span id="autologStateTxt" style="font-weight: 900; font-size: 24px; color: var(--green);">ENABLED</span>
+                <button class="btn-touch" style="flex: 0 0 130px; padding: 10px; font-size: 14px;" onclick="toggleAutoLog()">TOGGLE SWITCH</button>
+              </div>
+            </div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" onclick="triggerEvent('UI_EVENT_BACK_CLICKED', 'screen-home')">← BACK TO HOME</button>
+          </div>
+        </div>
+
+        <!-- Wi-Fi Scanner & Picker List Screen (`screen-wifi-picker`) -->
+        <div id="screen-wifi-picker" class="screen-view">
+          <div class="ui-top-bar">
+            <span>🔍 WIFI SCANNER & AP SELECT</span>
+            <span style="color: var(--amber);">● 4 NETWORKS FOUND</span>
+          </div>
+          <div style="flex: 1; overflow-y: auto; padding-right: 6px;">
+            <div style="font-size: 15px; font-weight: 700; color: var(--text-muted); margin-bottom: 12px;">Select a wireless paddock or hotspot network to update persistent connection credentials:</div>
+            
+            <div class="wifi-item">
+              <div>
+                <div style="font-weight: 900; color: #FFF; font-size: 20px;">📶 Paddock-5G</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--green); margin-top: 2px;">WPA2 Enterprise • RSSI: -52 dBm (Excellent)</div>
+              </div>
+              <button class="btn-touch" style="flex: 0 0 130px; padding: 10px; font-size: 14px; background: var(--green); color: #002211; border-color: var(--green);">✓ ACTIVE</button>
+            </div>
+
+            <div class="wifi-item">
+              <div>
+                <div style="font-weight: 900; color: #FFF; font-size: 20px;">📶 Pitlane-Telemetry-Main</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--text-muted); margin-top: 2px;">WPA2-PSK • RSSI: -64 dBm (Good)</div>
+              </div>
+              <button class="btn-touch" style="flex: 0 0 130px; padding: 10px; font-size: 14px;" onclick="connectToWifi('Pitlane-Telemetry-Main', '-64dBm')">CONNECT</button>
+            </div>
+
+            <div class="wifi-item">
+              <div>
+                <div style="font-weight: 900; color: #FFF; font-size: 20px;">📶 Ducati-Corse-Guest</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--text-muted); margin-top: 2px;">WPA3 • RSSI: -78 dBm (Fair)</div>
+              </div>
+              <button class="btn-touch" style="flex: 0 0 130px; padding: 10px; font-size: 14px;" onclick="connectToWifi('Ducati-Corse-Guest', '-78dBm')">CONNECT</button>
+            </div>
+
+            <div class="wifi-item">
+              <div>
+                <div style="font-weight: 900; color: #FFF; font-size: 20px;">📶 RaceSense_Mobile_Hotspot</div>
+                <div style="font-size: 14px; font-weight: 700; color: var(--text-muted); margin-top: 2px;">WPA2 Personal • RSSI: -45 dBm (Strongest)</div>
+              </div>
+              <button class="btn-touch" style="flex: 0 0 130px; padding: 10px; font-size: 14px;" onclick="connectToWifi('RaceSense_Mobile_Hotspot', '-45dBm')">CONNECT</button>
+            </div>
+
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" style="background: #332222; border-color: #553333;" onclick="switchScreen('screen-settings')">← BACK TO SETTINGS</button>
+            <button class="btn-touch btn-primary" onclick="logMessage('ui_network', '🔄 Re-scanning nearby 2.4GHz & 5GHz Wi-Fi channels...')">🔄 RESCAN NETWORKS</button>
+          </div>
+        </div>
+
+        <!-- Screen 11: 6-Stage IMU Mount Calibration Wizard (With Realistic Sportbike Motorcycle Icons & Roll-Forward step!) -->
+        <div id="screen-calibration" class="screen-view">
+          <div class="ui-top-bar">
+            <span>🏍️ IMU CALIBRATION WIZARD</span>
+            <span id="calibStageBadge" class="status-badge" style="color: var(--amber);">STAGE 1 OF 6</span>
+          </div>
+          <div class="splash-container" style="gap: 12px; text-align: center; justify-content: flex-start; padding-top: 4px;">
+            <div id="calibStageTitle" style="font-size: 24px; font-weight: 900; color: #FFF;">STAGE 1: VERTICAL UPRIGHT BASELINE</div>
+            
+            <div id="motoRefBox" class="moto-ref-box">
+              <div id="motoSvgContainer"></div>
+              <div id="motoRefLabel" style="font-size: 12px; font-weight: 900; color: var(--amber); margin-top: 6px;">0° VERTICAL REFERENCE</div>
+            </div>
+
+            <div id="calibStageDesc" style="font-size: 15px; font-weight: 700; color: var(--text-muted); max-width: 650px; line-height: 1.4;">
+              Position motorcycle vertically upright on a level paddock stand. Keep handlebars straight and avoid touching the chassis during static sampling.
+            </div>
+            
+            <div style="background: rgba(255,255,255,0.06); border: 2px solid var(--border); padding: 12px 24px; border-radius: 14px; width: 85%; max-width: 540px;">
+              <div style="display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; margin-bottom: 8px;">
+                <span id="calibStatusTxt" style="color: var(--green);">● STABLE: READY TO RECORD (0.02 G)</span>
+                <span id="calibPctTxt">0% (0 / 100 SAMPLES)</span>
+              </div>
+              <div class="splash-bar" style="width: 100%; height: 10px;"><div id="calibBarFill" class="splash-bar-fill" style="width: 0%; background: var(--green);"></div></div>
+            </div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" style="background: #332222; border-color: #553333;" onclick="triggerEvent('UI_EVENT_BACK_CLICKED (Wizard Cancelled)', 'screen-settings')">CANCEL WIZARD</button>
+            <button id="btnCalibAction" class="btn-touch btn-primary" onclick="advanceCalibrationStage()">RECORD SAMPLE & NEXT →</button>
+          </div>
+        </div>
+
+        <!-- Screen 6: WiFi Searching & Scanning -->
+        <div id="screen-sync-searching" class="screen-view">
+          <div class="ui-top-bar">
+            <span>☁️ SYNC MODE</span>
+            <span style="color: var(--amber);">● SCANNING AP...</span>
+          </div>
+          <div class="splash-container">
+            <div style="font-size: 48px;">📡</div>
+            <div style="font-size: 26px; font-weight: 900; color: #FFF;">SEARCHING FOR PADDOCK WIFI</div>
+            <div id="syncScanDetail" style="font-size: 17px; font-weight: 700; color: var(--text-muted);">Target: 'Paddock-5G' • RSSI: -52 dBm (Strong)</div>
+            <div class="splash-bar" style="width: 50%;"><div class="splash-bar-fill" style="width: 40%; background: var(--amber);"></div></div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" style="background: #332222; border-color: #553333;" onclick="triggerEvent('UI_EVENT_SYNC_CANCEL', 'screen-home')">CANCEL & EXIT</button>
+          </div>
+        </div>
+
+        <!-- Screen 7: Cloud Server Heartbeat Verification -->
+        <div id="screen-sync-heartbeat" class="screen-view">
+          <div class="ui-top-bar">
+            <span>☁️ SYNC MODE • SERVER VERIFIED</span>
+            <span id="heartbeatStatusBadge" style="color: var(--red); font-weight: 900;">● PROBING SERVER (1/3)</span>
+          </div>
+          <div class="splash-container" style="gap: 14px;">
+            <div>
+              <span id="hbPulseIcon" class="heartbeat-pulse">❤️</span>
+            </div>
+            <div id="hbMainTitle" style="font-size: 24px; font-weight: 900; color: #FFF;">VERIFYING SERVER HEARTBEAT...</div>
+            
+            <div id="ecgWaveBox" class="ecg-box ecg-theme-red">
+              <div class="ecg-line"></div>
+              <svg class="ecg-svg" viewBox="0 0 500 100">
+                <path d="M 0 50 L 50 50 L 70 50 L 85 50 L 95 20 L 105 85 L 120 30 L 130 60 L 145 50 L 250 50 L 270 50 L 285 50 L 295 20 L 305 85 L 320 30 L 330 60 L 345 50 L 450 50 L 470 50 L 485 50 L 495 20 L 500 50" />
+              </svg>
+              <div id="hbPingTag" style="position: absolute; right: 12px; top: 8px; font-size: 12px; font-weight: 900; color: #FF3B30; background: #220505; padding: 4px 8px; border-radius: 6px; border: 1px solid #771111;">
+                PROBING... (ATTEMPT 1 OF 3)
+              </div>
+            </div>
+
+            <div id="hbDescTxt" style="font-size: 16px; font-weight: 700; color: var(--text-muted); text-align: center; max-width: 620px;">
+              Sending TLS 1.3 heartbeat probe to <strong style="color:var(--amber);">https://api.racesense.in/telemetry</strong>... Waiting for ack...
+            </div>
+          </div>
+          <div class="ui-dock">
+            <button id="hbBtnCancel" class="btn-touch" style="background: #332222; border-color: #553333;" onclick="triggerEvent('UI_EVENT_SYNC_CANCEL', 'screen-home')">CANCEL & EXIT</button>
+            <button id="hbBtnRetry" class="btn-touch btn-primary" style="display: none;" onclick="startSyncSequence(false)">🔄 RETRY SYNC (NORMAL)</button>
+          </div>
+        </div>
+
+        <!-- Screen 8: Batch Chunked Uploading Progress -->
+        <div id="screen-sync" class="screen-view">
+          <div class="ui-top-bar">
+            <span>☁️ SYNC MODE</span>
+            <span style="color: var(--green);">racesense.in ONLINE</span>
+          </div>
+          <div class="splash-container" style="gap: 14px;">
+            <div id="syncTitleTxt" style="font-size: 24px; font-weight: 900; color: var(--green);">UPLOADING FILE 2 OF 3</div>
+            <div id="syncFileTxt" style="font-size: 18px; font-weight: 800; color: #FFF;">sess_005.csv (512KB Batch Stream)</div>
+            <div class="splash-bar" style="width: 80%; height: 14px;"><div id="syncBarFill" class="splash-bar-fill" style="width: 60%; background: var(--orange);"></div></div>
+            <div id="syncSpeedTxt" style="font-size: 15px; font-weight: 700; color: var(--text-muted);">Transfer Speed: 1.4 MB/s • ETA: 3s</div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" style="background: #332222; border-color: #553333;" onclick="triggerEvent('UI_EVENT_SYNC_CANCEL_CLICKED', 'screen-home')">CANCEL & EXIT</button>
+          </div>
+        </div>
+
+        <!-- Screen 9: Sync Complete Summary Report -->
+        <div id="screen-sync-complete" class="screen-view">
+          <div class="ui-top-bar">
+            <span>🏆 SYNC SUMMARY</span>
+            <span style="color: var(--green);">● ALL SESSIONS ARCHIVED</span>
+          </div>
+          <div class="splash-container" style="gap: 16px;">
+            <div style="font-size: 56px;">🏆</div>
+            <div style="font-size: 28px; font-weight: 900; color: #FFF;">TELEMETRY SYNC SUCCESSFUL!</div>
+            <div style="background: rgba(0,230,118,0.12); border: 2px solid var(--green); padding: 16px 32px; border-radius: 16px; text-align: center;">
+              <div style="font-size: 28px; font-weight: 900; color: var(--green);">3 SESSIONS UPLOADED</div>
+              <div style="font-size: 16px; font-weight: 700; color: #FFF; margin-top: 6px;">48.2 MB total transferred over MbedTLS in 6.2 seconds</div>
+            </div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch btn-primary" style="background: var(--green); border-color: var(--green); color: #002211;" onclick="triggerEvent('UI_EVENT_SYNC_DONE_CLICKED', 'screen-home')">✓ FINISHED (RETURN HOME)</button>
+          </div>
+        </div>
+
+        <!-- Screen 12: Captive Portal WiFi Provisioning & QR Code -->
+        <div id="screen-portal" class="screen-view">
+          <div class="ui-top-bar">
+            <span>📱 CAPTIVE PORTAL (WAVE 4)</span>
+            <span class="status-badge" style="color: var(--blue);">SoftAP ONLINE</span>
+          </div>
+          <div class="ui-grid">
+            <div class="ui-card">
+              <div>
+                <div class="card-title"><span>📡</span> SOFTAP WIFI CREDENTIALS</div>
+                <div class="card-value" style="font-size: 20px; margin-top: 10px;">SSID: <span style="color:var(--orange);">RaceSense_Setup_932A</span></div>
+                <div style="font-size: 16px; font-weight: 700; color: #FFF; margin-top: 6px;">Password: <span style="color:var(--text-muted);">Open (No Passphrase)</span></div>
+                <div style="font-size: 16px; font-weight: 800; color: var(--green); margin-top: 6px;">Gateway: http://192.168.4.1/</div>
+              </div>
+              <div style="font-size: 13px; font-weight: 700; color: var(--text-muted); margin-top: 10px; border-top: 1px solid var(--border); padding-top: 10px;">
+                💡 Connect smartphone to SSID above and open browser to configure paddock Wi-Fi credentials.
+              </div>
+            </div>
+            <div class="ui-card" style="align-items: center; justify-content: center; text-align: center;">
+              <div class="card-title" style="margin-bottom: 12px;"><span>📷</span> INSTANT SMARTPHONE PAIRING</div>
+              <div class="qr-box">
+                <span style="font-size:11px; font-weight:900; color:#000; background:#FFF; padding:2px 6px;">SCAN ME</span>
+              </div>
+              <div style="font-size: 12px; font-weight: 800; color: var(--text-muted); margin-top: 8px;">LVGL Auto-Generated QR Code</div>
+            </div>
+          </div>
+          <div class="ui-dock">
+            <button class="btn-touch" style="background: #331111; border-color: #662222;" onclick="triggerEvent('UI_EVENT_CLOSE_PORTAL (SoftAP Disabled)', 'screen-settings')">✕ EXIT PORTAL & RESUME DASHBOARD</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+    <div id="bezelLabel" class="bezel-label">Active TFT Area: 800×480 px</div>
+  </div>
+</div>
+
+<!-- Serial Event Log Console -->
+<div class="logger-panel">
+  <div class="logger-header">
+    <span>🖥️ Simulated UART Monitor & Event Dispatch Logger (Core 1)</span>
+    <button onclick="document.getElementById('logContent').innerHTML=''" style="background:none;border:none;color:var(--text-muted);cursor:pointer;">Clear</button>
+  </div>
+  <div id="logContent" class="logger-content">
+    <div class="log-line"><span class="tag">[ui_engine]</span> Initialized Adaptive UI Engine for target Widescreen [800x480]</div>
+    <div class="log-line"><span class="tag">[ui_theme]</span> Motorsport Dark Theme active (#09090D Asphalt Background)</div>
+    <div class="log-line"><span class="tag">[ui_home]</span> Constructing Screen 1 (Boot Splash) -> Auto-transitioning to Screen 2 (Home Dashboard) after 2.5s...</div>
+  </div>
+</div>
+
+<script>
+  let currentRes = '800x480';
+  let currentMode = 'pixel';
+  let monitorDPI = 114.0; /* Defaulted to ~114 DPI for standard MacBook Air M-series Retina scaling */
+
+  let isAutoLogEnabled = true;
+  let currentCalibStep = 1;
+  let activeWifiName = 'Paddock-5G';
+
+  const HW_SPECS = {
+    '800x480': { name: '4.3" Widescreen P4 (ST7701)', widthMM: 95.04, heightMM: 53.86, basePx: 800, basePy: 480, bezelMM: 6.0 },
+    '480x320': { name: '3.5" Medium S3/P4 (ILI9488)', widthMM: 73.44, heightMM: 48.96, basePx: 480, basePy: 320, bezelMM: 5.0 },
+    '320x240': { name: '2.8" Compact S3/P4 (ILI9341)', widthMM: 57.60, heightMM: 43.20, basePx: 320, basePy: 240, bezelMM: 4.5 }
+  };
+
+  /* Highly realistic Sportbike / Motorcycle vector silhouettes & motion diagrams */
+  const MOTO_SVGS = {
+    upright: `<svg width="90" height="75" viewBox="0 0 120 90"><ellipse cx="60" cy="80" rx="35" ry="6" fill="rgba(0,230,118,0.15)"/><path d="M 45 45 Q 60 25 75 45 L 70 75 L 50 75 Z" fill="#20202A" stroke="#FFF" stroke-width="3"/><circle cx="60" cy="45" r="8" fill="#FF6B35"/><path d="M 32 40 L 88 40" stroke="#007AFF" stroke-width="7" stroke-linecap="round"/><line x1="60" y1="5" x2="60" y2="85" stroke="#00E676" stroke-width="3" stroke-dasharray="5"/><rect x="52" y="70" width="16" height="10" rx="3" fill="#8E8E93"/></svg>`,
+    left: `<svg width="90" height="75" viewBox="0 0 120 90"><g transform="rotate(-45 60 75)"><path d="M 45 45 Q 60 25 75 45 L 70 75 L 50 75 Z" fill="#20202A" stroke="#FFF" stroke-width="3"/><circle cx="60" cy="45" r="8" fill="#FF6B35"/><path d="M 32 40 L 88 40" stroke="#007AFF" stroke-width="7" stroke-linecap="round"/><rect x="52" y="70" width="16" height="10" rx="3" fill="#8E8E93"/></g><line x1="60" y1="10" x2="60" y2="85" stroke="#666" stroke-width="2" stroke-dasharray="4"/><path d="M 60 28 A 45 45 0 0 0 28 42" fill="none" stroke="#FFD200" stroke-width="4"/></svg>`,
+    right: `<svg width="90" height="75" viewBox="0 0 120 90"><g transform="rotate(45 60 75)"><path d="M 45 45 Q 60 25 75 45 L 70 75 L 50 75 Z" fill="#20202A" stroke="#FFF" stroke-width="3"/><circle cx="60" cy="45" r="8" fill="#FF6B35"/><path d="M 32 40 L 88 40" stroke="#007AFF" stroke-width="7" stroke-linecap="round"/><rect x="52" y="70" width="16" height="10" rx="3" fill="#8E8E93"/></g><line x1="60" y1="10" x2="60" y2="85" stroke="#666" stroke-width="2" stroke-dasharray="4"/><path d="M 60 28 A 45 45 0 0 1 92 42" fill="none" stroke="#FFD200" stroke-width="4"/></svg>`,
+    roll: `<svg width="90" height="75" viewBox="0 0 140 90"><circle cx="30" cy="65" r="16" fill="none" stroke="#FFF" stroke-width="5" stroke-dasharray="6,4"><animate Transform attributeName="transform" type="rotate" from="0 30 65" to="360 30 65" dur="1s" repeatCount="indefinite"/></circle><circle cx="100" cy="65" r="16" fill="none" stroke="#FFF" stroke-width="5" stroke-dasharray="6,4"><animate Transform attributeName="transform" type="rotate" from="0 100 65" to="360 100 65" dur="1s" repeatCount="indefinite"/></circle><path d="M 30 65 L 50 40 L 80 40 L 100 65 M 50 40 L 70 25 L 90 35 L 80 40" fill="none" stroke="#FF6B35" stroke-width="6" stroke-linejoin="round"/><line x1="15" y1="83" x2="125" y2="83" stroke="#00E676" stroke-width="4"/><path d="M 110 35 L 130 35 L 123 28 M 130 35 L 123 42" fill="none" stroke="#FFD200" stroke-width="4" stroke-linecap="round"/></svg>`,
+    steering: `<svg width="90" height="75" viewBox="0 0 120 90"><rect x="52" y="15" width="16" height="65" rx="8" fill="#20202A" stroke="#FFF" stroke-width="4"/><line x1="15" y1="38" x2="105" y2="38" stroke="#FF6B35" stroke-width="8" stroke-linecap="round"/><line x1="60" y1="5" x2="60" y2="85" stroke="#00E676" stroke-width="3" stroke-dasharray="5"/></svg>`,
+    complete: `<svg width="90" height="75" viewBox="0 0 120 90"><circle cx="60" cy="45" r="32" fill="rgba(0,230,118,0.2)" stroke="#00E676" stroke-width="5"/><path d="M 46 45 L 55 55 L 75 35" fill="none" stroke="#00E676" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+  };
+
+  function setResolution(res, btn) {
+    document.querySelectorAll('.btn-res').forEach(b => b.classList.remove('active'));
+    if (btn) btn.classList.add('active');
+    
+    const frame = document.getElementById('screenFrame');
+    frame.classList.remove('res-800x480', 'res-480x320', 'res-320x240');
+    frame.classList.add('res-' + res);
+    currentRes = res;
+
+    applyScale();
+    logMessage('ui_layout', `Display target switched to [${res}] - ${HW_SPECS[res].name}. Layout flex-grid rules recomputed.`);
+  }
+
+  function setMode(mode) {
+    currentMode = mode;
+    document.getElementById('btnModePixel').classList.toggle('active', mode === 'pixel');
+    document.getElementById('btnModePhysical').classList.toggle('active', mode === 'physical');
+    applyScale();
+    if (mode === 'physical') {
+      logMessage('ui_scale', `Switched to 1:1 Physical Hardware Size mode based on calibrated density (${monitorDPI.toFixed(1)} DPI).`);
+    } else {
+      logMessage('ui_scale', 'Switched to Native Pixel Resolution view.');
+    }
+  }
+
+  function applyScale() {
+    const container = document.getElementById('scaleContainer');
+    const screen = document.getElementById('screenFrame');
+    const info = document.getElementById('stageInfo');
+    const bezel = document.getElementById('bezelFrame');
+    const bezelLabel = document.getElementById('bezelLabel');
+    const spec = HW_SPECS[currentRes];
+
+    if (currentMode === 'physical') {
+      const targetWidthPx = (spec.widthMM / 25.4) * monitorDPI;
+      const targetHeightPx = (spec.heightMM / 25.4) * monitorDPI;
+      const scale = targetWidthPx / spec.basePx;
+      
+      container.style.width = `${targetWidthPx.toFixed(1)}px`;
+      container.style.height = `${targetHeightPx.toFixed(1)}px`;
+      screen.style.transform = `scale(${scale.toFixed(5)})`;
+      
+      const bezelPx = (spec.bezelMM / 25.4) * monitorDPI;
+      bezel.style.padding = `${bezelPx.toFixed(1)}px`;
+      bezel.style.border = '2px solid #323246';
+      
+      info.innerHTML = `<span>📏 Mode: <strong>1:1 Physical Hardware Size</strong> (${spec.name} → Active TFT Area: <strong>${spec.widthMM.toFixed(1)} mm × ${spec.heightMM.toFixed(1)} mm</strong> at ${monitorDPI.toFixed(1)} DPI)</span>`;
+      bezelLabel.innerText = `Active TFT: ${spec.widthMM}mm × ${spec.heightMM}mm | Outer Module Bezel: +${spec.bezelMM}mm`;
+    } else {
+      container.style.width = `${spec.basePx}px`;
+      container.style.height = `${spec.basePy}px`;
+      screen.style.transform = 'scale(1.0)';
+      
+      bezel.style.padding = '10px';
+      bezel.style.border = '4px solid #282832';
+      
+      info.innerHTML = `<span>🖥️ Mode: <strong>Native Pixel Resolution</strong> (${spec.basePx}×${spec.basePy} px native rendering)</span>`;
+      bezelLabel.innerText = `Native Active Display Resolution: ${spec.basePx}×${spec.basePy} px`;
+    }
+  }
+
+  function updateDPI(val) {
+    monitorDPI = parseFloat(val);
+    document.getElementById('dpiSlider').value = monitorDPI;
+    document.getElementById('dpiVal').innerText = `${monitorDPI.toFixed(1)} DPI`;
+
+    const cardWidthPx = (85.60 / 25.4) * monitorDPI;
+    const cardHeightPx = (53.98 / 25.4) * monitorDPI;
+    const cardEl = document.getElementById('cardReference');
+    cardEl.style.width = `${cardWidthPx.toFixed(1)}px`;
+    cardEl.style.height = `${cardHeightPx.toFixed(1)}px`;
+
+    const rulerWidthPx = (100.0 / 25.4) * monitorDPI;
+    const rulerEl = document.getElementById('ruler100mm');
+    rulerEl.style.width = `${rulerWidthPx.toFixed(1)}px`;
+    drawRulerTicks(rulerEl, rulerWidthPx);
+
+    if (currentMode === 'physical') {
+      applyScale();
+    }
+  }
+
+  function stepDPI(delta) {
+    let newVal = Math.min(260, Math.max(70, monitorDPI + delta));
+    updateDPI(newVal);
+  }
+
+  function drawRulerTicks(container, totalPx) {
+    const ticksBox = document.getElementById('rulerTicks');
+    if (!ticksBox) return;
+    ticksBox.innerHTML = '';
+    
+    for (let mm = 0; mm <= 100; mm += 2) {
+      const tick = document.createElement('div');
+      const pxPos = (mm / 100) * totalPx;
+      tick.style.position = 'absolute';
+      tick.style.left = `${pxPos}px`;
+      tick.style.bottom = '0';
+      tick.style.width = '1px';
+      
+      if (mm % 10 === 0) {
+        tick.style.height = '18px';
+        tick.style.background = 'var(--amber)';
+        const lbl = document.createElement('span');
+        lbl.style.position = 'absolute';
+        lbl.style.left = `${pxPos - 6}px`;
+        lbl.style.top = '4px';
+        lbl.style.fontSize = '9px';
+        lbl.style.fontWeight = '800';
+        lbl.style.color = '#AAA';
+        lbl.innerText = `${mm/10}`;
+        if (mm > 0 && mm < 100) ticksBox.appendChild(lbl);
+      } else if (mm % 5 === 0) {
+        tick.style.height = '12px';
+        tick.style.background = '#888';
+      } else {
+        tick.style.height = '6px';
+        tick.style.background = '#555';
+      }
+      ticksBox.appendChild(tick);
+    }
+  }
+
+  function toggleCalibration() {
+    const drawer = document.getElementById('calibDrawer');
+    if (drawer.style.display === 'none') {
+      drawer.style.display = 'flex';
+    } else {
+      drawer.style.display = 'none';
+    }
+  }
+
+  function switchScreen(screenId) {
+    if (!screenId) return;
+    document.querySelectorAll('.screen-view').forEach(s => s.classList.remove('active'));
+    const el = document.getElementById(screenId);
+    if (el) el.classList.add('active');
+    logMessage('ui_engine', `Active screen switched to view ID: [${screenId}]`);
+  }
+
+  function startLogSequence() {
+    logMessage('ui_events', 'Touch action detected → Dispatching <span class="event">UI_EVENT_START_LOG_CLICKED</span>');
+    logMessage('ui_logging', 'Constructing Screen 4 (IMU Validation) → Checking Core 0 vibration baseline...');
+    switchScreen('screen-validation');
+    
+    setTimeout(() => {
+      if (document.getElementById('screen-validation').classList.contains('active')) {
+        logMessage('ui_logging', 'IMU Validation passed (0.02G). Launching Screen 3 (v4 Hero Cockpit)...');
+        switchScreen('screen-logging');
+      }
+    }, 3200);
+  }
+
+  function triggerSectorFlash() {
+    logMessage('ui_logging', '⚡ [Screen 5 SECTOR FLASH] Track checkpoint crossed! Overlaying high-contrast Personal Best Delta (-0.48s)');
+    const box = document.getElementById('sectorFlashBox');
+    if (!box) return;
+    box.style.display = 'flex';
+    
+    setTimeout(() => {
+      box.style.display = 'none';
+      logMessage('ui_logging', 'Screen 5 overlay automatically dismissed. Hero clock resumed.');
+    }, 3000);
+  }
+
+  function toggleAutoLog() {
+    isAutoLogEnabled = !isAutoLogEnabled;
+    const txt = document.getElementById('autologStateTxt');
+    if (txt) {
+      txt.innerText = isAutoLogEnabled ? 'ENABLED' : 'DISABLED';
+      txt.style.color = isAutoLogEnabled ? 'var(--green)' : 'var(--red)';
+    }
+    logMessage('ui_events', `Touch action detected → Dispatching <span class="event">UI_EVENT_AUTO_LOG_TOGGLED</span> (${isAutoLogEnabled ? 'true' : 'false'})`);
+    logMessage('ui_settings', `NVS parameter updated: auto_logging = ${isAutoLogEnabled}`);
+  }
+
+  function openWifiPicker() {
+    logMessage('ui_events', 'Touch action detected → Dispatching <span class="event">UI_EVENT_WIFI_SCAN_CLICKED</span>');
+    logMessage('ui_network', 'Constructing Wi-Fi Picker view → Scanning nearby APs via esp_wifi_scan...');
+    switchScreen('screen-wifi-picker');
+  }
+
+  function connectToWifi(ssid, rssi) {
+    activeWifiName = ssid;
+    logMessage('ui_network', `Associated with AP '${ssid}' (${rssi}). Saving credentials to NVS (/data/metadata/device.json)...`);
+    const label = document.getElementById('activeWifiLabel');
+    if (label) label.innerText = `${ssid} (Connected ${rssi})`;
+    const detail = document.getElementById('syncScanDetail');
+    if (detail) detail.innerText = `Target: '${ssid}' • RSSI: ${rssi} (Associated)`;
+    
+    setTimeout(() => {
+      switchScreen('screen-settings');
+    }, 400);
+  }
+
+  /* --- 6-Stage IMU Calibration Wizard with Roll Forward Step --- */
+  function startCalibrationWizard() {
+    currentCalibStep = 1;
+    updateCalibUI();
+    logMessage('ui_events', 'Touch action detected → Dispatching <span class="event">UI_EVENT_IMU_CALIB_CLICKED</span>');
+    logMessage('ui_calibration', 'Constructing Screen 11 (6-Stage IMU Mount Calibration Wizard) with roll-forward +X axis detection');
+    switchScreen('screen-calibration');
+  }
+
+  function advanceCalibrationStage() {
+    if (currentCalibStep < 6) {
+      logMessage('ui_calibration', `Stage ${currentCalibStep} static/dynamic sample capture complete! Recording vectors into transformation matrix...`);
+      currentCalibStep++;
+      updateCalibUI();
+      logMessage('ui_events', `Advancing to Stage ${currentCalibStep} → <span class="event">UI_EVENT_CALIB_NEXT_STAGE</span>`);
+    } else {
+      logMessage('ui_calibration', '🎉 6-Stage IMU Calibration complete! Saving complete 6-axis rotation matrix to NVS Flash and returning to Settings...');
+      triggerEvent('UI_EVENT_CALIB_DONE (Save to NVS)', 'screen-settings');
+    }
+  }
+
+  function updateCalibUI() {
+    const badge = document.getElementById('calibStageBadge');
+    const title = document.getElementById('calibStageTitle');
+    const desc = document.getElementById('calibStageDesc');
+    const status = document.getElementById('calibStatusTxt');
+    const pct = document.getElementById('calibPctTxt');
+    const fill = document.getElementById('calibBarFill');
+    const btn = document.getElementById('btnCalibAction');
+    const svgContainer = document.getElementById('motoSvgContainer');
+    const refLabel = document.getElementById('motoRefLabel');
+
+    badge.innerText = `STAGE ${currentCalibStep} OF 6`;
+    fill.style.width = `${Math.min(100, (currentCalibStep - 1) * 18)}%`;
+    pct.innerText = `${Math.min(100, (currentCalibStep - 1) * 18)}% COMPLETE`;
+
+    if (currentCalibStep === 1) {
+      title.innerText = "STAGE 1: VERTICAL UPRIGHT BASELINE";
+      desc.innerText = "Position motorcycle vertically upright on a level paddock stand. Keep handlebars straight and avoid touching chassis during sampling.";
+      btn.innerText = "RECORD SAMPLE & NEXT →";
+      svgContainer.innerHTML = MOTO_SVGS.upright;
+      refLabel.innerText = "0° VERTICAL REFERENCE";
+      refLabel.style.color = "var(--amber)";
+      status.innerText = "● STABLE: READY TO RECORD (0.02 G)";
+    } else if (currentCalibStep === 2) {
+      title.innerText = "STAGE 2: 45° LEFT TILT CALIBRATION";
+      desc.innerText = "Carefully tilt motorcycle 45 degrees to the left against reference stand. Hold completely still for roll baseline.";
+      svgContainer.innerHTML = MOTO_SVGS.left;
+      refLabel.innerText = "45° LEFT TILT REFERENCE";
+    } else if (currentCalibStep === 3) {
+      title.innerText = "STAGE 3: 45° RIGHT TILT CALIBRATION";
+      desc.innerText = "Carefully tilt motorcycle 45 degrees to the right against support reference. Verify zero vibration before recording.";
+      svgContainer.innerHTML = MOTO_SVGS.right;
+      refLabel.innerText = "45° RIGHT TILT REFERENCE";
+    } else if (currentCalibStep === 4) {
+      title.innerText = "STAGE 4: ROLL FORWARD +X ALIGNMENT";
+      desc.innerText = "Push motorcycle straight forward on level asphalt for 3 meters at slow walking pace. This locks the true longitudinal +X travel vector.";
+      fill.style.width = "65%";
+      pct.innerText = "65% COMPLETE";
+      svgContainer.innerHTML = MOTO_SVGS.roll;
+      refLabel.innerText = "➡️ ROLL FORWARD (LONGITUDINAL AXIS)";
+      refLabel.style.color = "var(--green)";
+      status.innerText = "● DYNAMIC MOTION ARMED (>2 M/S)";
+    } else if (currentCalibStep === 5) {
+      title.innerText = "STAGE 5: STEERING ZERO YAW";
+      desc.innerText = "Return motorcycle upright and center handlebars completely straight ahead. This defines the zero yaw axis for high-speed slides.";
+      fill.style.width = "85%";
+      pct.innerText = "85% COMPLETE";
+      svgContainer.innerHTML = MOTO_SVGS.steering;
+      refLabel.innerText = "STEERING STRAIGHT ALIGNMENT";
+      refLabel.style.color = "var(--amber)";
+      status.innerText = "● STABLE: READY TO RECORD (0.02 G)";
+    } else if (currentCalibStep === 6) {
+      title.innerText = "STAGE 6: MATRIX VERIFIED & READY";
+      desc.innerText = "All 6-axis vectors solved! Pitch: -10.7° | Roll: +5.0° | Yaw: 0.0°. Click below to permanently store in NVS Flash.";
+      fill.style.width = "100%";
+      pct.innerText = "100% (6-AXIS MATRIX SOLVED)";
+      btn.innerText = "💾 COMMIT TO NVS & EXIT";
+      svgContainer.innerHTML = MOTO_SVGS.complete;
+      refLabel.innerText = "✓ MATRIX VERIFIED & READY";
+      refLabel.style.color = "var(--green)";
+      status.innerText = "● MATRIX VERIFICATION PASSED";
+    }
+  }
+
+  /* --- Wave 4 Sync Suite & Heartbeat 3x Retry Logic --- */
+  function setHeartbeatState(state, title, desc, tagTxt, tagBg, tagBorder) {
+    const box = document.getElementById('ecgWaveBox');
+    const badge = document.getElementById('heartbeatStatusBadge');
+    const mainTitle = document.getElementById('hbMainTitle');
+    const descEl = document.getElementById('hbDescTxt');
+    const pingTag = document.getElementById('hbPingTag');
+    const pulse = document.getElementById('hbPulseIcon');
+    const btnCancel = document.getElementById('hbBtnCancel');
+    const btnRetry = document.getElementById('hbBtnRetry');
+
+    box.className = `ecg-box ecg-theme-${state}`;
+    mainTitle.innerText = title;
+    descEl.innerHTML = desc;
+    pingTag.innerText = tagTxt;
+    pingTag.style.color = state === 'green' ? '#00E676' : (state === 'red' ? '#FF3B30' : '#8E8E93');
+    pingTag.style.background = tagBg;
+    pingTag.style.border = `1px solid ${tagBorder}`;
+
+    if (state === 'red') {
+      badge.innerText = `● ${tagTxt}`;
+      badge.style.color = 'var(--red)';
+      pulse.innerText = '❤️';
+      btnRetry.style.display = 'none';
+    } else if (state === 'green') {
+      badge.innerText = '● CONNECTED TO RACESENSE.IN';
+      badge.style.color = 'var(--green)';
+      pulse.innerText = '💚';
+      btnRetry.style.display = 'none';
+    } else if (state === 'dead') {
+      badge.innerText = '● CONNECTION FAILED (3 ATTEMPTS)';
+      badge.style.color = 'var(--red)';
+      pulse.innerText = '🖤';
+      btnRetry.style.display = 'block';
+    }
+  }
+
+  function startSyncSequence(simulateFailure = false) {
+    logMessage('ui_events', `Touch action detected → Dispatching <span class="event">UI_EVENT_SYNC_CLICKED</span> (Mode: ${simulateFailure ? '3x Failure Test' : 'Normal Connect'})`);
+    logMessage('ui_sync', `Constructing Screen 6 (WiFi Searching) → Scanning target SSID: ${activeWifiName}...`);
+    switchScreen('screen-sync-searching');
+
+    setTimeout(() => {
+      if (!document.getElementById('screen-sync-searching').classList.contains('active')) return;
+      
+      logMessage('ui_sync', `WiFi AP Lock confirmed (-52 dBm). Constructing Screen 7 (Server Heartbeat Verification)...`);
+      switchScreen('screen-sync-heartbeat');
+      
+      setHeartbeatState('red', 'ATTEMPTING SERVER HANDSHAKE (PROBE 1/3)...', 
+        `Sending TLS 1.3 heartbeat probe to <strong style="color:var(--amber);">https://api.racesense.in/telemetry</strong> over ${activeWifiName}...`,
+        'PROBING... (ATTEMPT 1/3)', '#220505', '#771111');
+      logMessage('ui_sync', '[Heartbeat] Sending ping probe 1 of 3 to api.racesense.in...');
+
+      setTimeout(() => {
+        if (!document.getElementById('screen-sync-heartbeat').classList.contains('active')) return;
+        
+        if (simulateFailure) {
+          setHeartbeatState('red', 'RETRYING SERVER HANDSHAKE (PROBE 2/3)...', 
+            `Probe 1 timed out (1000ms). Resent TLS heartbeat probe 2 of 3 to <strong style="color:var(--amber);">api.racesense.in</strong>...`,
+            'RETRYING... (ATTEMPT 2/3)', '#220505', '#771111');
+          logMessage('ui_sync', '[Heartbeat] Probe 1 timeout! Retrying ping probe 2 of 3...');
+
+          setTimeout(() => {
+            if (!document.getElementById('screen-sync-heartbeat').classList.contains('active')) return;
+            
+            setHeartbeatState('dead', '❌ SERVER UNREACHABLE: 3 RETRIES FAILED', 
+              `All 3 connection attempts to <strong style="color:var(--amber);">api.racesense.in</strong> failed! Please verify paddock internet access on '${activeWifiName}' or open Captive Portal to reconfigure.`,
+              '3X RETRY EXPIRED (OFFLINE)', '#181820', '#404050');
+            logMessage('ui_sync', '❌ [Heartbeat Error] All 3 probe retry attempts failed! Displaying offline fallback notification and retry dock.');
+          }, 1500);
+
+        } else {
+          setHeartbeatState('green', 'SERVER HEARTBEAT & TLS 1.3 ACTIVE!', 
+            `Handshake Validated! Device Auth: <strong style="color:var(--amber);">RS-P4-09A</strong> • Stream ready over ${activeWifiName}...`,
+            'PING: 24 ms (STABLE)', '#002210', '#00AA50');
+          logMessage('ui_sync', '💚 [Heartbeat Success] Probe ACK received! TLS 1.3 token validated (Ping: 24ms). Preparing chunked batch uploader...');
+          
+          setTimeout(() => {
+            if (!document.getElementById('screen-sync-heartbeat').classList.contains('active')) return;
+            logMessage('ui_sync', 'Constructing Screen 8 (Chunked Batch Uploader)...');
+            switchScreen('screen-sync');
+            animateSyncStream();
+          }, 1600);
+        }
+      }, 1500);
+
+    }, 1800);
+  }
+
+  function animateSyncStream() {
+    let progress = 20;
+    const fill = document.getElementById('syncBarFill');
+    const title = document.getElementById('syncTitleTxt');
+    const speed = document.getElementById('syncSpeedTxt');
+    if (!fill) return;
+
+    const interval = setInterval(() => {
+      if (!document.getElementById('screen-sync').classList.contains('active')) {
+        clearInterval(interval);
+        return;
+      }
+      progress += 15;
+      fill.style.width = `${Math.min(100, progress)}%`;
+      speed.innerText = `Transfer Speed: 1.4 MB/s • ETA: ${Math.max(0, Math.ceil((100-progress)/25))}s`;
+      
+      if (progress >= 100) {
+        clearInterval(interval);
+        logMessage('ui_sync', 'All session batches streamed successfully over MbedTLS! Constructing Screen 9 (Sync Summary Report)...');
+        switchScreen('screen-sync-complete');
+      }
+    }, 450);
+  }
+
+  function startCaptivePortal() {
+    logMessage('ui_events', 'Touch action detected → Dispatching <span class="event">UI_EVENT_WIFI_SETUP_CLICKED</span>');
+    logMessage('ui_sync', 'Constructing Screen 12 (Captive Portal Provisioning) → Broadcasting SoftAP & rendering QR Code...');
+    switchScreen('screen-portal');
+  }
+
+  function triggerEvent(eventName, targetScreen) {
+    logMessage('ui_events', `Touch action detected → Dispatching event: <span class="event">${eventName}</span> to backend state machine`);
+    if (targetScreen) {
+      setTimeout(() => switchScreen(targetScreen), 150);
+    }
+  }
+
+  function logMessage(tag, message) {
+    const box = document.getElementById('logContent');
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    const timestamp = (performance.now() / 1000).toFixed(3);
+    line.innerHTML = `<span style="color:#666;">[${timestamp}s]</span> <span class="tag">[${tag}]</span> ${message}`;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+  }
+
+  // Auto transition from Splash to Home on load
+  setTimeout(() => {
+    switchScreen('screen-home');
+    logMessage('ui_home', 'Screen 2 (Home Dashboard) active. Ready for rider touch interaction.');
+  }, 2500);
+
+  // Simulated live logging clock ticks and changing lean angles
+  let ms = 120;
+  let sec = 53;
+  let lean = 44;
+  let leanDir = -1;
+  setInterval(() => {
+    const el = document.getElementById('liveTimer');
+    const leanEl = document.getElementById('leanDisplay');
+    if (el && document.getElementById('screen-logging').classList.contains('active')) {
+      ms += 23;
+      if (ms >= 999) { ms = 0; sec = (sec + 1) % 60; }
+      el.innerText = `1:${String(sec).padStart(2, '0')}.${String(ms).padStart(3, '0')}`;
+      
+      if (Math.random() < 0.3) {
+        lean += leanDir * (Math.floor(Math.random() * 3));
+        if (lean <= 15) leanDir = 1;
+        if (lean >= 52) leanDir = -1;
+        leanEl.innerText = `${lean}° ${lean > 35 ? 'LEFT' : 'RIGHT'}`;
+      }
+    }
+  }, 50);
+
+  // Initial setup
+  updateDPI(114.0);
+  applyScale();
+</script>
+
+</body>
+</html>

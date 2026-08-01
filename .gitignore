@@ -26,3 +26,13 @@ server/data/
 
 # Node (if any)
 node_modules/
+
+# ESP-IDF / Embedded Build Artifacts & Managed Components
+build/
+managed_components/
+sdkconfig.old
+*.elf
+*.bin
+*.map
+.esp_toppers/
+dependencies.lock
