@@ -279,6 +279,26 @@ Pass criteria:
 
 ---
 
+## 🏎️ ESP32-P4 & S3 Native C/C++ UI & Telemetry Architecture
+
+With Phase 8 implementation, RaceSense utilizes a dual-core architectural split under native ESP-IDF v5.3:
+* **Core 0 (PRO_CPU):** Dedicated exclusively to high-frequency hardware sensor ingestion via `gptimer` interrupts (100Hz SPI BMI323 IMU and 10Hz UART Neo-M8N GPS). Telemetry rows are pushed into thread-safe queues without waiting for UI or SD filesystem access.
+* **Core 1 (APP_CPU):** Manages the application state machine (`main.c`), SD card queue flushing (`storage.c`), and the LVGL 9 graphical interface suite (`ui.c`).
+
+### **Thread-Safe LVGL Synchronization**
+To eliminate thread deadlocks and memory corruption during simultaneous Core 0 telemetry reporting and Core 1 capacitive/resistive input handling:
+* All UI view updates and widget mutations wrap their execution blocks in `ui_lock()` and `ui_unlock()`.
+* These wrapper functions interface directly with ESP-IDF's master display lock via `lvgl_port_lock(timeout_ms)` and `lvgl_port_unlock()` (from `esp_lvgl_port.h`).
+
+### **Complete Interactive Screen Topology**
+* **Screen 1 (Boot Splash):** High-contrast startup verification.
+* **Screen 2 (Home Dashboard):** Real-time battery, storage, satellite, and IMU operational status with touch launch targets for Logging, Sync, and Setup.
+* **Screen 3 (Live Logging Cockpit):** Large hero lap timer clock, live ground speed (`km/h`), real-time lean angle tracking (`LEAN: xx.x° L/R`), and lap delta metrics with instant return navigation.
+* **Screens 6–9 (Cloud Sync Suite):** WiFi scanning, progress reporting, and transmission summaries with abort action docks.
+* **Screens 10–12 (Settings & Calibration Wizards):** Interactive configuration panel launching the SoftAP Captive Portal (`http://192.168.4.1/`) and a 6-stage guided IMU orientation wizard with live vibration noise monitoring.
+
+---
+
 ## ⚠️ Hardware Precautions
 *   **GPS Antenna**: Ensure a clear sky view. The Neo-M8N performance degrades significantly under carbon fiber or metal.
 *   **SD Card**: Always use **Class 10** or faster cards. Slow cards can cause Core 0 to hang during long sessions.

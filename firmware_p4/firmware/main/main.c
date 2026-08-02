@@ -32,6 +32,7 @@
 /* LVGL UI subsystem (Phase 8) */
 #include "ui.h"
 #include "ui_events.h"
+#include "network.h"
 
 /* Storage engine (Phase 7C) */
 #include "storage.h"
@@ -59,6 +60,38 @@ typedef enum {
 } app_state_t;
 
 static volatile app_state_t s_state = STATE_BOOT_INIT;
+static volatile int s_sync_files_done;
+static volatile int s_sync_total_files;
+
+static void _sync_progress_cb(const upload_progress_t *p, void *ctx)
+{
+    (void)ctx;
+    if (!p) return;
+    s_sync_total_files = p->total_files;
+    if (p->event == UPLOAD_EVT_DONE) s_sync_files_done++;
+    if (p->event == UPLOAD_EVT_START || p->event == UPLOAD_EVT_PROGRESS || p->event == UPLOAD_EVT_DONE) {
+        int pct = p->total_bytes ? (int)((p->sent_bytes * 100U) / p->total_bytes) : 0;
+        ui_show_sync_uploading(p->file_index, p->total_files, p->filename, pct,
+                               p->detail ? p->detail : "Uploading", "");
+    }
+}
+
+static void _sync_task(void *arg)
+{
+    (void)arg;
+    s_sync_files_done = 0;
+    s_sync_total_files = 0;
+    ui_show_sync_heartbeat();
+    bool ok = network_sync_all(_sync_progress_cb, NULL);
+    if (ok) {
+        s_state = STATE_SYNC_COMPLETE;
+        ui_show_sync_complete(s_sync_files_done, 0.0f, 0);
+    } else {
+        s_state = STATE_HOME_IDLE;
+        ui_events_on_navigate_home();
+    }
+    vTaskDelete(NULL);
+}
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Auto-Copy Check
@@ -108,6 +141,7 @@ static void _on_ui_event_cb(ui_event_type_t event, void *param)
             ESP_LOGI(TAG, "[NAV] Transitioning to CLOUD SYNC / WIFI SEARCH (Screen 6)");
             s_state = STATE_SYNC_WIFI_SEARCH;
             ui_show_sync_searching("RaceSense_AP");
+            xTaskCreate(_sync_task, "racesense_sync", 8192, NULL, 4, NULL);
             break;
 
         case UI_EVENT_SETTINGS_CLICKED:
@@ -125,6 +159,7 @@ static void _on_ui_event_cb(ui_event_type_t event, void *param)
         case UI_EVENT_WIFI_SETUP_CLICKED:
             ESP_LOGI(TAG, "[NAV] Transitioning to CAPTIVE PORTAL (Screen 12)");
             s_state = STATE_CAPTIVE_PORTAL;
+            ui_show_captive_portal("RaceSense_Setup");
             break;
 
         default:
@@ -164,6 +199,7 @@ void app_main(void)
     /* ── Step 2: Board Support Package ─────────────────────────────────── */
     /* Initializes: Battery ADC → SD card → Display stub → Touch stub     */
     ESP_ERROR_CHECK(bsp_init());
+    ESP_ERROR_CHECK(network_init());
 
     /* ── Step 3: Storage engine ────────────────────────────────── */
     /* Must init before auto-copy check and before sensor task.        */
@@ -202,8 +238,10 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UI init failed: %s", esp_err_to_name(ret));
     } else if (s_state == STATE_HOME_IDLE) {
-        ESP_LOGI(TAG, "[BOOT] Registering UI event listener and launching Home Dashboard on Core 1");
+        ESP_LOGI(TAG, "[BOOT] Showing RaceSense splash before dashboard");
         ui_events_register_listener(_on_ui_event_cb);
+        ui_show_boot_splash();
+        vTaskDelay(pdMS_TO_TICKS(1800));
         gps_fix_t gps_init = {0};
         sensors_get_latest_gps(&gps_init);
         int store_pct = storage_get_usage_percent();
@@ -256,11 +294,38 @@ void app_main(void)
             }
 
             case STATE_LOGGING_ACTIVE:
-            case STATE_IMU_VALIDATION:
+            case STATE_IMU_VALIDATION: {
                 /* Sensor task on Core 0 pushes rows into storage queue.
                  * Storage flush task on Core 1 drains and writes to SD.   */
-                vTaskDelay(pdMS_TO_TICKS(33)); /* ~30fps update budget      */
+                if (s_state == STATE_LOGGING_ACTIVE) {
+                    gps_fix_t gps_live = {0};
+                    sensors_get_latest_gps(&gps_live);
+                    bmi323_raw_t imu_live = {0};
+                    sensors_get_latest_imu(&imu_live);
+
+                    /* Compute lean angle estimate from accel Y/Z for live display */
+                    float ay = imu_live.ay / 8192.0f;
+                    float az = imu_live.az / 8192.0f;
+                    float lean_est = (az != 0.0f) ? (ay / az) * 57.2958f : 0.0f;
+                    char side = (lean_est < 0) ? 'R' : 'L';
+                    if (lean_est < 0) lean_est = -lean_est;
+
+                    char time_buf[32];
+                    uint32_t elapsed_sec = sensors_get_tick_ms() / 1000;
+                    snprintf(time_buf, sizeof(time_buf), "%lu:%02lu.%03lu",
+                             (unsigned long)(elapsed_sec / 60),
+                             (unsigned long)(elapsed_sec % 60),
+                             (unsigned long)(sensors_get_tick_ms() % 1000));
+
+                    char speed_buf[32];
+                    snprintf(speed_buf, sizeof(speed_buf), "SPD: %.1f km/h", gps_live.speed_kmh);
+
+                    ui_logging_update_lap(time_buf, speed_buf, true, 1);
+                    ui_logging_update_lean(lean_est, side);
+                }
+                vTaskDelay(pdMS_TO_TICKS(100)); /* 10Hz live dashboard update rate */
                 break;
+            }
 
             case STATE_SECTOR_FLASH:
                 /* TODO Phase 8: Brief full-screen color overlay (3s).     */

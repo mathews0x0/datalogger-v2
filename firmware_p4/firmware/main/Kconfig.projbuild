@@ -1,5 +1,23 @@
 menu "RaceSense Configuration"
 
+    choice RS_DISPLAY_PROFILE
+        prompt "RaceSense display profile"
+        default RS_DISPLAY_PROFILE_320_240
+        help
+            Select the logical UI resolution independently from the ESP target.
+            Board support packages own controller, touch, and pin translations;
+            the shared UI only consumes this profile.
+
+        config RS_DISPLAY_PROFILE_320_240
+            bool "320x240 (2.8 inch compact)"
+
+        config RS_DISPLAY_PROFILE_480_320
+            bool "480x320 (3.5 inch medium)"
+
+        config RS_DISPLAY_PROFILE_800_480
+            bool "800x480 (4.3 inch widescreen)"
+    endchoice
+
     config RS_IMU_SAMPLE_RATE_HZ
         int "IMU sampling rate in Hz"
         default 100

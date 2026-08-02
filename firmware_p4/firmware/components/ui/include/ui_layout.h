@@ -22,13 +22,13 @@ extern "C" {
 /* ──────────────────────────────────────────────────────────────────────────
  * Display Resolution Classes & Config Target Integration
  * ────────────────────────────────────────────────────────────────────────*/
-#if defined(CONFIG_UI_DISPLAY_RES_320_240) || defined(CONFIG_IDF_TARGET_ESP32S3)
+#if defined(CONFIG_RS_DISPLAY_PROFILE_320_240)
     #define UI_HOR_RES              320
     #define UI_VER_RES              240
     #define UI_RES_CLASS_COMPACT    1
     #define UI_RES_CLASS_MEDIUM     0
     #define UI_RES_CLASS_WIDESCREEN 0
-#elif defined(CONFIG_UI_DISPLAY_RES_480_320)
+#elif defined(CONFIG_RS_DISPLAY_PROFILE_480_320)
     #define UI_HOR_RES              480
     #define UI_VER_RES              320
     #define UI_RES_CLASS_COMPACT    0
@@ -145,9 +145,9 @@ extern "C" {
 /* ──────────────────────────────────────────────────────────────────────────
  * Master Color Palette Tokens (Motorsport Dark Theme)
  * ────────────────────────────────────────────────────────────────────────*/
-#define UI_COLOR_BG_DARK            0x09090D  /**< Deep Asphalt Dark background   */
-#define UI_COLOR_SURFACE            0x1A1A22  /**< Glassmorphism card background  */
-#define UI_COLOR_BORDER             0x2A2A35  /**< Card border contrast           */
+#define UI_COLOR_BG_DARK            0x686868  /**< Neutral grey dashboard ground  */
+#define UI_COLOR_SURFACE            0x09090D  /**< Near-black telemetry cards     */
+#define UI_COLOR_BORDER             0x303030  /**< Card border contrast           */
 #define UI_COLOR_PRIMARY            0xFF6B35  /**< RaceSense Orange (Primary)     */
 #define UI_COLOR_PRIMARY_PRESS      0xE55A25  /**< Active button pressed tint     */
 #define UI_COLOR_SUCCESS            0x00D26A  /**< Emerald Neon Green (Ready/Faster)*/
