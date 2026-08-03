@@ -8,6 +8,7 @@
 
 #include "ui.h"
 #include "lvgl.h"
+#include "storage.h"
 #include <stdio.h>
 #include "esp_log.h"
 
@@ -20,6 +21,20 @@ static lv_obj_t *s_lbl_status;
 static lv_obj_t *s_lbl_track;
 static lv_obj_t *s_lbl_store;
 static lv_obj_t *s_storage_bar;
+
+static void storage_free_text(char *buf, size_t size, bool sd_ok)
+{
+    uint64_t total_bytes = 0;
+    uint64_t free_bytes = 0;
+    if (!sd_ok) {
+        snprintf(buf, size, "NO SD CARD");
+    } else if (storage_get_space_bytes(&total_bytes, &free_bytes) == ESP_OK) {
+        snprintf(buf, size, "%.1f GB FREE",
+                 (double)free_bytes / (1024.0 * 1024.0 * 1024.0));
+    } else {
+        snprintf(buf, size, "SD READY");
+    }
+}
 
 #define C(hex) lv_color_hex(hex)
 
@@ -196,7 +211,9 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     card = make_card(scr, m, content_y + card_h + gap, card_w, card_h);
     card_text(card, "IMU PROFILE", mount_label ? mount_label : "TANK MOUNT", "Pitch -10.7 / Roll +5.0", UI_COLOR_TEXT_PRIMARY, NULL);
     card = make_card(scr, 2 * m + card_w, content_y + card_h + gap, card_w, card_h);
-    card_text(card, "SD STORAGE", "18.5 GB FREE", "High-speed card", UI_COLOR_TEXT_PRIMARY, &s_lbl_store);
+    char storage_text[32];
+    storage_free_text(storage_text, sizeof(storage_text), sd_ok);
+    card_text(card, "SD STORAGE", storage_text, "High-speed card", UI_COLOR_TEXT_PRIMARY, &s_lbl_store);
     s_storage_bar = lv_bar_create(card);
     lv_obj_set_size(s_storage_bar, card_w - 2 * UI_CARD_PADDING, UI_RES_CLASS_COMPACT ? 4 : 7);
     lv_bar_set_range(s_storage_bar, 0, 100);
@@ -242,7 +259,7 @@ void ui_home_update(bool sd_ok, bool imu_ok, bool gps_ok, int sats, int bat_pct,
     lv_label_set_text(s_lbl_status, state);
     label_style(s_lbl_status, color, font_value());
     lv_label_set_text(s_lbl_track, track_name ? track_name : "NO TRACK");
-    snprintf(buf, sizeof(buf), "%s", sd_ok ? "18.5 GB FREE" : "NO SD CARD");
+    storage_free_text(buf, sizeof(buf), sd_ok);
     lv_label_set_text(s_lbl_store, buf);
     lv_bar_set_value(s_storage_bar, storage_pct, LV_ANIM_OFF);
     ui_unlock();

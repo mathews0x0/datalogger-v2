@@ -15,7 +15,7 @@ non-destructive SD write/readback/remove test once at boot.
 | BMI323 SCL | GPIO22 / I2C1 SCL |
 | BMI323 power | 3.3 V and GND |
 | Battery ADC | `BAT → 200 kΩ → BAT_ADC → 100 kΩ → GND`, BAT_ADC at GPIO20 |
-| SDMMC | default P4 SDMMC host (slot 1), CLK 43, CMD 44, D0–D3 39–42, active-low power switch on GPIO45 |
+| SDMMC | P4 SDMMC host slot 0, CLK 43, CMD 44, D0–D3 39–42, LDO_VO4 I/O supply, active-low card power switch on GPIO45 |
 
 ## Acceptance checks
 
@@ -57,12 +57,15 @@ voltage should agree with a DMM within the divider/ADC calibration tolerance.
 - Usage must be a valid percentage rather than `-1`.
 - The card must remain mounted after the validation test.
 
-Current bench result: the documented slot/pin configuration was flashed and
-tested with two cards. The first card was also tested in 4-bit mode, 1-bit mode
-at 400 kHz, and with both GPIO45 levels. Both cards fail during the initial SD
-`SEND_OP_COND` response with `ESP_ERR_TIMEOUT`; the card is electrically silent
-before FAT formatting is checked. Verify SD1_VDD/3.3 V and socket contact with
-a meter before changing the documented pin map.
+Validated bench result: selecting P4 host slot 0 and enabling LDO_VO4 allows
+the 7.5 GB SDHC card to initialize. This board/card still fails the 4-bit SSR
+read, so firmware automatically retries in 1-bit mode at 20 MHz. The fallback
+mount reports valid card metadata and usage, and the boot create/write/read/
+remove validation passes. The card remained mounted during runtime telemetry.
+
+A verified 4 MiB sequential benchmark measured 0.65 MiB/s write and 0.73 MiB/s
+read in 1-bit/20 MHz mode. The filesystem reports 8,044,675,072 total bytes
+(7.49 GiB) and 7.42 GiB free. The benchmark file was removed afterward.
 
 ## Run procedure
 

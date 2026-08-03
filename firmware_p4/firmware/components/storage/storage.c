@@ -449,6 +449,11 @@ int storage_get_usage_percent(void)
     return bsp_sdcard_get_usage_percent();
 }
 
+esp_err_t storage_get_space_bytes(uint64_t *total_bytes, uint64_t *free_bytes)
+{
+    return bsp_sdcard_get_space_bytes(total_bytes, free_bytes);
+}
+
 void storage_get_session_info(storage_session_info_t *info)
 {
     if (info) memcpy(info, &s_session, sizeof(*info));

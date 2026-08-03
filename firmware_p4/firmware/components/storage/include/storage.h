@@ -183,6 +183,9 @@ storage_health_t storage_get_health(void);
  */
 int storage_get_usage_percent(void);
 
+/** Return mounted SD filesystem capacity and free space in bytes. */
+esp_err_t storage_get_space_bytes(uint64_t *total_bytes, uint64_t *free_bytes);
+
 /**
  * @brief Get info about the currently open session.
  * @param[out] info  Filled with session stats.

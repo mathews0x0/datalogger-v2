@@ -2,7 +2,7 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2026-08-03
+**Last Updated:** 2026-08-04
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
@@ -5936,3 +5936,111 @@ examined.
 **Status:** GPS and BMI323 integration pass initial hardware validation. SD
 power is present, but the card remains electrically silent during controller
 initialization; SD mount and write/readback validation remain blocked.
+
+### [2026-08-04] P4 SD Card Root Cause, Recovery, Capacity Correction, and Performance Validation
+
+**Objective:** Resolve the Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 microSD
+initialization failure, prove that the mounted filesystem is writable, and
+replace placeholder storage information in the UI with measurements from the
+actual card.
+
+This entry supersedes the unresolved SD conclusion in the preceding
+investigation. The earlier voltage and continuity checks were valid, but card
+power alone did not prove that the ESP32-P4 SDMMC signal pads were powered or
+that the correct SDMMC peripheral was selected.
+
+### Observed Failure
+
+- The microSD card was known-good and readable in a laptop.
+- Card VCC measured 3.3 V and ground continuity was confirmed at the socket.
+- Firmware attempts still failed during SD initialization with
+  `ESP_ERR_TIMEOUT`/`ESP_FAIL`, initially appearing as though the card was
+  electrically silent.
+- Changing card power-switch polarity, reducing clock speed, and trying 1-bit
+  versus 4-bit probing did not resolve the original failure while the host was
+  still configured incorrectly.
+
+### Root Cause
+
+The failure had two P4-specific causes:
+
+1. **Wrong SDMMC host slot:** The Waveshare GPIO39–44 connection is the
+   ESP32-P4 dedicated **SDMMC slot 0 IOMUX** path. The firmware explicitly
+   selected slot 1, routing the wrong peripheral path even though the GPIO
+   numbers appeared correct.
+2. **Unpowered SDMMC I/O domain:** GPIO39–44 use the P4's **LDO_VO4** I/O power
+   domain on this board. The external microSD rail measured 3.3 V, but the MCU
+   pads could remain unavailable without enabling the on-chip LDO power
+   controller. This explains why a valid card supply measurement did not lead
+   to command responses.
+
+### Firmware Resolution
+
+- Changed the P4 SDMMC host from slot 1 to **slot 0** while retaining the
+  documented wiring: CLK GPIO43, CMD GPIO44, D0 GPIO39, D1 GPIO40, D2 GPIO41,
+  and D3 GPIO42.
+- Added ESP-IDF on-chip SD power control for **LDO channel 4 / LDO_VO4** and
+  attached that power-control handle to the SDMMC host.
+- Retained the board's active-low GPIO45 card-power switch sequencing.
+- Added automatic recovery when 4-bit initialization fails: power-cycle the
+  card and retry in **1-bit mode at 20 MHz**.
+- Added proper LDO cleanup on mount failure and SD deinitialization.
+- Improved filesystem error logging to include `errno` and readable failure
+  descriptions.
+- Enabled FATFS long filenames on the heap, UTF-8 API encoding, and a maximum
+  LFN length of 255 so session filenames are not constrained to legacy 8.3
+  naming.
+
+### Verified Runtime Result
+
+The card now initializes as an SDHC device and mounts successfully at `/sd`.
+The boot-time create/write/readback/remove check passes, and the card remains
+mounted for the storage subsystem and runtime telemetry.
+
+Native 4-bit negotiation reaches the card but fails while reading the
+four-bit-mode status data. Firmware therefore uses the verified 1-bit fallback.
+This means the original card-detection blocker is resolved, while the D1–D3
+path or its 4-bit signal integrity remains a follow-up item rather than a
+release-blocking mount failure.
+
+### Capacity Discrepancy
+
+The Home screen previously displayed **18.5 GB FREE**, which was a hardcoded UI
+placeholder and was unrelated to the inserted card. It was replaced with live
+FAT filesystem capacity and free-space queries.
+
+For the nominal 8 GB card, firmware reports:
+
+- Total filesystem capacity: `8,044,675,072` bytes, or **7.49 GiB**.
+- Free space during validation: approximately **7.42 GiB**.
+
+The difference between the advertised 8 GB and the displayed 7.49 GiB is
+normal decimal-versus-binary capacity accounting plus filesystem overhead; it
+does not indicate an 18.5 GB card or filesystem corruption.
+
+### Performance Test
+
+A verified 4 MiB sequential test was run using 64 KiB buffers with an explicit
+flush and `fsync` before readback:
+
+| Operation | Measured throughput |
+|---|---:|
+| Sequential write | **0.65 MiB/s** |
+| Sequential read and byte verification | **0.73 MiB/s** |
+
+The full data pattern passed readback verification. The temporary benchmark
+file was removed afterward, so the test did not leave material test data on
+the card.
+
+### PM Interpretation and Remaining Work
+
+SD detection, FAT mounting, capacity reporting, and basic data integrity now
+pass on the P4 hardware. The storage display reflects the real card rather
+than a mock value, and the firmware has a safe automatic fallback that allows
+development and telemetry testing to continue.
+
+The remaining SD task is to investigate why the current board/card path fails
+the 4-bit status transfer. Until D1–D3 wiring and 4-bit signal integrity are
+validated, **1-bit/20 MHz is the accepted P4 baseline**. The measured speed is
+adequate for the current telemetry stream but should not be treated as the
+final performance ceiling of the card or controller.

@@ -17,11 +17,15 @@
 #include "bsp_display_target.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
+#include <errno.h>
+#include <unistd.h>
 #include <sys/stat.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
@@ -29,6 +33,9 @@
 #include "driver/sdmmc_host.h"
 #include "sdmmc_cmd.h"
 #include "esp_vfs_fat.h"
+#if CONFIG_IDF_TARGET_ESP32P4
+#include "sd_pwr_ctrl_by_on_chip_ldo.h"
+#endif
 
 static const char *TAG = "bsp";
 
@@ -73,6 +80,9 @@ static float s_prev_raw_v     = 0.0f;
  * ────────────────────────────────────────────────────────────────────────*/
 static bool s_sdcard_mounted = false;
 static sdmmc_card_t *s_sdcard = NULL;
+#if CONFIG_IDF_TARGET_ESP32P4
+static sd_pwr_ctrl_handle_t s_sd_io_pwr_ctrl = NULL;
+#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Battery: piecewise voltage → percentage curve
@@ -327,12 +337,38 @@ esp_err_t bsp_sdcard_init(void)
     ESP_LOGI(TAG, "SD power: GPIO%d=%d (active=%d)",
              BSP_PIN_SDMMC_PWR, sd_power_level, BSP_SDMMC_PWR_ACTIVE_LEVEL);
 
-    /* SDMMC host: IDF default slot 1 on P4; slot 1 explicitly on S3. */
+    /* Waveshare connects GPIO39-44 to the P4's dedicated SDMMC slot-0
+     * IOMUX.  SDMMC_HOST_DEFAULT() selects slot 1, so leaving the default
+     * here routes the wrong peripheral signals through the GPIO matrix and
+     * the card never answers.  The S3 board continues to use slot 1. */
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
 #if CONFIG_IDF_TARGET_ESP32S3
     host.slot = SDMMC_HOST_SLOT_1;
 #else
-    host.slot = SDMMC_HOST_SLOT_1;
+    host.slot = SDMMC_HOST_SLOT_0;
+
+    /* GPIO39-44 are powered by the P4's LDO_VO4 I/O domain on this board.
+     * Supplying the card itself with 3.3 V is not sufficient: without this
+     * controller the SDMMC pads can remain unpowered and SEND_OP_COND times
+     * out even though SD1_VDD measures correctly. */
+    if (s_sd_io_pwr_ctrl == NULL) {
+        const sd_pwr_ctrl_ldo_config_t ldo_cfg = {
+            .ldo_chan_id = 4,
+        };
+        esp_err_t ldo_ret = sd_pwr_ctrl_new_on_chip_ldo(&ldo_cfg,
+                                                         &s_sd_io_pwr_ctrl);
+        if (ldo_ret != ESP_OK) {
+            ESP_LOGE(TAG, "SD I/O LDO_VO4 init failed: %s",
+                     esp_err_to_name(ldo_ret));
+            if (BSP_PIN_SDMMC_PWR >= 0) {
+                gpio_set_level(BSP_PIN_SDMMC_PWR,
+                               !BSP_SDMMC_PWR_ACTIVE_LEVEL);
+            }
+            return ldo_ret;
+        }
+        ESP_LOGI(TAG, "SD I/O: LDO_VO4 enabled at 3.3 V");
+    }
+    host.pwr_ctrl_handle = s_sd_io_pwr_ctrl;
 #endif
     host.max_freq_khz = SDMMC_FREQ_DEFAULT; /* documented 20 MHz default */
 
@@ -361,20 +397,20 @@ esp_err_t bsp_sdcard_init(void)
                                              &mount_cfg, &s_sdcard);
 
 #if CONFIG_IDF_TARGET_ESP32P4
-    /* A 4-bit timeout can be caused by a bad D1-D3 connection or marginal
-     * signal integrity.  Retry at the card's safe probing speed in 1-bit
-     * mode so the validation screen can distinguish those faults from a
-     * dead/powerless card. */
-    if (ret == ESP_ERR_TIMEOUT && slot.width == 4) {
-        ESP_LOGW(TAG, "SD 4-bit probe timed out; retrying 1-bit at %dkHz",
-                 SDMMC_FREQ_PROBING);
+    /* A timeout or generic card-init failure can be caused by the transition
+     * to 4-bit data transfers (SCR/SSR reads) even when CMD/D0 negotiation
+     * succeeded.  Retry in 1-bit mode; card negotiation still begins at the
+     * mandatory 400 kHz before the host raises it to the configured limit. */
+    if ((ret == ESP_ERR_TIMEOUT || ret == ESP_FAIL) && slot.width == 4) {
+        ESP_LOGW(TAG, "SD 4-bit init failed (%s); retrying 1-bit at %dkHz",
+                 esp_err_to_name(ret), SDMMC_FREQ_DEFAULT);
         if (BSP_PIN_SDMMC_PWR >= 0) {
             gpio_set_level(BSP_PIN_SDMMC_PWR, !BSP_SDMMC_PWR_ACTIVE_LEVEL);
             vTaskDelay(pdMS_TO_TICKS(20));
             gpio_set_level(BSP_PIN_SDMMC_PWR, BSP_SDMMC_PWR_ACTIVE_LEVEL);
             vTaskDelay(pdMS_TO_TICKS(50));
         }
-        host.max_freq_khz = SDMMC_FREQ_PROBING;
+        host.max_freq_khz = SDMMC_FREQ_DEFAULT;
         slot.width = 1;
         ret = esp_vfs_fat_sdmmc_mount(BSP_SDCARD_MOUNT_POINT, &host, &slot,
                                        &mount_cfg, &s_sdcard);
@@ -392,6 +428,12 @@ esp_err_t bsp_sdcard_init(void)
         if (BSP_PIN_SDMMC_PWR >= 0) {
             gpio_set_level(BSP_PIN_SDMMC_PWR, !BSP_SDMMC_PWR_ACTIVE_LEVEL); /* Cut SD power */
         }
+#if CONFIG_IDF_TARGET_ESP32P4
+        if (s_sd_io_pwr_ctrl != NULL) {
+            sd_pwr_ctrl_del_on_chip_ldo(s_sd_io_pwr_ctrl);
+            s_sd_io_pwr_ctrl = NULL;
+        }
+#endif
         return ret;
     }
 
@@ -420,7 +462,8 @@ esp_err_t bsp_sdcard_validate(void)
 
     FILE *f = fopen(path, "wb");
     if (!f) {
-        ESP_LOGE(TAG, "SD validation: cannot create %s", path);
+        ESP_LOGE(TAG, "SD validation: cannot create %s: errno=%d (%s)",
+                 path, errno, strerror(errno));
         return ESP_FAIL;
     }
     size_t written = fwrite(pattern, 1, sizeof(pattern) - 1, f);
@@ -461,6 +504,12 @@ void bsp_sdcard_deinit(void)
     esp_vfs_fat_sdcard_unmount(BSP_SDCARD_MOUNT_POINT, s_sdcard);
     s_sdcard_mounted = false;
     s_sdcard = NULL;
+#if CONFIG_IDF_TARGET_ESP32P4
+    if (s_sd_io_pwr_ctrl != NULL) {
+        sd_pwr_ctrl_del_on_chip_ldo(s_sd_io_pwr_ctrl);
+        s_sd_io_pwr_ctrl = NULL;
+    }
+#endif
     if (BSP_PIN_SDMMC_PWR >= 0) {
         gpio_set_level(BSP_PIN_SDMMC_PWR, !BSP_SDMMC_PWR_ACTIVE_LEVEL);
     }
@@ -482,6 +531,113 @@ int bsp_sdcard_get_usage_percent(void)
     uint64_t free_  = (uint64_t)fre_clust * fs->csize;
     if (total == 0) return -1;
     return (int)(((total - free_) * 100ULL) / total);
+}
+
+esp_err_t bsp_sdcard_get_space_bytes(uint64_t *total_bytes, uint64_t *free_bytes)
+{
+    if (!total_bytes || !free_bytes) return ESP_ERR_INVALID_ARG;
+    if (!s_sdcard_mounted || !s_sdcard) return ESP_ERR_INVALID_STATE;
+
+    FATFS *fs = NULL;
+    DWORD free_clusters = 0;
+    FRESULT fr = f_getfree("0:", &free_clusters, &fs);
+    if (fr != FR_OK || !fs) return ESP_FAIL;
+
+    uint64_t bytes_per_cluster =
+        (uint64_t)fs->csize * s_sdcard->csd.sector_size;
+    *total_bytes = (uint64_t)(fs->n_fatent - 2) * bytes_per_cluster;
+    *free_bytes = (uint64_t)free_clusters * bytes_per_cluster;
+    return ESP_OK;
+}
+
+esp_err_t bsp_sdcard_benchmark(size_t bytes, bsp_sdcard_benchmark_t *result)
+{
+    static const char *path = "/sd/RSBENCH.TMP";
+    const size_t chunk_size = 64 * 1024;
+    esp_err_t ret = ESP_FAIL;
+    FILE *f = NULL;
+    uint8_t *buffer = NULL;
+
+    if (!result || bytes == 0) return ESP_ERR_INVALID_ARG;
+    memset(result, 0, sizeof(*result));
+    result->bytes = bytes;
+    if (!s_sdcard_mounted) return ESP_ERR_INVALID_STATE;
+
+    buffer = malloc(chunk_size);
+    if (!buffer) return ESP_ERR_NO_MEM;
+    for (size_t i = 0; i < chunk_size; i++) {
+        buffer[i] = (uint8_t)((i * 31U + 17U) & 0xffU);
+    }
+
+    remove(path);
+    f = fopen(path, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "SD benchmark: create failed: errno=%d (%s)",
+                 errno, strerror(errno));
+        goto cleanup;
+    }
+
+    int64_t start_us = esp_timer_get_time();
+    size_t remaining = bytes;
+    while (remaining > 0) {
+        size_t n = remaining < chunk_size ? remaining : chunk_size;
+        if (fwrite(buffer, 1, n, f) != n) {
+            ESP_LOGE(TAG, "SD benchmark: write failed: errno=%d (%s)",
+                     errno, strerror(errno));
+            goto cleanup;
+        }
+        remaining -= n;
+    }
+    if (fflush(f) != 0 || fsync(fileno(f)) != 0) {
+        ESP_LOGE(TAG, "SD benchmark: sync failed: errno=%d (%s)",
+                 errno, strerror(errno));
+        goto cleanup;
+    }
+    int64_t write_us = esp_timer_get_time() - start_us;
+    fclose(f);
+    f = NULL;
+    result->write_mib_s = ((float)bytes / (1024.0f * 1024.0f)) /
+                          ((float)write_us / 1000000.0f);
+
+    f = fopen(path, "rb");
+    if (!f) {
+        ESP_LOGE(TAG, "SD benchmark: reopen failed: errno=%d (%s)",
+                 errno, strerror(errno));
+        goto cleanup;
+    }
+    start_us = esp_timer_get_time();
+    remaining = bytes;
+    while (remaining > 0) {
+        size_t n = remaining < chunk_size ? remaining : chunk_size;
+        if (fread(buffer, 1, n, f) != n) {
+            ESP_LOGE(TAG, "SD benchmark: read failed: errno=%d (%s)",
+                     errno, strerror(errno));
+            goto cleanup;
+        }
+        for (size_t i = 0; i < n; i++) {
+            uint8_t expected = (uint8_t)((i * 31U + 17U) & 0xffU);
+            if (buffer[i] != expected) {
+                ESP_LOGE(TAG, "SD benchmark: verify failed at chunk offset %u",
+                         (unsigned)i);
+                goto cleanup;
+            }
+        }
+        remaining -= n;
+    }
+    int64_t read_us = esp_timer_get_time() - start_us;
+    result->read_mib_s = ((float)bytes / (1024.0f * 1024.0f)) /
+                         ((float)read_us / 1000000.0f);
+    result->verified = true;
+    ret = ESP_OK;
+
+cleanup:
+    if (f) fclose(f);
+    if (remove(path) != 0 && errno != ENOENT) {
+        ESP_LOGW(TAG, "SD benchmark: cleanup failed: errno=%d (%s)",
+                 errno, strerror(errno));
+    }
+    free(buffer);
+    return ret;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────

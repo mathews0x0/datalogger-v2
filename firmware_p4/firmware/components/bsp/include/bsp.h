@@ -10,6 +10,8 @@
 #ifndef BSP_H
 #define BSP_H
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
 #include "sdkconfig.h"
@@ -74,8 +76,8 @@ extern "C" {
   #define BSP_BAT_ADC_CHANNEL     ADC_CHANNEL_4   /**< GPIO 20 on P4 = ADC1 CH4 */
   #define BSP_BATTERY_DIVIDER_SCALE 3.00f
 
-  /* SDMMC 4-bit — documented Waveshare TF card wiring; use IDF default host
-   * (slot 1 on ESP32-P4) with GPIO-matrix routing. */
+  /* SDMMC 4-bit — Waveshare routes the card to the ESP32-P4 slot-0 IOMUX
+   * pins.  These values exactly match sdmmc_pins.h for P4 slot 0. */
   #define BSP_PIN_SDMMC_CLK       43
   #define BSP_PIN_SDMMC_CMD       44
   #define BSP_PIN_SDMMC_D0        39
@@ -108,6 +110,13 @@ typedef struct {
     bool    charging;       /**< true when USB charge current is detected  */
 } bsp_battery_state_t;
 
+typedef struct {
+    size_t   bytes;
+    float    write_mib_s;
+    float    read_mib_s;
+    bool     verified;
+} bsp_sdcard_benchmark_t;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Public API
  * ────────────────────────────────────────────────────────────────────────*/
@@ -125,6 +134,8 @@ esp_err_t bsp_sdcard_validate(void);
 void      bsp_sdcard_deinit(void);
 bool      bsp_sdcard_mounted(void);
 int       bsp_sdcard_get_usage_percent(void);
+esp_err_t bsp_sdcard_get_space_bytes(uint64_t *total_bytes, uint64_t *free_bytes);
+esp_err_t bsp_sdcard_benchmark(size_t bytes, bsp_sdcard_benchmark_t *result);
 
 esp_err_t bsp_display_init(void);
 esp_err_t bsp_touch_init(void);

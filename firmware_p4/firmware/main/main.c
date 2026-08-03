@@ -230,6 +230,14 @@ void app_main(void)
         esp_err_t sd_validation = bsp_sdcard_validate();
         ESP_LOGI(TAG, "[BOOT] SD hardware validation: %s",
                  sd_validation == ESP_OK ? "PASS" : "FAIL");
+        uint64_t sd_total = 0;
+        uint64_t sd_free = 0;
+        esp_err_t space_ret = bsp_sdcard_get_space_bytes(&sd_total, &sd_free);
+        ESP_LOGI(TAG, "[BOOT] SD space: %s total=%llu bytes (%.2f GiB) free=%llu bytes (%.2f GiB)",
+                 esp_err_to_name(space_ret), (unsigned long long)sd_total,
+                 (double)sd_total / (1024.0 * 1024.0 * 1024.0),
+                 (unsigned long long)sd_free,
+                 (double)sd_free / (1024.0 * 1024.0 * 1024.0));
     }
     ESP_ERROR_CHECK(network_init());
 

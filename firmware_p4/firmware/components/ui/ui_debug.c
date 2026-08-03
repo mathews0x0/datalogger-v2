@@ -26,6 +26,10 @@ static lv_obj_t *s_imu_gyro;
 static lv_obj_t *s_imu_raw;
 static lv_obj_t *s_imu_arena;
 static lv_obj_t *s_imu_ball;
+static float s_imu_center_x;
+static float s_imu_center_y;
+static float s_imu_live_x;
+static float s_imu_live_y;
 
 #define C(hex) lv_color_hex(hex)
 
@@ -51,6 +55,16 @@ static void _on_back(lv_event_t *e)
     ui_events_on_navigate_home();
 }
 
+static void _on_imu_center(lv_event_t *e)
+{
+    (void)e;
+    s_imu_center_x = s_imu_live_x;
+    s_imu_center_y = s_imu_live_y;
+    lv_obj_center(s_imu_ball);
+    ESP_LOGI(TAG, "IMU dot centered at x=%.3f y=%.3f",
+             (double)s_imu_center_x, (double)s_imu_center_y);
+}
+
 static lv_obj_t *_make_label(lv_obj_t *parent, const char *text,
                              int x, int y, uint32_t color, const lv_font_t *font)
 {
@@ -71,6 +85,10 @@ void ui_show_hardware_debug(void)
     ui_home_deactivate();
     ui_lock(-1);
     s_debug_active = false;
+    s_imu_center_x = 0.0f;
+    s_imu_center_y = 0.0f;
+    s_imu_live_x = 0.0f;
+    s_imu_live_y = 0.0f;
 
     lv_obj_t *scr = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(scr, C(UI_COLOR_BG_DARK), LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -153,6 +171,17 @@ void ui_show_hardware_debug(void)
     lv_obj_set_style_border_width(s_imu_ball, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_center(s_imu_ball);
 
+    lv_obj_t *center_btn = lv_btn_create(imu_tab);
+    lv_obj_set_size(center_btn, col_w, UI_RES_CLASS_WIDESCREEN ? 40 : 30);
+    lv_obj_set_pos(center_btn, margin, UI_RES_CLASS_WIDESCREEN ? 340 : 208);
+    lv_obj_set_style_bg_color(center_btn, C(UI_COLOR_PRIMARY), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_radius(center_btn, UI_BTN_RADIUS, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(center_btn, _on_imu_center, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *center_label = lv_label_create(center_btn);
+    lv_label_set_text(center_label, "CENTER");
+    debug_label_style(center_label, UI_COLOR_TEXT_PRIMARY, debug_font_small());
+    lv_obj_center(center_label);
+
     const int value_x = margin + col_w + col_gap;
     _make_section_title(imu_tab, "INTEGER VALUES", value_x, 18);
     s_imu_acc = _make_label(imu_tab, "ACC g\nX 0  Y 0  Z 0", value_x, 56,
@@ -226,8 +255,10 @@ void ui_hardware_debug_update(void)
 
     int arena_w = lv_obj_get_width(s_imu_arena);
     int arena_h = lv_obj_get_height(s_imu_arena);
-    float x_norm = data.ax * 0.35f + data.gx * 0.0015f;
-    float y_norm = data.ay * 0.35f + data.gy * 0.0015f;
+    s_imu_live_x = data.ax * 0.35f + data.gx * 0.0015f;
+    s_imu_live_y = data.ay * 0.35f + data.gy * 0.0015f;
+    float x_norm = s_imu_live_x - s_imu_center_x;
+    float y_norm = s_imu_live_y - s_imu_center_y;
     if (x_norm > 0.45f) x_norm = 0.45f;
     if (x_norm < -0.45f) x_norm = -0.45f;
     if (y_norm > 0.45f) y_norm = 0.45f;
@@ -236,7 +267,10 @@ void ui_hardware_debug_update(void)
     int ball_h = lv_obj_get_height(s_imu_ball);
     int ball_x = (arena_w - ball_w) / 2 + (int)(x_norm * arena_w);
     int ball_y = (arena_h - ball_h) / 2 - (int)(y_norm * arena_h);
-    lv_obj_set_pos(s_imu_ball, ball_x, ball_y);
+    /* ball_x/ball_y are absolute offsets from the arena's top-left corner.
+     * lv_obj_center() leaves LV_ALIGN_CENTER active, so lv_obj_set_pos() would
+     * incorrectly apply these values from the center and push the ball down/right. */
+    lv_obj_align(s_imu_ball, LV_ALIGN_TOP_LEFT, ball_x, ball_y);
 
     ui_unlock();
 }

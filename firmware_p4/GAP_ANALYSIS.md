@@ -10,9 +10,9 @@ Status markers:
 
 Current conclusion: the P4 image is still not production-ready. The P4 build
 selects the real BMI323 driver on the dedicated I²C1 bus and the supplied GPS,
-BMI323, and battery ADC have passed initial bench validation. The SD card still
-fails the documented initialization sequence with `ESP_ERR_TIMEOUT`, and the
-image still selects `network_stub.c`.
+BMI323, battery ADC, and SD card have passed initial bench validation. SD uses
+a verified 1-bit/20 MHz fallback because 4-bit SSR reads fail on the current
+board/card path. The image still selects `network_stub.c`.
 
 ## 0. Release-blocking summary
 
@@ -20,7 +20,7 @@ image still selects `network_stub.c`.
 - [ ] Bring up ESP32-C6 Wi-Fi through esp-hosted/SDIO.
 - [ ] Resolve ESP-hosted versus SDMMC resource/pin conflicts.
 - [ ] Connect the sensor queue to the storage queue.
-- [-] Freeze the supplied GPS, BMI323, battery-monitor, and SD pin map in firmware; GPS/BMI323/ADC runtime checks pass, but the SD card is electrically silent during `SEND_OP_COND`.
+- [-] Freeze the supplied GPS, BMI323, battery-monitor, and SD pin map in firmware; all devices pass runtime checks, but the SD 4-bit D1-D3 path still needs investigation.
 - [ ] Wire the application state machine to real track, calibration, feedback, storage, and network operations.
 - [ ] Correct the firmware/backend upload endpoint contract.
 - [ ] Make generated CSV markers parse correctly on the server.
