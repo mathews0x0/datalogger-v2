@@ -61,6 +61,7 @@ static void _on_btn_portal_exit_cb(lv_event_t *e)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_sync_searching(const char *target_ssid)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     ESP_LOGI(TAG, "Constructing Screen 6: WiFi Searching & Scanning [%dx%d]", UI_HOR_RES, UI_VER_RES);
 
@@ -70,7 +71,7 @@ void ui_show_sync_searching(const char *target_ssid)
 
     /* Header Bar */
     lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_set_size(header, 320, 28);
+    lv_obj_set_size(header, UI_HOR_RES, UI_HEADER_HEIGHT);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -86,8 +87,10 @@ void ui_show_sync_searching(const char *target_ssid)
 
     /* Center Status Card (304x120 px) */
     lv_obj_t *card = lv_obj_create(scr);
-    lv_obj_set_size(card, 304, 120);
-    lv_obj_set_pos(card, 8, 36);
+    const int card_w = UI_RES_CLASS_WIDESCREEN ? 640 : UI_HOR_RES - 16;
+    const int card_h = UI_RES_CLASS_WIDESCREEN ? 220 : 120;
+    lv_obj_set_size(card, card_w, card_h);
+    lv_obj_set_pos(card, (UI_HOR_RES - card_w) / 2, UI_HEADER_HEIGHT + 28);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(card, lv_color_hex(0x2A2A35), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -95,7 +98,7 @@ void ui_show_sync_searching(const char *target_ssid)
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
     char buf[64];
-    snprintf(buf, sizeof(buf), "SCANNING FOR AP:\n'%s'", target_ssid ? target_ssid : "RaceSense_AP");
+    snprintf(buf, sizeof(buf), "CLOUD SYNC READY\n'%s'", target_ssid ? target_ssid : "RaceSense_AP");
     lv_obj_t *lbl_info = lv_label_create(card);
     lv_label_set_text(lbl_info, buf);
     lv_obj_set_style_text_align(lbl_info, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -103,24 +106,25 @@ void ui_show_sync_searching(const char *target_ssid)
     lv_obj_align(lbl_info, LV_ALIGN_CENTER, 0, -10);
 
     lv_obj_t *lbl_sub = lv_label_create(card);
-    lv_label_set_text(lbl_sub, "Seeking WiFi network connection...");
+    lv_label_set_text(lbl_sub, "Wi-Fi 6 transport is not enabled in this P4 build.");
     lv_obj_set_style_text_color(lbl_sub, lv_color_hex(0x8E8E93), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_sub, LV_ALIGN_BOTTOM_MID, 0, -4);
 
     /* Bottom Cancel / Return Button (304x66 px, Y=166) */
     lv_obj_t *btn_cancel = lv_btn_create(scr);
-    lv_obj_set_size(btn_cancel, 304, 66);
-    lv_obj_set_pos(btn_cancel, 8, 166);
+    lv_obj_set_size(btn_cancel, card_w, UI_RES_CLASS_WIDESCREEN ? 90 : 66);
+    lv_obj_set_pos(btn_cancel, (UI_HOR_RES - card_w) / 2,
+                   UI_RES_CLASS_WIDESCREEN ? UI_VER_RES - 28 - 90 : 166);
     lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0xFF3B30), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn_cancel, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(btn_cancel, _on_btn_sync_cancel_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_btn = lv_label_create(btn_cancel);
-    lv_label_set_text(lbl_btn, "CANCEL SYNC & RETURN");
+    lv_label_set_text(lbl_btn, "RETURN TO DASHBOARD");
     lv_obj_set_style_text_color(lbl_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn, LV_ALIGN_CENTER, 0, 0);
 
-    lv_scr_load(scr);
+    ui_load_screen(scr);
     ui_unlock();
 }
 
@@ -129,6 +133,7 @@ void ui_show_sync_searching(const char *target_ssid)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_sync_heartbeat(void)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     s_upload_active = false;
     lv_obj_t *scr = lv_obj_create(NULL);
@@ -141,7 +146,7 @@ void ui_show_sync_heartbeat(void)
     lv_obj_set_style_text_color(title, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0); lv_obj_align(title, LV_ALIGN_CENTER, 0, 20);
     lv_obj_t *sub = lv_label_create(scr); lv_label_set_text(sub, "TLS heartbeat to racesense.in...");
     lv_obj_set_style_text_color(sub, lv_color_hex(UI_COLOR_TEXT_MUTED), 0); lv_obj_align(sub, LV_ALIGN_CENTER, 0, 43);
-    lv_scr_load(scr);
+    ui_load_screen(scr);
     ui_unlock();
 }
 
@@ -151,6 +156,7 @@ void ui_show_sync_heartbeat(void)
 void ui_show_sync_uploading(int file_idx, int total_files, const char *filename,
                             int progress_pct, const char *speed, const char *eta)
 {
+    ui_home_deactivate();
     if (ui_lock(20)) {
         if (!s_upload_active) {
             lv_obj_t *scr = lv_obj_create(NULL);
@@ -169,7 +175,7 @@ void ui_show_sync_uploading(int file_idx, int total_files, const char *filename,
             lv_obj_t *cancel = lv_btn_create(scr); lv_obj_set_size(cancel, UI_PCT_X(80), UI_SCALE_Y(44)); lv_obj_align(cancel, LV_ALIGN_BOTTOM_MID, 0, -8);
             lv_obj_add_event_cb(cancel, _on_btn_sync_cancel_cb, LV_EVENT_CLICKED, NULL);
             lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "CANCEL & EXIT"); lv_obj_align(cl, LV_ALIGN_CENTER, 0, 0);
-            lv_scr_load(scr); s_upload_active = true;
+            ui_load_screen(scr); s_upload_active = true;
         }
         char buf[80]; snprintf(buf, sizeof(buf), "UPLOADING FILE %d OF %d", file_idx, total_files);
         lv_label_set_text(s_upload_title, buf); lv_label_set_text(s_upload_file, filename ? filename : "session.csv");
@@ -183,6 +189,7 @@ void ui_show_sync_uploading(int file_idx, int total_files, const char *filename,
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_sync_complete(int files_synced, float mb_total, int seconds)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     ESP_LOGI(TAG, "Constructing Screen 9: Sync Complete Summary Report [%dx%d]", UI_HOR_RES, UI_VER_RES);
 
@@ -191,8 +198,10 @@ void ui_show_sync_complete(int files_synced, float mb_total, int seconds)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t *card = lv_obj_create(scr);
-    lv_obj_set_size(card, 304, 120);
-    lv_obj_set_pos(card, 8, 36);
+    const int card_w = UI_RES_CLASS_WIDESCREEN ? 640 : UI_HOR_RES - 16;
+    const int card_h = UI_RES_CLASS_WIDESCREEN ? 220 : 120;
+    lv_obj_set_size(card, card_w, card_h);
+    lv_obj_set_pos(card, (UI_HOR_RES - card_w) / 2, UI_RES_CLASS_WIDESCREEN ? 80 : 36);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(card, lv_color_hex(0x00D26A), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(card, 2, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -209,8 +218,9 @@ void ui_show_sync_complete(int files_synced, float mb_total, int seconds)
     lv_obj_align(lbl_sum, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *btn_exit = lv_btn_create(scr);
-    lv_obj_set_size(btn_exit, 304, 66);
-    lv_obj_set_pos(btn_exit, 8, 166);
+    lv_obj_set_size(btn_exit, card_w, UI_RES_CLASS_WIDESCREEN ? 90 : 66);
+    lv_obj_set_pos(btn_exit, (UI_HOR_RES - card_w) / 2,
+                   UI_RES_CLASS_WIDESCREEN ? UI_VER_RES - 28 - 90 : 166);
     lv_obj_set_style_bg_color(btn_exit, lv_color_hex(0x00D26A), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn_exit, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(btn_exit, _on_btn_sync_complete_exit_cb, LV_EVENT_CLICKED, NULL);
@@ -220,7 +230,7 @@ void ui_show_sync_complete(int files_synced, float mb_total, int seconds)
     lv_obj_set_style_text_color(lbl_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn, LV_ALIGN_CENTER, 0, 0);
 
-    lv_scr_load(scr);
+    ui_load_screen(scr);
     ui_unlock();
 }
 
@@ -229,6 +239,7 @@ void ui_show_sync_complete(int files_synced, float mb_total, int seconds)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_captive_portal(const char *ap_name)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     ESP_LOGI(TAG, "Constructing Screen 12: Captive Portal Provisioning [%dx%d]", UI_HOR_RES, UI_VER_RES);
 
@@ -239,8 +250,10 @@ void ui_show_captive_portal(const char *ap_name)
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     lv_obj_t *card = lv_obj_create(scr);
-    lv_obj_set_size(card, 304, 120);
-    lv_obj_set_pos(card, 8, 36);
+    const int card_w = UI_RES_CLASS_WIDESCREEN ? 640 : UI_HOR_RES - 16;
+    const int card_h = UI_RES_CLASS_WIDESCREEN ? 220 : 120;
+    lv_obj_set_size(card, card_w, card_h);
+    lv_obj_set_pos(card, (UI_HOR_RES - card_w) / 2, UI_RES_CLASS_WIDESCREEN ? 80 : 36);
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(card, lv_color_hex(0x00E5FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -256,8 +269,9 @@ void ui_show_captive_portal(const char *ap_name)
     lv_obj_align(lbl_portal, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *btn_exit = lv_btn_create(scr);
-    lv_obj_set_size(btn_exit, 304, 66);
-    lv_obj_set_pos(btn_exit, 8, 166);
+    lv_obj_set_size(btn_exit, card_w, UI_RES_CLASS_WIDESCREEN ? 90 : 66);
+    lv_obj_set_pos(btn_exit, (UI_HOR_RES - card_w) / 2,
+                   UI_RES_CLASS_WIDESCREEN ? UI_VER_RES - 28 - 90 : 166);
     lv_obj_set_style_bg_color(btn_exit, lv_color_hex(0x3A3A45), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn_exit, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(btn_exit, _on_btn_portal_exit_cb, LV_EVENT_CLICKED, NULL);
@@ -267,6 +281,6 @@ void ui_show_captive_portal(const char *ap_name)
     lv_obj_set_style_text_color(lbl_btn, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn, LV_ALIGN_CENTER, 0, 0);
 
-    lv_scr_load(scr);
+    ui_load_screen(scr);
     ui_unlock();
 }

@@ -27,6 +27,8 @@ extern "C" {
   /* I2C0 — BMI323 6-DOF IMU sensor */
   #define BSP_PIN_I2C0_SDA        21
   #define BSP_PIN_I2C0_SCL        39
+  #define BSP_PIN_BMI323_SDA      BSP_PIN_I2C0_SDA
+  #define BSP_PIN_BMI323_SCL      BSP_PIN_I2C0_SCL
 
   /* UART1 — Neo-M8N GNSS (GPS) */
   #define BSP_PIN_GPS_TX          17
@@ -54,21 +56,26 @@ extern "C" {
 
 #else /* ESP32-P4 (Default) */
 
-  /* I2C0 — GT911 touch + external sensor header */
+  /* I2C0 — GT911 touch controller */
   #define BSP_PIN_I2C0_SDA        7
   #define BSP_PIN_I2C0_SCL        8
+
+  /* I2C1 — external BMI323 four-pin module */
+  #define BSP_PIN_BMI323_SDA      21
+  #define BSP_PIN_BMI323_SCL      22
 
   /* UART1 — Neo-M8N GNSS (GPS) */
   #define BSP_PIN_GPS_TX          3
   #define BSP_PIN_GPS_RX          4
 
-  /* Battery ADC — BAT_ADC net on Waveshare schematic */
-  #define BSP_PIN_BATTERY_ADC     5
-  #define BSP_BAT_ADC_UNIT        ADC_UNIT_1      /**< GPIO 5 on P4 is on ADC1 */
-  #define BSP_BAT_ADC_CHANNEL     ADC_CHANNEL_4   /**< GPIO 5 on P4 = ADC1 CH4 */
-  #define BSP_BATTERY_DIVIDER_SCALE 2.10f
+  /* Battery ADC — BAT → 200kΩ → BAT_ADC → 100kΩ → GND, BAT_ADC on GPIO20 */
+  #define BSP_PIN_BATTERY_ADC     20
+  #define BSP_BAT_ADC_UNIT        ADC_UNIT_1      /**< GPIO 20 on P4 is on ADC1 */
+  #define BSP_BAT_ADC_CHANNEL     ADC_CHANNEL_4   /**< GPIO 20 on P4 = ADC1 CH4 */
+  #define BSP_BATTERY_DIVIDER_SCALE 3.00f
 
-  /* SDMMC 4-bit — slot 0 TF card slot */
+  /* SDMMC 4-bit — documented Waveshare TF card wiring; use IDF default host
+   * (slot 1 on ESP32-P4) with GPIO-matrix routing. */
   #define BSP_PIN_SDMMC_CLK       43
   #define BSP_PIN_SDMMC_CMD       44
   #define BSP_PIN_SDMMC_D0        39
@@ -76,6 +83,7 @@ extern "C" {
   #define BSP_PIN_SDMMC_D2        41
   #define BSP_PIN_SDMMC_D3        42
   #define BSP_PIN_SDMMC_PWR       45
+  #define BSP_SDMMC_PWR_ACTIVE_LEVEL 0  /* AO3401 high-side switch is active-low */
 
   #define BSP_PIN_PWR_HOLD        (-1)
   #define BSP_PIN_PWR_SENSE       (-1)
@@ -113,6 +121,7 @@ float     bsp_battery_get_voltage(void);
 bool      bsp_battery_is_charging(void);
 
 esp_err_t bsp_sdcard_init(void);
+esp_err_t bsp_sdcard_validate(void);
 void      bsp_sdcard_deinit(void);
 bool      bsp_sdcard_mounted(void);
 int       bsp_sdcard_get_usage_percent(void);

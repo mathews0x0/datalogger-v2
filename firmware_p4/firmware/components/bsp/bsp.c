@@ -50,6 +50,9 @@ static bool                      s_adc_ready  = false;
     #define BSP_BAT_ADC_ATTEN  ADC_ATTEN_DB_12
   #endif
 #endif
+#ifndef BSP_SDMMC_PWR_ACTIVE_LEVEL
+#define BSP_SDMMC_PWR_ACTIVE_LEVEL 1
+#endif
 #define BSP_BAT_ADC_SAMPLES  6               /* Averaged per reading */
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -188,6 +191,11 @@ esp_err_t bsp_battery_init(void)
         ESP_LOGI(TAG, "Battery ADC calibrated (GPIO %d)", BSP_PIN_BATTERY_ADC);
     }
 
+    /* Mark the ADC ready before the first read; _battery_read_raw_v() is
+     * intentionally guarded by this flag.  This also makes the boot value
+     * agree with the first UI update instead of briefly reporting 0 V. */
+    s_adc_ready = true;
+
     /* Take initial reading to seed filters */
     float v0 = _battery_read_raw_v();
     if (v0 > 0.0f) {
@@ -197,7 +205,6 @@ esp_err_t bsp_battery_init(void)
         s_bat.percent    = _battery_pct_from_voltage(v0);
     }
 
-    s_adc_ready = true;
     ESP_LOGI(TAG, "Battery ADC ready: %.3fV / %d%%", v0, s_bat.percent);
     return ESP_OK;
 }
@@ -309,16 +316,25 @@ esp_err_t bsp_sdcard_init(void)
     /* Power up the SD card via load switch if configured */
     if (BSP_PIN_SDMMC_PWR >= 0) {
         gpio_set_direction(BSP_PIN_SDMMC_PWR, GPIO_MODE_OUTPUT);
-        gpio_set_level(BSP_PIN_SDMMC_PWR, 1);
+        gpio_set_level(BSP_PIN_SDMMC_PWR, BSP_SDMMC_PWR_ACTIVE_LEVEL);
         vTaskDelay(pdMS_TO_TICKS(50)); /* Allow rail to stabilize */
     }
 
-    /* SDMMC host: slot 0 (P4) or slot 1 (S3), 20MHz safe default */
+    int sd_power_level = -1;
+#if BSP_PIN_SDMMC_PWR >= 0
+    sd_power_level = gpio_get_level(BSP_PIN_SDMMC_PWR);
+#endif
+    ESP_LOGI(TAG, "SD power: GPIO%d=%d (active=%d)",
+             BSP_PIN_SDMMC_PWR, sd_power_level, BSP_SDMMC_PWR_ACTIVE_LEVEL);
+
+    /* SDMMC host: IDF default slot 1 on P4; slot 1 explicitly on S3. */
     sdmmc_host_t host = SDMMC_HOST_DEFAULT();
 #if CONFIG_IDF_TARGET_ESP32S3
     host.slot = SDMMC_HOST_SLOT_1;
+#else
+    host.slot = SDMMC_HOST_SLOT_1;
 #endif
-    host.max_freq_khz = SDMMC_FREQ_DEFAULT; /* 20 MHz */
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT; /* documented 20 MHz default */
 
     sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
     slot.width = (BSP_PIN_SDMMC_D1 >= 0) ? 4 : 1;
@@ -337,15 +353,45 @@ esp_err_t bsp_sdcard_init(void)
         .allocation_unit_size   = 16 * 1024,
     };
 
+    ESP_LOGI(TAG, "SD probe: slot=%d width=%d clk=%d cmd=%d d0=%d d1=%d d2=%d d3=%d freq=%dkHz",
+             host.slot, slot.width, slot.clk, slot.cmd, slot.d0,
+             slot.d1, slot.d2, slot.d3, host.max_freq_khz);
+
     esp_err_t ret = esp_vfs_fat_sdmmc_mount(BSP_SDCARD_MOUNT_POINT, &host, &slot,
                                              &mount_cfg, &s_sdcard);
+
+#if CONFIG_IDF_TARGET_ESP32P4
+    /* A 4-bit timeout can be caused by a bad D1-D3 connection or marginal
+     * signal integrity.  Retry at the card's safe probing speed in 1-bit
+     * mode so the validation screen can distinguish those faults from a
+     * dead/powerless card. */
+    if (ret == ESP_ERR_TIMEOUT && slot.width == 4) {
+        ESP_LOGW(TAG, "SD 4-bit probe timed out; retrying 1-bit at %dkHz",
+                 SDMMC_FREQ_PROBING);
+        if (BSP_PIN_SDMMC_PWR >= 0) {
+            gpio_set_level(BSP_PIN_SDMMC_PWR, !BSP_SDMMC_PWR_ACTIVE_LEVEL);
+            vTaskDelay(pdMS_TO_TICKS(20));
+            gpio_set_level(BSP_PIN_SDMMC_PWR, BSP_SDMMC_PWR_ACTIVE_LEVEL);
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        host.max_freq_khz = SDMMC_FREQ_PROBING;
+        slot.width = 1;
+        ret = esp_vfs_fat_sdmmc_mount(BSP_SDCARD_MOUNT_POINT, &host, &slot,
+                                       &mount_cfg, &s_sdcard);
+        if (ret == ESP_OK) {
+            ESP_LOGW(TAG, "SD mounted in 1-bit fallback; D1-D3/4-bit path needs follow-up");
+        }
+    }
+#endif
     if (ret != ESP_OK) {
         if (ret == ESP_FAIL) {
             ESP_LOGE(TAG, "SD mount failed — card may need formatting as FAT32");
         } else {
             ESP_LOGW(TAG, "SD not found or mount error: %s", esp_err_to_name(ret));
         }
-        gpio_set_level(BSP_PIN_SDMMC_PWR, 0); /* Cut SD power */
+        if (BSP_PIN_SDMMC_PWR >= 0) {
+            gpio_set_level(BSP_PIN_SDMMC_PWR, !BSP_SDMMC_PWR_ACTIVE_LEVEL); /* Cut SD power */
+        }
         return ret;
     }
 
@@ -364,13 +410,60 @@ esp_err_t bsp_sdcard_init(void)
     return ESP_OK;
 }
 
+esp_err_t bsp_sdcard_validate(void)
+{
+    static const char *path = "/sd/.racesense_hw_test.tmp";
+    static const char pattern[] = "RaceSense SD hardware validation\n";
+    char readback[sizeof(pattern)] = {0};
+
+    if (!s_sdcard_mounted) return ESP_ERR_INVALID_STATE;
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        ESP_LOGE(TAG, "SD validation: cannot create %s", path);
+        return ESP_FAIL;
+    }
+    size_t written = fwrite(pattern, 1, sizeof(pattern) - 1, f);
+    int flush_ret = fflush(f);
+    int close_ret = fclose(f);
+    if (written != sizeof(pattern) - 1 || flush_ret != 0 || close_ret != 0) {
+        remove(path);
+        ESP_LOGE(TAG, "SD validation: write failed (%u/%u bytes)",
+                 (unsigned)written, (unsigned)(sizeof(pattern) - 1));
+        return ESP_FAIL;
+    }
+
+    f = fopen(path, "rb");
+    if (!f) {
+        remove(path);
+        ESP_LOGE(TAG, "SD validation: cannot reopen test file");
+        return ESP_FAIL;
+    }
+    size_t read = fread(readback, 1, sizeof(pattern) - 1, f);
+    int read_error = ferror(f);
+    fclose(f);
+    int remove_ret = remove(path);
+
+    if (read != sizeof(pattern) - 1 || read_error ||
+        memcmp(readback, pattern, sizeof(pattern) - 1) != 0 || remove_ret != 0) {
+        ESP_LOGE(TAG, "SD validation: readback failed (%u/%u bytes)",
+                 (unsigned)read, (unsigned)(sizeof(pattern) - 1));
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "SD validation: write/readback/remove OK");
+    return ESP_OK;
+}
+
 void bsp_sdcard_deinit(void)
 {
     if (!s_sdcard_mounted) return;
     esp_vfs_fat_sdcard_unmount(BSP_SDCARD_MOUNT_POINT, s_sdcard);
     s_sdcard_mounted = false;
     s_sdcard = NULL;
-    gpio_set_level(BSP_PIN_SDMMC_PWR, 0);
+    if (BSP_PIN_SDMMC_PWR >= 0) {
+        gpio_set_level(BSP_PIN_SDMMC_PWR, !BSP_SDMMC_PWR_ACTIVE_LEVEL);
+    }
     ESP_LOGI(TAG, "SD unmounted");
 }
 
@@ -444,8 +537,12 @@ esp_err_t bsp_init(void)
     /* 3. Display (stub until Phase 8) */
     bsp_display_init();
 
-    /* 4. Touch (stub until Phase 8) */
-    bsp_touch_init();
+    /* 4. Touch is optional: a missing controller must never prevent the UI
+     * from starting.  The P4 driver owns I2C0 using the modern IDF API. */
+    ret = bsp_touch_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Touch unavailable: %s", esp_err_to_name(ret));
+    }
 
     ESP_LOGI(TAG, "BSP init complete — SD:%s Battery:%.2fV/%d%% Charging:%s",
              s_sdcard_mounted ? "OK" : "ABSENT",

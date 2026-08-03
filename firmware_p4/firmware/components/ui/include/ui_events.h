@@ -34,6 +34,7 @@ typedef enum {
     UI_EVENT_AUTO_LOG_TOGGLED,        /**< User toggled Auto-Logging switch         */
     UI_EVENT_SYNC_CANCEL_CLICKED,     /**< User cancelled active cloud upload sync  */
     UI_EVENT_SYNC_DONE_CLICKED,       /**< User dismissed sync complete screen      */
+    UI_EVENT_HARDWARE_DEBUG_CLICKED,  /**< User opened GPS/IMU hardware debug       */
 } ui_event_type_t;
 
 /**
@@ -79,6 +80,9 @@ void ui_events_on_sync_start(void);
 
 /** @brief Helper: Settings screen button clicked */
 void ui_events_on_open_settings(void);
+
+/** @brief Open live GPS/IMU hardware diagnostics */
+void ui_events_on_open_hardware_debug(void);
 
 /** @brief Helper: Navigate Back / Cancel to Home dashboard */
 void ui_events_on_navigate_home(void);

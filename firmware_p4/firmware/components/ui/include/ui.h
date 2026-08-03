@@ -9,6 +9,8 @@
 #ifndef UI_H
 #define UI_H
 
+#include "lvgl.h"
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
@@ -45,6 +47,11 @@ bool ui_lock(int timeout_ms);
  */
 void ui_unlock(void);
 
+/** Load a replacement screen and immediately free the previous screen tree.
+ * Call while holding the UI lock. */
+void ui_load_screen(lv_obj_t *screen);
+void ui_load_screen_smooth(lv_obj_t *screen);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Wave 1: Boot & Home Screen Constructors (ui_home.c)
  * ────────────────────────────────────────────────────────────────────────*/
@@ -64,6 +71,9 @@ void ui_show_boot_splash(void);
  */
 void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
                   const char *track_name, const char *mount_label, int storage_pct);
+
+/** Stop periodic Home-screen updates before replacing the Home screen. */
+void ui_home_deactivate(void);
 
 /**
  * @brief Update Home Dashboard widget indicators with live sensor and system telemetry.
@@ -125,6 +135,10 @@ void ui_show_sector_flash(int sector_num, const char *delta, bool faster,
 
 /** @brief Screen 10: Show responsive 2x2 Settings configuration grid. */
 void ui_show_settings(void);
+
+/** @brief Screen 13: Live GPS and BMI323 hardware diagnostics with two tabs. */
+void ui_show_hardware_debug(void);
+void ui_hardware_debug_update(void);
 
 /** @brief Screen 11: Launch 5-Stage IMU Mount Calibration Wizard. */
 void ui_show_imu_calibration_wizard(void);

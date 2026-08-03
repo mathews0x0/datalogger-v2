@@ -53,3 +53,16 @@ void ui_unlock(void)
 {
     lvgl_port_unlock();
 }
+
+void ui_load_screen(lv_obj_t *screen)
+{
+    /* lv_scr_load() keeps the previous screen alive in LVGL 9. */
+    lv_scr_load_anim(screen, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+}
+
+void ui_load_screen_smooth(lv_obj_t *screen)
+{
+    /* Keep the previous composed frame visible while the dense telemetry
+     * screen is first rendered, rather than showing an intermediate blank. */
+    lv_scr_load_anim(screen, LV_SCR_LOAD_ANIM_FADE_IN, 160, 0, true);
+}

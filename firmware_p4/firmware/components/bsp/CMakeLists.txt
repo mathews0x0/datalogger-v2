@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "bsp.c"
         "bsp_display.c"
+        "touch_calibration.c"
     INCLUDE_DIRS
         "include"
     PRIV_REQUIRES
@@ -9,6 +10,7 @@ idf_component_register(
         esp_adc         # adc_oneshot, adc_cali
         sdmmc           # sdmmc_host, sdmmc_cmd
         fatfs           # FATFS & esp_vfs_fat.h (esp_vfs_fat_sdmmc_mount, f_getfree)
+        nvs_flash       # persistent touch calibration fallback
         esp_timer       # timing utilities
         freertos        # FreeRTOS task delay
         esp_lcd         # esp_lcd_panel_ops, panel_io_spi/i2c/dbi

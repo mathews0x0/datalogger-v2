@@ -29,6 +29,8 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_vfs_fat.h"
+#include "wear_levelling.h"
 #include "bsp.h"
 
 static const char *TAG = "storage";
@@ -59,6 +61,7 @@ static volatile bool     s_flush_running = false;
 static storage_session_info_t  s_session  = {0};
 static storage_health_t        s_health   = STORAGE_HEALTH_OK;
 static uint32_t                s_row_since_checkpoint = 0;
+static wl_handle_t             s_flash_wl = WL_INVALID_HANDLE;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Helpers
@@ -260,6 +263,23 @@ static void _flush_task(void *arg)
 
 esp_err_t storage_init(void)
 {
+    /* Mount the partition declared as `storage` in partitions.csv.  The old
+     * code created /data paths without a VFS mount, so configuration files
+     * (including touch calibration) could never persist. */
+    if (s_flash_wl == WL_INVALID_HANDLE) {
+        const esp_vfs_fat_mount_config_t flash_cfg = {
+            .format_if_mount_failed = true,
+            .max_files = 8,
+            .allocation_unit_size = 4096,
+        };
+        esp_err_t mount_ret = esp_vfs_fat_spiflash_mount_rw_wl(
+            "/data", "storage", &flash_cfg, &s_flash_wl);
+        if (mount_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Internal storage mount failed: %s", esp_err_to_name(mount_ret));
+            return mount_ret;
+        }
+    }
+
     /* Create required directory structure */
     _mkdir_safe("/data");
     _mkdir_safe(STORAGE_FLASH_META_DIR);

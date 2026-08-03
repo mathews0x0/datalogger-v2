@@ -21,10 +21,13 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 
 /* Board Support Package */
 #include "bsp.h"
+#include "touch_calibration.h"
 
 /* Sensor ingestion (Phase 7B) */
 #include "sensors.h"
@@ -40,7 +43,7 @@
 static const char *TAG = "racesense";
 
 /* ──────────────────────────────────────────────────────────────────────────
- * Application States  (maps 1:1 to the 12 UI screens)
+ * Application States  (maps 1:1 to the UI screens)
  * ──────────────────────────────────────────────────────────────────────────*/
 typedef enum {
     STATE_BOOT_INIT,         /* Screen 1:  Boot splash               */
@@ -56,6 +59,7 @@ typedef enum {
     STATE_SETTINGS,          /* Screen 10: Settings                  */
     STATE_IMU_CALIBRATION,   /* Screen 11: IMU Calibration Flow      */
     STATE_CAPTIVE_PORTAL,    /* Screen 12: Captive Portal Active     */
+    STATE_HARDWARE_DEBUG,    /* Screen 13: GPS/IMU hardware debug    */
     STATE_SHUTDOWN,          /* Internal:  Clean shutdown            */
 } app_state_t;
 
@@ -63,6 +67,7 @@ static volatile app_state_t s_state = STATE_BOOT_INIT;
 static volatile int s_sync_files_done;
 static volatile int s_sync_total_files;
 
+#if !CONFIG_IDF_TARGET_ESP32P4
 static void _sync_progress_cb(const upload_progress_t *p, void *ctx)
 {
     (void)ctx;
@@ -75,7 +80,9 @@ static void _sync_progress_cb(const upload_progress_t *p, void *ctx)
                                p->detail ? p->detail : "Uploading", "");
     }
 }
+#endif
 
+#if !CONFIG_IDF_TARGET_ESP32P4
 static void _sync_task(void *arg)
 {
     (void)arg;
@@ -92,6 +99,7 @@ static void _sync_task(void *arg)
     }
     vTaskDelete(NULL);
 }
+#endif
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Auto-Copy Check
@@ -116,9 +124,11 @@ static void _on_ui_event_cb(ui_event_type_t event, void *param)
         case UI_EVENT_START_LOG_CLICKED:
             ESP_LOGI(TAG, "[NAV] Transitioning to LIVE LOGGING (Screen 3)");
             s_state = STATE_LOGGING_ACTIVE;
+            /* Present the new screen before potentially slow filesystem work
+             * so the touch transition never visibly stalls or flashes. */
+            ui_show_logging("Silverstone", gps_cur.satellites);
             storage_session_start();
             sensors_set_logging(true);
-            ui_show_logging("Silverstone", gps_cur.satellites);
             break;
 
         case UI_EVENT_STOP_LOG_HELD:
@@ -126,28 +136,45 @@ static void _on_ui_event_cb(ui_event_type_t event, void *param)
         case UI_EVENT_SYNC_CANCEL_CLICKED:
         case UI_EVENT_SYNC_DONE_CLICKED:
             ESP_LOGI(TAG, "[NAV] Returning to HOME DASHBOARD (Screen 2)");
+            bool close_logging_session = (s_state == STATE_LOGGING_ACTIVE ||
+                                          s_state == STATE_IMU_VALIDATION);
             if (s_state == STATE_LOGGING_ACTIVE || s_state == STATE_IMU_VALIDATION) {
                 sensors_set_logging(false);
-                storage_session_stop();
             }
             s_state = STATE_HOME_IDLE;
             int store_pct = storage_get_usage_percent();
             if (store_pct < 0) store_pct = 0;
             ui_show_home(bsp_sdcard_mounted(), sensors_imu_ok(), sensors_gps_ok(),
                          gps_cur.satellites, "Silverstone", "V4.2 Dash", store_pct);
+            if (close_logging_session) {
+                storage_session_stop();
+            }
             break;
 
         case UI_EVENT_SYNC_CLICKED:
             ESP_LOGI(TAG, "[NAV] Transitioning to CLOUD SYNC / WIFI SEARCH (Screen 6)");
             s_state = STATE_SYNC_WIFI_SEARCH;
             ui_show_sync_searching("RaceSense_AP");
+#if !CONFIG_IDF_TARGET_ESP32P4
             xTaskCreate(_sync_task, "racesense_sync", 8192, NULL, 4, NULL);
+#else
+            /* The Waveshare C6 co-processor transport is not configured yet.
+             * Keep the informative Sync screen open instead of immediately
+             * failing the task and bouncing the user back to Home. */
+            ESP_LOGW(TAG, "Cloud sync unavailable: ESP32-C6 transport disabled");
+#endif
             break;
 
         case UI_EVENT_SETTINGS_CLICKED:
             ESP_LOGI(TAG, "[NAV] Transitioning to SETTINGS (Screen 10)");
             s_state = STATE_SETTINGS;
             ui_show_settings();
+            break;
+
+        case UI_EVENT_HARDWARE_DEBUG_CLICKED:
+            ESP_LOGI(TAG, "[NAV] Transitioning to HARDWARE DEBUG (Screen 13)");
+            s_state = STATE_HARDWARE_DEBUG;
+            ui_show_hardware_debug();
             break;
 
         case UI_EVENT_IMU_CALIB_CLICKED:
@@ -197,8 +224,13 @@ void app_main(void)
     ESP_LOGI(TAG, "[BOOT] NVS initialized");
 
     /* ── Step 2: Board Support Package ─────────────────────────────────── */
-    /* Initializes: Battery ADC → SD card → Display stub → Touch stub     */
+    /* Initializes: Battery ADC → SD card → display → touch                */
     ESP_ERROR_CHECK(bsp_init());
+    if (bsp_sdcard_mounted()) {
+        esp_err_t sd_validation = bsp_sdcard_validate();
+        ESP_LOGI(TAG, "[BOOT] SD hardware validation: %s",
+                 sd_validation == ESP_OK ? "PASS" : "FAIL");
+    }
     ESP_ERROR_CHECK(network_init());
 
     /* ── Step 3: Storage engine ────────────────────────────────── */
@@ -237,7 +269,7 @@ void app_main(void)
     ret = ui_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "UI init failed: %s", esp_err_to_name(ret));
-    } else if (s_state == STATE_HOME_IDLE) {
+    } else if (s_state == STATE_HOME_IDLE && !touch_calibration_start_if_needed()) {
         ESP_LOGI(TAG, "[BOOT] Showing RaceSense splash before dashboard");
         ui_events_register_listener(_on_ui_event_cb);
         ui_show_boot_splash();
@@ -255,6 +287,56 @@ void app_main(void)
      * Runs on Core 1 (app_main stack). Core 0 will run sensor tasks.
      * ════════════════════════════════════════════════════════════════════*/
     while (1) {
+        static int64_t last_health_log_us;
+        int64_t now_us = esp_timer_get_time();
+        if (now_us - last_health_log_us >= 2000000) {
+            bsp_battery_state_t hw_bat;
+            bsp_battery_update(&hw_bat);
+
+            gps_health_t gps_health = {0};
+            gps_fix_t gps_fix = {0};
+            char last_nmea[128] = {0};
+            gps_get_health(&gps_health);
+            gps_get_fix(&gps_fix);
+            gps_get_last_nmea(last_nmea, sizeof(last_nmea));
+
+            bmi323_raw_t imu_raw = {0};
+            bmi323_data_t imu_si = {0};
+            sensors_get_latest_imu(&imu_raw);
+            bmi323_raw_to_si(&imu_raw, &imu_si);
+
+            ESP_LOGI(TAG, "health: state=%d heap=%u psram=%u",
+                     (int)s_state,
+                     (unsigned)esp_get_free_heap_size(),
+                     (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+            ESP_LOGI(TAG, "[HW] ADC GPIO%d: raw=%.3fV filtered=%.3fV pct=%d",
+                     BSP_PIN_BATTERY_ADC, hw_bat.raw_v, hw_bat.filtered_v, hw_bat.percent);
+            ESP_LOGI(TAG, "[HW] SD: %s usage=%d%%",
+                     bsp_sdcard_mounted() ? "mounted" : "not-mounted",
+                     bsp_sdcard_get_usage_percent());
+            ESP_LOGI(TAG, "[HW] GPS UART1 GPIO%d->RX/GPIO%d<-TX: lines=%lu RMC=%lu GGA=%lu rate=%.2fHz period=%.0fms[%lu..%lu] ACK=%lu/%lu checksum_fail=%lu fix=%s sats=%d lat=%.6f lon=%.6f last=%s",
+                     GPS_PIN_TX, GPS_PIN_RX,
+                     (unsigned long)gps_health.lines_processed,
+                     (unsigned long)gps_health.rmc_received,
+                     (unsigned long)gps_health.gga_received,
+                     gps_health.rmc_rate_hz, gps_health.rmc_period_avg_ms,
+                     (unsigned long)gps_health.rmc_period_min_ms,
+                     (unsigned long)gps_health.rmc_period_max_ms,
+                     (unsigned long)gps_health.ubx_ack_ok,
+                     (unsigned long)gps_health.ubx_ack_fail,
+                     (unsigned long)gps_health.checksum_failures,
+                     gps_fix.valid ? "valid" : "invalid", gps_fix.satellites,
+                     gps_fix.lat, gps_fix.lon,
+                     last_nmea[0] ? last_nmea : "<none>");
+            ESP_LOGI(TAG, "[HW] BMI323 I2C1 SDA=%d SCL=%d addr=0x%02X init=%s raw=[%d,%d,%d,%d,%d,%d] si=[%.3f,%.3f,%.3f g; %.3f,%.3f,%.3f dps]",
+                     BSP_PIN_BMI323_SDA, BSP_PIN_BMI323_SCL, bmi323_get_i2c_address(),
+                     sensors_imu_ok() ? "ok" : "failed",
+                     imu_raw.ax, imu_raw.ay, imu_raw.az,
+                     imu_raw.gx, imu_raw.gy, imu_raw.gz,
+                     imu_si.ax, imu_si.ay, imu_si.az,
+                     imu_si.gx, imu_si.gy, imu_si.gz);
+            last_health_log_us = now_us;
+        }
         switch (s_state) {
 
             case STATE_AUTO_COPY:
@@ -326,6 +408,11 @@ void app_main(void)
                 vTaskDelay(pdMS_TO_TICKS(100)); /* 10Hz live dashboard update rate */
                 break;
             }
+
+            case STATE_HARDWARE_DEBUG:
+                ui_hardware_debug_update();
+                vTaskDelay(pdMS_TO_TICKS(50));
+                break;
 
             case STATE_SECTOR_FLASH:
                 /* TODO Phase 8: Brief full-screen color overlay (3s).     */

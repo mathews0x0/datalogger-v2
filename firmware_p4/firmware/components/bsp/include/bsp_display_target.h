@@ -4,7 +4,7 @@
  *
  * Automatically detects whether the build target is ESP32-S3 or ESP32-P4:
  *
- *   Target 0: Waveshare ESP32-P4 4.3" — ST7701 MIPI-DSI 2-lane 800×480 + GT911 I2C
+ *   Target 0: Waveshare ESP32-P4 4.3" — ST7701 MIPI-DSI 2-lane 480×800 + GT911 I2C
  *   Target 1: Generic 3.5" — ILI9488 SPI 480×320 + FT6336 I2C
  *   Target 2: RaceSense ESP32-S3 2.8" — ILI9341 SPI 320×240 + XPT2046 SPI
  *
@@ -31,14 +31,15 @@
 
 /* ── Target 0: Waveshare P4 4.3" — ST7701 MIPI-DSI + GT911 ────────────*/
 #if BSP_DISPLAY_TARGET == 0
-  #define BSP_LCD_H_RES            800
-  #define BSP_LCD_V_RES            480
+  #define BSP_LCD_H_RES            480
+  #define BSP_LCD_V_RES            800
   #define BSP_LCD_COLOR_FORMAT     LV_COLOR_FORMAT_RGB565
   #define BSP_TOUCH_I2C_NUM        I2C_NUM_0
   #define BSP_TOUCH_I2C_ADDR       0x5D       /**< GT911 default addr */
   #define BSP_TOUCH_INT_GPIO       (-1)
-  #define BSP_TOUCH_RST_GPIO       (-1)
-  #define BSP_LCD_BL_GPIO          (-1)
+  #define BSP_TOUCH_RST_GPIO       23
+  #define BSP_LCD_RST_GPIO         27
+  #define BSP_LCD_BL_GPIO          26
   #define BSP_MIPI_DSI_LANE_NUM    2
   #define BSP_MIPI_DSI_LANE_MBR    500
   #define BSP_LCD_DRAW_BUF_SIZE    (BSP_LCD_H_RES * BSP_LCD_V_RES / 10)

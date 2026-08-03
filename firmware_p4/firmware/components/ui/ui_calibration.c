@@ -58,6 +58,7 @@ static void _on_btn_calib_cancel_cb(lv_event_t *e)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_imu_calibration_wizard(void)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     s_calib_stage = 1;
     ESP_LOGI(TAG, "Constructing Screen 11: 6-Stage IMU Calibration Wizard [%dx%d]", UI_HOR_RES, UI_VER_RES);
@@ -68,7 +69,7 @@ void ui_show_imu_calibration_wizard(void)
 
     /* Header Bar */
     lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_set_size(header, 320, 28);
+    lv_obj_set_size(header, UI_HOR_RES, UI_HEADER_HEIGHT);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -82,10 +83,15 @@ void ui_show_imu_calibration_wizard(void)
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(0x00E5FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
-    /* Center Info Card (304x120 px) */
+    const int margin = UI_RES_CLASS_WIDESCREEN ? 40 : 8;
+    const int card_w = UI_HOR_RES - 2 * margin;
+    const int card_h = UI_RES_CLASS_WIDESCREEN ? 230 : 120;
+    const int button_h = UI_RES_CLASS_WIDESCREEN ? 100 : 66;
+
+    /* Center Info Card */
     lv_obj_t *card = lv_obj_create(scr);
-    lv_obj_set_size(card, 304, 120);
-    lv_obj_set_pos(card, 8, 36);
+    lv_obj_set_size(card, card_w, card_h);
+    lv_obj_set_pos(card, margin, UI_HEADER_HEIGHT + (UI_RES_CLASS_WIDESCREEN ? 36 : 8));
     lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(card, lv_color_hex(0x2A2A35), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(card, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -103,10 +109,12 @@ void ui_show_imu_calibration_wizard(void)
     lv_obj_set_style_text_color(lbl_noise, lv_color_hex(0x00D26A), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_noise, LV_ALIGN_BOTTOM_MID, 0, -4);
 
-    /* Bottom Buttons (2 Buttons side by side across 304 px) */
+    /* Bottom Buttons */
     lv_obj_t *btn_cancel = lv_btn_create(scr);
-    lv_obj_set_size(btn_cancel, 148, 66);
-    lv_obj_set_pos(btn_cancel, 8, 166);
+    const int button_gap = UI_RES_CLASS_WIDESCREEN ? 24 : 8;
+    const int button_w = (card_w - button_gap) / 2;
+    lv_obj_set_size(btn_cancel, button_w, button_h);
+    lv_obj_set_pos(btn_cancel, margin, UI_RES_CLASS_WIDESCREEN ? UI_VER_RES - 32 - button_h : 166);
     lv_obj_set_style_bg_color(btn_cancel, lv_color_hex(0x3A3A45), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn_cancel, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(btn_cancel, _on_btn_calib_cancel_cb, LV_EVENT_CLICKED, NULL);
@@ -117,8 +125,9 @@ void ui_show_imu_calibration_wizard(void)
     lv_obj_align(lbl_btn_canc, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *btn_next = lv_btn_create(scr);
-    lv_obj_set_size(btn_next, 148, 66);
-    lv_obj_set_pos(btn_next, 164, 166);
+    lv_obj_set_size(btn_next, button_w, button_h);
+    lv_obj_set_pos(btn_next, margin + button_w + button_gap,
+                   UI_RES_CLASS_WIDESCREEN ? UI_VER_RES - 32 - button_h : 166);
     lv_obj_set_style_bg_color(btn_next, lv_color_hex(0x00D26A), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn_next, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(btn_next, _on_btn_calib_next_cb, LV_EVENT_CLICKED, NULL);
@@ -128,7 +137,7 @@ void ui_show_imu_calibration_wizard(void)
     lv_obj_set_style_text_color(lbl_btn_next, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn_next, LV_ALIGN_CENTER, 0, 0);
 
-    lv_scr_load(scr);
+    ui_load_screen(scr);
     ui_unlock();
 }
 

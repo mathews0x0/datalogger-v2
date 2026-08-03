@@ -27,11 +27,11 @@ extern "C" {
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Pin Constants (GPS breakout on Waveshare P4 expansion header)
- * Adjust to match the actual header pins used on your harness.
+ * Production P4 wiring: P4 GPIO3/UART TX → GPS RX and P4 GPIO4/UART RX ← GPS TX.
  * ────────────────────────────────────────────────────────────────────────*/
 #define GPS_UART_NUM        1        /**< ESP32-P4 UART1               */
-#define GPS_PIN_TX          17       /**< UART1 TX (expansion header)  — VERIFY */
-#define GPS_PIN_RX          18       /**< UART1 RX (expansion header)  — VERIFY */
+#define GPS_PIN_TX          3        /**< P4 UART1 TX → GPS RX */
+#define GPS_PIN_RX          4        /**< P4 UART1 RX ← GPS TX */
 #define GPS_UART_RX_BUF_SZ  4096    /**< RX buffer for NMEA at 10Hz   */
 
 /* Baud rates */
@@ -71,6 +71,13 @@ typedef struct {
     uint32_t rmc_received;
     uint32_t gga_received;
     int      max_lines_per_update;
+    float    rmc_rate_hz;          /**< Measured rate from successive RMC lines */
+    float    rmc_period_avg_ms;    /**< Average measured RMC period */
+    uint32_t rmc_period_min_ms;
+    uint32_t rmc_period_max_ms;
+    uint32_t ubx_ack_ok;
+    uint32_t ubx_ack_fail;
+    bool     config_ok;
 } gps_health_t;
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -130,6 +137,9 @@ esp_err_t gps_get_position(double *lat, double *lon,
  * @param[out] health  Destination struct.
  */
 void gps_get_health(gps_health_t *health);
+
+/** Copy the most recently received raw NMEA line for hardware validation. */
+void gps_get_last_nmea(char *buf, int buf_len);
 
 /**
  * @brief Send a UBX binary frame with automatic checksum.

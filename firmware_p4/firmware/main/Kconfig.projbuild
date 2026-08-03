@@ -2,6 +2,7 @@ menu "RaceSense Configuration"
 
     choice RS_DISPLAY_PROFILE
         prompt "RaceSense display profile"
+        default RS_DISPLAY_PROFILE_800_480 if IDF_TARGET_ESP32P4
         default RS_DISPLAY_PROFILE_320_240
         help
             Select the logical UI resolution independently from the ESP target.

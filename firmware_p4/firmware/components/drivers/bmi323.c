@@ -26,6 +26,7 @@ static const char *TAG = "bmi323";
  * ────────────────────────────────────────────────────────────────────────*/
 static i2c_master_bus_handle_t  s_i2c_bus     = NULL;
 static i2c_master_dev_handle_t  s_i2c_dev     = NULL;
+static uint8_t                  s_i2c_addr    = BMI323_I2C_ADDR;
 static bool                     s_initialized = false;
 static uint64_t                 s_fifo_ticks  = 0;   /* accumulated sensor ticks */
 static bool                     s_fifo_seeded = false;
@@ -150,11 +151,15 @@ esp_err_t bmi323_init(void)
 {
     if (s_initialized) return ESP_OK;
 
-    /* Set up I2C master bus on I2C0 (dynamic pins from bsp.h @ 400kHz) */
+    /* Set up the dedicated P4 I2C1 bus (GPIO21/22), separate from GT911 I2C0. */
     i2c_master_bus_config_t bus_cfg = {
+#if CONFIG_IDF_TARGET_ESP32P4
+        .i2c_port          = I2C_NUM_1,
+#else
         .i2c_port          = I2C_NUM_0,
-        .sda_io_num        = BSP_PIN_I2C0_SDA,
-        .scl_io_num        = BSP_PIN_I2C0_SCL,
+#endif
+        .sda_io_num        = BSP_PIN_BMI323_SDA,
+        .scl_io_num        = BSP_PIN_BMI323_SCL,
         .clk_source        = I2C_CLK_SRC_DEFAULT,
         .glitch_ignore_cnt = 7,
         .flags.enable_internal_pullup = true,
@@ -165,10 +170,26 @@ esp_err_t bmi323_init(void)
         return ret;
     }
 
-    /* Add BMI323 device at 0x69 */
+    /* Probe both legal BMI323 I2C addresses. Four-pin modules commonly strap
+     * SDO internally, so do not assume the module exposes the strap pin. */
+    uint8_t detected_addr = 0;
+    if (i2c_master_probe(s_i2c_bus, 0x69, 50) == ESP_OK) {
+        detected_addr = 0x69;
+    } else if (i2c_master_probe(s_i2c_bus, 0x68, 50) == ESP_OK) {
+        detected_addr = 0x68;
+    }
+    if (!detected_addr) {
+        ESP_LOGE(TAG, "BMI323 not detected at I2C addresses 0x68 or 0x69");
+        i2c_del_master_bus(s_i2c_bus);
+        s_i2c_bus = NULL;
+        return ESP_ERR_NOT_FOUND;
+    }
+    s_i2c_addr = detected_addr;
+
+    /* Add BMI323 device at the detected address. */
     i2c_device_config_t dev_cfg = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address  = BMI323_I2C_ADDR,
+        .device_address  = s_i2c_addr,
         .scl_speed_hz    = 400000,
     };
     ret = i2c_master_bus_add_device(s_i2c_bus, &dev_cfg, &s_i2c_dev);
@@ -194,6 +215,11 @@ esp_err_t bmi323_init(void)
 bool bmi323_is_ok(void)
 {
     return s_initialized;
+}
+
+uint8_t bmi323_get_i2c_address(void)
+{
+    return s_i2c_addr;
 }
 
 esp_err_t bmi323_soft_reset(void)

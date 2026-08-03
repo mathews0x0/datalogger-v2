@@ -5,6 +5,7 @@ idf_component_register(
          "ui_home.c"
          "ui_logging.c"
          "ui_settings.c"
+         "ui_debug.c"
          "ui_calibration.c"
          "ui_sync.c"
     INCLUDE_DIRS "include"

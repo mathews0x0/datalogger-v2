@@ -12,9 +12,11 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <math.h>
+#include <limits.h>
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -25,7 +27,9 @@ static const char *TAG = "gps";
  * ────────────────────────────────────────────────────────────────────────*/
 static gps_fix_t    s_fix    = {0};
 static gps_health_t s_health = {0};
+static char         s_last_nmea[128] = {0};
 static bool         s_initialized = false;
+static int64_t      s_last_rmc_us = 0;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * UBX framing
@@ -55,10 +59,79 @@ void gps_send_ubx(uint8_t msg_class, uint8_t msg_id,
     uart_write_bytes(GPS_UART_NUM, (const char *)frame, total);
 }
 
+static bool _ubx_wait_for_ack(uint8_t msg_class, uint8_t msg_id, int timeout_ms)
+{
+    uint8_t frame[64];
+    size_t n = 0;
+    int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+
+    while (esp_timer_get_time() < deadline) {
+        uint8_t byte;
+        if (uart_read_bytes(GPS_UART_NUM, &byte, 1, pdMS_TO_TICKS(5)) != 1) {
+            continue;
+        }
+
+        if (n == 0) {
+            if (byte != 0xB5) continue;
+            frame[n++] = byte;
+            continue;
+        }
+        if (n == 1 && byte != 0x62) {
+            n = (byte == 0xB5) ? 1 : 0;
+            if (n) frame[0] = byte;
+            continue;
+        }
+        if (n >= sizeof(frame)) {
+            n = 0;
+            continue;
+        }
+        frame[n++] = byte;
+
+        if (n < 6) continue;
+        uint16_t payload_len = (uint16_t)frame[4] | ((uint16_t)frame[5] << 8);
+        size_t frame_len = 6U + payload_len + 2U;
+        if (frame_len > sizeof(frame)) {
+            n = 0;
+            continue;
+        }
+        if (n < frame_len) continue;
+
+        bool checksum_ok = true;
+        uint8_t ck_a = 0;
+        uint8_t ck_b = 0;
+        for (size_t i = 2; i < 6U + payload_len; i++) {
+            ck_a += frame[i];
+            ck_b += ck_a;
+        }
+        checksum_ok = (ck_a == frame[6U + payload_len] &&
+                       ck_b == frame[7U + payload_len]);
+
+        bool matched = checksum_ok && payload_len == 2 &&
+                       frame[2] == 0x05 &&
+                       (frame[3] == 0x01 || frame[3] == 0x00) &&
+                       frame[6] == msg_class && frame[7] == msg_id;
+        if (matched) {
+            return frame[3] == 0x01;
+        }
+        n = 0;
+    }
+    return false;
+}
+
+static bool _ubx_send_wait_ack(uint8_t msg_class, uint8_t msg_id,
+                               const uint8_t *payload, int len)
+{
+    gps_send_ubx(msg_class, msg_id, payload, len);
+    bool ok = _ubx_wait_for_ack(msg_class, msg_id, 250);
+    if (ok) s_health.ubx_ack_ok++;
+    else    s_health.ubx_ack_fail++;
+    return ok;
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * UBX configuration commands
  * ────────────────────────────────────────────────────────────────────────*/
-static void _ubx_set_baudrate(int baud)
+static bool _ubx_set_baudrate(int baud)
 {
     /* CFG-PRT payload for UART port 1, pre-calculated for common rates */
     uint8_t payload[20];
@@ -71,10 +144,10 @@ static void _ubx_set_baudrate(int baud)
     payload[11] = (uint8_t)((baud >> 24) & 0xFF);
     payload[12] = 0x07;  payload[13] = 0x00;  /* inProtoMask: UBX+NMEA+RTCM */
     payload[14] = 0x03;  payload[15] = 0x00;  /* outProtoMask: UBX+NMEA */
-    gps_send_ubx(UBX_CLASS_CFG, UBX_ID_CFG_PRT, payload, sizeof(payload));
+    return _ubx_send_wait_ack(UBX_CLASS_CFG, UBX_ID_CFG_PRT, payload, sizeof(payload));
 }
 
-static void _ubx_set_rate_hz(int hz)
+static bool _ubx_set_rate_hz(int hz)
 {
     uint16_t interval_ms = (uint16_t)(1000 / hz);
     uint8_t payload[6] = {
@@ -82,17 +155,22 @@ static void _ubx_set_rate_hz(int hz)
         0x01, 0x00,  /* navRate = 1 */
         0x01, 0x00,  /* timeRef = 1 (UTC) */
     };
-    gps_send_ubx(UBX_CLASS_CFG, UBX_ID_CFG_RATE, payload, sizeof(payload));
+    bool rate_ack = _ubx_send_wait_ack(UBX_CLASS_CFG, UBX_ID_CFG_RATE, payload, sizeof(payload));
 
     /* Disable unused NMEA sentences to reduce UART bandwidth */
     uint8_t gsv[] = { 0xF0, 0x03, 0x00 };  /* GSV */
     uint8_t gll[] = { 0xF0, 0x01, 0x00 };  /* GLL */
     uint8_t vtg[] = { 0xF0, 0x05, 0x00 };  /* VTG */
     uint8_t gsa[] = { 0xF0, 0x02, 0x00 };  /* GSA */
-    gps_send_ubx(UBX_CLASS_CFG, UBX_ID_CFG_MSG, gsv, sizeof(gsv));
-    gps_send_ubx(UBX_CLASS_CFG, UBX_ID_CFG_MSG, gll, sizeof(gll));
-    gps_send_ubx(UBX_CLASS_CFG, UBX_ID_CFG_MSG, vtg, sizeof(vtg));
-    gps_send_ubx(UBX_CLASS_CFG, UBX_ID_CFG_MSG, gsa, sizeof(gsa));
+    bool gsv_ack = _ubx_send_wait_ack(UBX_CLASS_CFG, UBX_ID_CFG_MSG, gsv, sizeof(gsv));
+    bool gll_ack = _ubx_send_wait_ack(UBX_CLASS_CFG, UBX_ID_CFG_MSG, gll, sizeof(gll));
+    bool vtg_ack = _ubx_send_wait_ack(UBX_CLASS_CFG, UBX_ID_CFG_MSG, vtg, sizeof(vtg));
+    bool gsa_ack = _ubx_send_wait_ack(UBX_CLASS_CFG, UBX_ID_CFG_MSG, gsa, sizeof(gsa));
+    ESP_LOGI(TAG, "GPS config ACKs: RATE=%s GSV=%s GLL=%s VTG=%s GSA=%s",
+             rate_ack ? "ok" : "fail", gsv_ack ? "ok" : "fail",
+             gll_ack ? "ok" : "fail", vtg_ack ? "ok" : "fail",
+             gsa_ack ? "ok" : "fail");
+    return rate_ack && gsv_ack && gll_ack && vtg_ack && gsa_ack;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -150,6 +228,27 @@ static void _parse_gprmc(char *fields[], int n)
 {
     if (n < 10) return;
     s_health.rmc_received++;
+
+    int64_t now_us = esp_timer_get_time();
+    if (s_last_rmc_us > 0 && now_us > s_last_rmc_us) {
+        uint32_t period_ms = (uint32_t)((now_us - s_last_rmc_us) / 1000);
+        if (period_ms > 0) {
+            if (s_health.rmc_period_min_ms == 0 || period_ms < s_health.rmc_period_min_ms) {
+                s_health.rmc_period_min_ms = period_ms;
+            }
+            if (period_ms > s_health.rmc_period_max_ms) {
+                s_health.rmc_period_max_ms = period_ms;
+            }
+            if (s_health.rmc_period_avg_ms <= 0.0f) {
+                s_health.rmc_period_avg_ms = (float)period_ms;
+            } else {
+                s_health.rmc_period_avg_ms =
+                    0.9f * s_health.rmc_period_avg_ms + 0.1f * (float)period_ms;
+            }
+            s_health.rmc_rate_hz = 1000.0f / s_health.rmc_period_avg_ms;
+        }
+    }
+    s_last_rmc_us = now_us;
 
     /* Timestamp (always update — shows UART is live even without fix) */
     if (fields[1][0]) {
@@ -244,7 +343,8 @@ esp_err_t gps_init(void)
     ESP_LOGI(TAG, "GPS UART1 open at %d baud (TX:%d RX:%d)", GPS_BAUD_BOOT, GPS_PIN_TX, GPS_PIN_RX);
 
     /* 2. Send UBX CFG-PRT to shift baud rate to target */
-    _ubx_set_baudrate(GPS_BAUD_TARGET);
+    bool baud_ok = _ubx_set_baudrate(GPS_BAUD_TARGET);
+    ESP_LOGI(TAG, "GPS CFG-PRT baud ACK: %s", baud_ok ? "ok" : "not received");
     vTaskDelay(pdMS_TO_TICKS(100));
 
     /* 3. Re-init UART at target baud */
@@ -254,8 +354,19 @@ esp_err_t gps_init(void)
     uart_flush(GPS_UART_NUM);
     vTaskDelay(pdMS_TO_TICKS(20));
 
+    /* If the module retained the target baud in battery-backed/config memory,
+     * the initial 9600-baud CFG-PRT cannot be acknowledged.  Retry at the
+     * target baud so every boot still verifies the UART configuration. */
+    if (!baud_ok) {
+        bool retry_ack = _ubx_set_baudrate(GPS_BAUD_TARGET);
+        ESP_LOGI(TAG, "GPS CFG-PRT retry at %d baud ACK: %s",
+                 GPS_BAUD_TARGET, retry_ack ? "ok" : "not received");
+        baud_ok = retry_ack;
+    }
+
     /* 4. Set measurement rate to 10Hz + disable unused sentences */
-    _ubx_set_rate_hz(10);
+    bool rate_ok = _ubx_set_rate_hz(10);
+    s_health.config_ok = baud_ok && rate_ok;
     vTaskDelay(pdMS_TO_TICKS(50));
 
     ESP_LOGI(TAG, "GPS Neo-M8N ready: %d baud / 10Hz", GPS_BAUD_TARGET);
@@ -288,6 +399,10 @@ bool gps_update(int max_lines)
         line[idx] = '\0';
 
         if (line[0] != '$') continue;
+
+        /* Retain the raw sentence for the boot hardware-validation trace. */
+        strncpy(s_last_nmea, line, sizeof(s_last_nmea) - 1);
+        s_last_nmea[sizeof(s_last_nmea) - 1] = '\0';
 
         uint32_t rmc_before = s_health.rmc_received;
         s_health.lines_processed++;
@@ -328,4 +443,11 @@ esp_err_t gps_get_position(double *lat, double *lon,
 void gps_get_health(gps_health_t *health)
 {
     if (health) memcpy(health, &s_health, sizeof(*health));
+}
+
+void gps_get_last_nmea(char *buf, int buf_len)
+{
+    if (!buf || buf_len <= 0) return;
+    strncpy(buf, s_last_nmea, (size_t)buf_len - 1);
+    buf[buf_len - 1] = '\0';
 }

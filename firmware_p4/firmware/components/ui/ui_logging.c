@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 
 static const char *TAG = "ui_logging";
@@ -19,6 +20,7 @@ static const char *TAG = "ui_logging";
 /* Internal state tracking for logging telemetry displays */
 static int  s_current_lap = 1;
 static bool s_logging_active = false;
+static int64_t s_logging_ready_us;
 
 /* Static widget handles for zero-flicker live telemetry updates */
 static lv_obj_t *s_lbl_lap_time = NULL;
@@ -45,6 +47,7 @@ static void _on_btn_stop_clicked_cb(lv_event_t *e)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_imu_validation(void)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     ESP_LOGI(TAG, "Constructing Screen 4: IMU Validation Overlay [%dx%d]", UI_HOR_RES, UI_VER_RES);
     ESP_LOGI(TAG, "   -> Vibration Noise Floor: 0.02G (PASS <= 0.15G Max)");
@@ -58,18 +61,32 @@ void ui_show_imu_validation(void)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_logging(const char *track_name, int sats)
 {
+    ui_home_deactivate();
     ui_lock(-1);
     ESP_LOGI(TAG, "Constructing Screen 3: v4 Hero Live Logging Cockpit [%dx%d]", UI_HOR_RES, UI_VER_RES);
     
     s_logging_active = true;
+    /* The MIPI/LVGL software-rotated display needs one completed frame after
+     * a full-screen replacement before high-frequency telemetry invalidates
+     * widgets again. */
+    s_logging_ready_us = esp_timer_get_time() + 350000;
 
-    lv_obj_t *scr = lv_obj_create(NULL);
+    /* Reuse the active root for Home <-> Logging to avoid a visible MIPI
+     * framebuffer clear during a root-screen transition. */
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_clean(scr);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x09090D), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    /* 1. Top Header Bar (320x28 px) */
+    const int margin = UI_RES_CLASS_WIDESCREEN ? 32 : 8;
+    const int content_w = UI_HOR_RES - 2 * margin;
+    const int timer_h = UI_RES_CLASS_WIDESCREEN ? 190 : 86;
+    const int telemetry_h = UI_RES_CLASS_WIDESCREEN ? 80 : 34;
+    const int stop_h = UI_RES_CLASS_WIDESCREEN ? 96 : 66;
+
+    /* 1. Top Header Bar */
     lv_obj_t *header = lv_obj_create(scr);
-    lv_obj_set_size(header, 320, 28);
+    lv_obj_set_size(header, UI_HOR_RES, UI_HEADER_HEIGHT);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_color(header, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_side(header, LV_BORDER_SIDE_BOTTOM, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -95,10 +112,10 @@ void ui_show_logging(const char *track_name, int sats)
     lv_obj_set_style_text_color(lbl_gps, lv_color_hex(0x00E5FF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_gps, LV_ALIGN_RIGHT_MID, 0, 0);
 
-    /* 2. Hero Lap Timer Display Card (304x86 px) */
+    /* 2. Hero Lap Timer Display Card */
     lv_obj_t *card_timer = lv_obj_create(scr);
-    lv_obj_set_size(card_timer, 304, 86);
-    lv_obj_set_pos(card_timer, 8, 34);
+    lv_obj_set_size(card_timer, content_w, timer_h);
+    lv_obj_set_pos(card_timer, margin, UI_HEADER_HEIGHT + (UI_RES_CLASS_WIDESCREEN ? 24 : 6));
     lv_obj_set_style_bg_color(card_timer, lv_color_hex(0x1A1A22), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(card_timer, lv_color_hex(0x2A2A35), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(card_timer, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -122,10 +139,11 @@ void ui_show_logging(const char *track_name, int sats)
     lv_obj_set_style_text_color(s_lbl_lap_time, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(s_lbl_lap_time, LV_ALIGN_BOTTOM_MID, 0, -4);
 
-    /* 3. Telemetry & Delta Bar (304x34 px) */
+    /* 3. Telemetry & Delta Bar */
     lv_obj_t *card_telemetry = lv_obj_create(scr);
-    lv_obj_set_size(card_telemetry, 304, 34);
-    lv_obj_set_pos(card_telemetry, 8, 126);
+    lv_obj_set_size(card_telemetry, content_w, telemetry_h);
+    lv_obj_set_pos(card_telemetry, margin,
+                   UI_HEADER_HEIGHT + (UI_RES_CLASS_WIDESCREEN ? 24 + timer_h + 20 : 6 + timer_h + 6));
     lv_obj_set_style_bg_color(card_telemetry, lv_color_hex(0x242430), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_color(card_telemetry, lv_color_hex(0x353545), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_border_width(card_telemetry, 1, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -142,10 +160,10 @@ void ui_show_logging(const char *track_name, int sats)
     lv_obj_set_style_text_color(s_lbl_lean, lv_color_hex(0x007AFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(s_lbl_lean, LV_ALIGN_RIGHT_MID, -4, 0);
 
-    /* 4. Bottom Action Dock: Return / Stop Button (304x66 px, Y=166) */
+    /* 4. Bottom Action Dock */
     lv_obj_t *btn_stop = lv_btn_create(scr);
-    lv_obj_set_size(btn_stop, 304, 66);
-    lv_obj_set_pos(btn_stop, 8, 166);
+    lv_obj_set_size(btn_stop, content_w, stop_h);
+    lv_obj_set_pos(btn_stop, margin, UI_RES_CLASS_WIDESCREEN ? UI_VER_RES - 28 - stop_h : 166);
     lv_obj_set_style_bg_color(btn_stop, lv_color_hex(0xFF3B30), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_radius(btn_stop, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_add_event_cb(btn_stop, _on_btn_stop_clicked_cb, LV_EVENT_CLICKED, NULL);
@@ -155,7 +173,7 @@ void ui_show_logging(const char *track_name, int sats)
     lv_obj_set_style_text_color(lbl_btn_stop, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn_stop, LV_ALIGN_CENTER, 0, 0);
 
-    lv_scr_load(scr);
+    lv_obj_invalidate(scr);
     ESP_LOGI(TAG, "Screen 3 graphical rendered successfully");
 
     ui_unlock();
@@ -166,7 +184,7 @@ void ui_show_logging(const char *track_name, int sats)
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_logging_update_lap(const char *lap_time, const char *delta, bool faster, int lap_count)
 {
-    if (!s_logging_active) {
+    if (!s_logging_active || esp_timer_get_time() < s_logging_ready_us) {
         return;
     }
 
@@ -191,7 +209,7 @@ void ui_logging_update_lap(const char *lap_time, const char *delta, bool faster,
 
 void ui_logging_update_lean(float angle_deg, char side)
 {
-    if (!s_logging_active) {
+    if (!s_logging_active || esp_timer_get_time() < s_logging_ready_us) {
         return;
     }
 

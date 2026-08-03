@@ -2,7 +2,7 @@
 
 **Owner:** Product Management (PM)
 **Purpose:** Single consolidated, authoritative project memory
-**Last Updated:** 2026-06-05
+**Last Updated:** 2026-08-03
 PRODUCT manager - CHATGPT
 Engineering manager/Devs - Antigravity
 
@@ -5781,3 +5781,158 @@ From a rider UX standpoint, visual clarity and touch responsiveness on the dashb
 From a product leadership stance, RaceSense has fully matured from a diagnostic development tool into a cohesive embedded racing operating system. Every tactile interaction point on the Widescreen P4 or compact S3 hardware leads to a functional graphical screen with intuitive bidirectional navigation, eliminating dead ends or freeze loops. Riders experience instant tactile and visual feedback, viewing live sensor dynamics right on their cockpit display.
 
 ### Status: ✅ Complete & Verified via ESP-IDF Compiler (Binary Footprint: ~665KB / 79% Free App Flash)
+
+---
+
+### [2026-08-03] Migration Architecture Review: P4 Bring-Up Scope and Parity Gaps
+
+**Objective:** Read and reconcile the ESP32-P4 migration documents, the native ESP-IDF implementation, the legacy ESP32-S3 MicroPython firmware, and the backend upload contracts.
+
+### Current Architecture Understanding
+
+The repository now has two firmware baselines:
+
+- `firmware_s3/firmware/` remains the MicroPython behavioral reference.
+- `firmware_p4/firmware/` contains the native C/FreeRTOS migration with shared target-aware components.
+
+The intended native split is:
+
+- **Core 0:** deterministic 100Hz IMU and 10Hz GPS acquisition.
+- **Core 1:** application state machine, LVGL UI, storage flushing, and networking.
+- **BSP:** target-specific pin maps, display/touch drivers, battery ADC, and SD mounting.
+- **Shared contracts:** dual-rate CSV rows, `M` marker rows, device metadata, resumable upload protocol, and backend device-token authentication.
+
+The active P4 display path is the Waveshare 4.3-inch ST7701 MIPI-DSI panel with GT911 capacitive touch, rendered as an 800×480 landscape UI. The S3 path targets the RS-Core V4.2 hardware with ILI9341 SPI display and XPT2046 touch.
+
+### Actual P4 Runtime Scope
+
+The current P4 firmware should be treated as a **display and UI bring-up image**, not as a complete telemetry logger:
+
+1. The P4 build selects `bmi323_stub.c`, because the Waveshare display board does not carry the production BMI323 IMU.
+2. The P4 build selects `network_stub.c`, so ESP32-C6 hosted WiFi, heartbeat, upload, and captive portal behavior are intentionally disabled while the transport is brought up.
+3. The UI screens and top-level state transitions exist, but several transitions still only render informative screens rather than executing the underlying storage, calibration, track, or network operation.
+4. The full BMI323 driver, native uploader, captive portal, track engine, and calibration solver exist as migration work, but are not all active in the P4 target runtime.
+
+### Critical Engineering Findings
+
+#### 1. Sensor and storage queues are disconnected
+
+The sensor task owns a private queue and pushes rows directly into it. The storage flush task owns a separate private queue and drains that queue. No current call connects the two queues, and `storage_enqueue_row()` is not used by the sensor task.
+
+**Consequence:** On a target with a functioning IMU, a logging session can open a CSV file but sensor rows will not reach the storage writer until the queue ownership/bridge is corrected.
+
+#### 2. GPS pin definitions are inconsistent
+
+The BSP maps P4 GPS to GPIO 3/4, while `drivers/include/gps.h` hardcodes UART1 TX/RX as GPIO 17/18 and `gps.c` uses those hardcoded values.
+
+**Consequence:** GPS bring-up may use the wrong physical pins unless the pin contract is centralized and verified against the selected board harness.
+
+#### 3. Runtime state machine wiring is incomplete
+
+`main.c` still contains TODO paths for sector overlays, full sync behavior, settings persistence, calibration execution, and captive-portal startup. The track engine, feedback state machine, and IMU calibration solver are compiled into the project but are not fully initialized and connected to the sensor/UI event flow.
+
+#### 4. Documentation and implementation have drifted
+
+The migration documents describe feature-complete 100Hz/10Hz telemetry, WiFi sync, and a completed 12-screen operating system. The current code and P4 build configuration show that these are partially implemented or target-disabled. Earlier diary entries also describe the UI suite as complete; this review supersedes that claim for end-to-end runtime behavior.
+
+### PM Interpretation
+
+The migration has a sound architectural direction and a working P4 display/touch foundation, but feature parity has not yet been achieved. The next engineering gate is not additional UI polish; it is proving an end-to-end data path on the production S3 hardware and separately validating P4 networking/display integration:
+
+- acquire real IMU/GPS samples
+- deliver rows through one shared queue to storage
+- produce valid CSV sessions with markers
+- verify backend upload/resume compatibility
+- connect track and calibration events to the state machine
+- resolve the GPS pin mapping before hardware sign-off
+
+No firmware flashing was performed during this review. Existing working-tree changes were preserved.
+
+---
+
+### [2026-08-03] P4 Display, Touch, and LVGL Navigation Bring-Up
+
+**Objective:** Bring the Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 display and touch UI to a stable, usable 800×480 landscape baseline.
+
+### Engineering Achievements
+
+1. **Panel bring-up:** Configured the ST7701 MIPI-DSI 480×800 panel for an 800×480 landscape LVGL dashboard. Corrected color ordering, display orientation, resolution, and UI scaling.
+2. **GT911 touch integration:** Enabled the capacitive GT911 controller on I²C GPIO7/8 with GPIO23 reset. Added a one-time persistent touch calibration flow backed by flash/NVS, while retaining the validated native-coordinate/LVGL rotation path for runtime input.
+3. **Full-screen UI migration:** Updated Home, Settings, Sync, Portal, Live Logging, and IMU Calibration layouts to use the P4’s full 800×480 canvas rather than legacy 320×240 geometry.
+4. **Touch reliability:** Corrected GT911 release-state handling so a completed contact cannot leave LVGL permanently in a pressed state.
+5. **LVGL lifetime stabilization:** Identified that `lv_scr_load()` retains the previous screen in the selected LVGL version. Replaced the navigation path with auto-deleting screen transitions, preventing screen-tree accumulation, flicker, and input lockups after repeated navigation. Also stopped the Home background updater from retaining deleted object pointers.
+6. **Transition polish:** Reworked the Home ↔ Logging route to reuse the active LVGL root rather than expose an intermediate MIPI framebuffer during a full root-screen swap.
+7. **Sync behavior:** Stabilized the Cloud Sync UI on P4. The UI remains navigable and no longer immediately bounces back Home; actual ESP32-C6 Wi‑Fi transport, cloud heartbeat, and uploads remain disabled pending dedicated P4 networking bring-up.
+
+### Status
+
+The P4 now has a working full-screen landscape UI, usable GT911 touch/navigation, and stable repeated screen transitions. This is a display/touch/UI foundation milestone; it does not yet establish P4 feature parity for Wi‑Fi sync, telemetry sensors, or production logging hardware.
+
+---
+
+### [2026-08-04] P4 Hardware Debug Console: GPS and BMI323 Tabs
+
+**Objective:** Add an in-device hardware diagnostics view so bring-up can be performed from the P4 display instead of relying only on serial logs.
+
+### Engineering Achievements
+
+1. **Settings integration:** Added a `HARDWARE DEBUG · GPS / IMU` action to the Settings screen and a new application state for live diagnostics.
+2. **GPS tab:** Added `SEARCHING`, `LOCKED`, and `ERROR` states, satellite count, latitude, longitude, GPS date/time, measured RMC rate, and configuration status.
+3. **IMU tab:** Added a live motion ball driven by BMI323 acceleration and gyro data, plus rounded integer physical values and raw integer readings.
+4. **GPS configuration verification:** The firmware now waits for UBX acknowledgements and retries CFG-PRT at 38400 baud when the receiver has retained that baud rate.
+5. **Measured GPS result:** Live hardware validation reports approximately `10.04 Hz` RMC output with `99–100 ms` periods. CFG-RATE and NMEA message configuration commands are acknowledged. The receiver remains in satellite search with zero satellites in the current test environment.
+6. **Build and flash:** The debug-enabled P4 image builds successfully with approximately 67% application-partition headroom and has been flashed to the connected board.
+
+### Current Constraint
+
+The latest runtime boot still reports the GT911 touch controller as unavailable (`ESP_ERR_INVALID_STATE`), so the new screen is implemented and flashed but cannot yet be opened through physical touch until the existing touch bring-up issue is resolved.
+
+### PM Interpretation
+
+GPS transport, configuration, and 10 Hz cadence are now empirically validated. The next useful hardware gate is obtaining a valid satellite fix outdoors, while the debug screen provides the permanent on-device view for GPS and IMU bring-up. SD remains a separate board-level initialization blocker.
+
+### [2026-08-04] P4 Sensor Pin Contract and SD Card Investigation
+
+**Objective:** Record the final P4 hardware mappings and separate confirmed sensor integration from the unresolved SD-card bring-up issue.
+
+### P4 Pin Configuration
+
+| Hardware | P4 mapping | Result |
+|---|---|---|
+| Neo-M8N GPS TX path | GPIO3 / UART1 TX → GPS RX | Confirmed live NMEA input path |
+| Neo-M8N GPS RX path | GPIO4 / UART1 RX ← GPS TX | Confirmed live NMEA input path |
+| BMI323 SDA | GPIO21 / I²C1 SDA | Confirmed at runtime |
+| BMI323 SCL | GPIO22 / I²C1 SCL | Confirmed at runtime |
+| Battery ADC | GPIO20 / ADC1 channel 4 | Confirmed; 3:1 divider |
+| SDMMC | slot 1; CLK43, CMD44, D0=39, D1=40, D2=41, D3=42 | Documented configuration flashed |
+| SD power control | GPIO45, active-low SD1_VDD switch | 3.3 V card rail confirmed |
+
+### BMI323 Integration
+
+The P4 build now uses the real BMI323 driver on the dedicated I²C1 bus rather
+than the former P4 stub. Runtime validation detected chip ID `0x43` at address
+`0x68`; the stationary module produces approximately `1 g` total acceleration
+with near-zero gyro output, and live readings change when the module moves.
+
+### GPS Integration
+
+The GPS driver configures the receiver through UBX CFG-PRT and CFG-RATE, disables
+unused NMEA sentences, and now verifies acknowledgements. The module retained
+38400 baud, so the firmware retries CFG-PRT at 38400 after the initial 9600
+probe. CFG-RATE is acknowledged and measured RMC cadence is approximately
+`10.04 Hz` with `99–100 ms` periods. The current test has valid NMEA transport
+but no satellite fix yet (`0 satellites`), so outdoor antenna acquisition is
+still required.
+
+### SD Card Investigation
+
+Two SD cards were tested. The documented Waveshare SDMMC slot/pin mapping was
+flashed and tested at 20 MHz, native 4-bit mode, 1-bit fallback, and native
+4-bit probing at 400 kHz. The card VCC at microSD pin 4 was measured at 3.3 V
+and GND at pin 6 was confirmed. Every attempt still fails during the initial
+SD `SEND_OP_COND` response with `ESP_ERR_TIMEOUT`, before FAT formatting is
+examined.
+
+**Status:** GPS and BMI323 integration pass initial hardware validation. SD
+power is present, but the card remains electrically silent during controller
+initialization; SD mount and write/readback validation remain blocked.

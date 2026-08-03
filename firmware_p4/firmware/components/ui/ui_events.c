@@ -57,6 +57,12 @@ void ui_events_on_open_settings(void)
     ui_events_dispatch(UI_EVENT_SETTINGS_CLICKED, NULL);
 }
 
+void ui_events_on_open_hardware_debug(void)
+{
+    ESP_LOGI(TAG, "Touch Action: HARDWARE DEBUG screen requested");
+    ui_events_dispatch(UI_EVENT_HARDWARE_DEBUG_CLICKED, NULL);
+}
+
 void ui_events_on_navigate_home(void)
 {
     ESP_LOGI(TAG, "Touch Action: NAVIGATE HOME / CANCEL requested");

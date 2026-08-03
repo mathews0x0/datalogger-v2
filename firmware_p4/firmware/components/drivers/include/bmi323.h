@@ -2,8 +2,8 @@
  * @file bmi323.h
  * @brief BMI323 6-axis IMU driver — Waveshare ESP32-P4 / RaceSense
  *
- * I2C address: 0x69 (SDO pulled high on Waveshare header)
- * Bus:         I2C0, GPIO 7 (SDA), GPIO 8 (SCL), 400kHz
+ * I2C address: 0x69 (SDO pulled high on the module)
+ * Bus:         P4 I2C1, GPIO 21 (SDA), GPIO 22 (SCL), 400kHz
  *
  * BMI323 uses a 16-bit word-based I2C protocol:
  *   Read:  [reg_addr] → [dummy_byte][dummy_byte][lsb][msb] × N
@@ -109,6 +109,7 @@ typedef struct {
  *         ESP_FAIL on I2C communication error.
  */
 esp_err_t bmi323_init(void);
+uint8_t   bmi323_get_i2c_address(void);
 
 /**
  * @brief Read 6 raw values (ax, ay, az, gx, gy, gz) as a single I2C burst.

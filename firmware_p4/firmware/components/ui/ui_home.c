@@ -73,7 +73,6 @@ static void card_text(lv_obj_t *card, const char *title, const char *value,
 static void on_sync(lv_event_t *e)
 {
     (void)e;
-    if (s_lbl_status) { lv_label_set_text(s_lbl_status, "CONNECTING..."); label_style(s_lbl_status, UI_COLOR_PAIRING, font_value()); }
     ui_events_on_sync_start();
 }
 
@@ -86,7 +85,6 @@ static void on_settings(lv_event_t *e)
 static void on_start(lv_event_t *e)
 {
     (void)e;
-    if (s_lbl_status) { lv_label_set_text(s_lbl_status, "LOGGING"); label_style(s_lbl_status, UI_COLOR_DANGER, font_value()); }
     ui_events_on_start_log();
 }
 
@@ -112,7 +110,10 @@ void ui_show_boot_splash(void)
 {
     ui_lock(-1);
     s_home_active = false;
-    lv_obj_t *scr = lv_obj_create(NULL);
+    /* Reuse the active root for Home <-> Logging.  Root-screen swaps on the
+     * software-rotated MIPI display expose a blue intermediate frame. */
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_clean(scr);
     lv_obj_set_style_bg_color(scr, C(UI_COLOR_BG_DARK), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -137,7 +138,7 @@ void ui_show_boot_splash(void)
     label_style(detail, UI_COLOR_TEXT_MUTED, font_body());
     lv_obj_align(detail, LV_ALIGN_CENTER, 0, UI_SCALE_Y(38));
 
-    lv_scr_load(scr);
+    ui_load_screen(scr);
     ui_unlock();
 }
 
@@ -156,7 +157,10 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     const char *state = (!sd_ok) ? "SD ERROR" : (!imu_ok) ? "IMU ERROR" : (!gps_ok || sats < 4) ? "GPS WAIT" : "READY";
     const uint32_t state_color = (!sd_ok || !imu_ok) ? UI_COLOR_DANGER : (!gps_ok || sats < 4) ? UI_COLOR_WARNING : UI_COLOR_SUCCESS;
 
-    lv_obj_t *scr = lv_obj_create(NULL);
+    /* Reuse the active root for Home <-> Logging.  Root-screen swaps on the
+     * software-rotated MIPI display expose a blue intermediate frame. */
+    lv_obj_t *scr = lv_scr_act();
+    lv_obj_clean(scr);
     lv_obj_set_style_bg_color(scr, C(UI_COLOR_BG_DARK), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_DEFAULT);
 
@@ -210,9 +214,16 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     make_button(scr, m + primary_w + button_gap + settings_w + button_gap, dock_y + UI_SCALE_Y(8), primary_w, dock_h - UI_SCALE_Y(16), "START LOG", UI_COLOR_PRIMARY, on_start);
 
     s_home_active = true;
-    lv_scr_load(scr);
+    lv_obj_invalidate(scr);
     ESP_LOGI(TAG, "Simulator-faithful home rendered at %dx%d", UI_HOR_RES, UI_VER_RES);
     ui_unlock();
+}
+
+void ui_home_deactivate(void)
+{
+    /* Screen constructors delete the prior active screen.  Never allow the
+     * background Home updater to retain and write its old object pointers. */
+    s_home_active = false;
 }
 
 void ui_home_update(bool sd_ok, bool imu_ok, bool gps_ok, int sats, int bat_pct,
