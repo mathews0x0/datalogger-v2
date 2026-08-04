@@ -260,8 +260,16 @@ void ui_show_captive_portal(const char *ap_name)
     lv_obj_set_style_radius(card, 8, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-    char portal_buf[128];
-    snprintf(portal_buf, sizeof(portal_buf), "WIFI SETUP PORTAL\n\nSSID: %s\nGateway IP: 192.168.4.1", ssid);
+    char portal_buf[256];
+#if CONFIG_IDF_TARGET_ESP32P4 && !CONFIG_ESP_WIFI_REMOTE_ENABLED
+    snprintf(portal_buf, sizeof(portal_buf),
+             "WIFI SETUP READY\n\nSSID: %s\nGateway IP: 192.168.4.1\n\nC6 Wi-Fi transport is disabled in this build",
+             ssid);
+#else
+    snprintf(portal_buf, sizeof(portal_buf),
+             "WIFI SETUP PORTAL\n\nSSID: %s\nGateway IP: 192.168.4.1\n\nJoin the AP, then open the setup link",
+             ssid);
+#endif
     lv_obj_t *lbl_portal = lv_label_create(card);
     lv_label_set_text(lbl_portal, portal_buf);
     lv_obj_set_style_text_align(lbl_portal, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);

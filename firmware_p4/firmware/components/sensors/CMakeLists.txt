@@ -10,4 +10,5 @@ idf_component_register(
         driver          # gptimer
         esp_timer       # esp_timer_get_time()
         freertos        # FreeRTOS primitives
+        track_engine    # GPS updates feed the lap/sector timing engine
 )

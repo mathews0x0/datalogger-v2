@@ -5,7 +5,7 @@
  * Owns:
  *  - Session file lifecycle: open, write, checkpoint, close
  *  - CSV schema (exact byte-for-byte compatibility with S3 sessions)
- *  - Dual ring-buffer: sensors fill one buffer, flush task drains the other
+ *  - Sensor-owned row queue consumed by the Core 1 flush task
  *  - Auto-copy: move flash sessions → SD on boot
  *  - Integrity marker rows: LOG_OPEN, CHECKPOINT, LOG_STOP, IMU_PROFILE
  *  - Storage health: usage percent, STORAGE_CRITICAL (90%), HARD_STOP (98%)
@@ -55,6 +55,18 @@ typedef enum {
     STORAGE_HEALTH_CRITICAL = 1,   /**< >90% used — warn rider             */
     STORAGE_HEALTH_HARD_STOP = 2,  /**< >98% used — no more writes         */
 } storage_health_t;
+
+/** Latched reason a logging session can no longer safely write telemetry. */
+typedef enum {
+    STORAGE_FAULT_NONE = 0,
+    STORAGE_FAULT_NOT_READY,
+    STORAGE_FAULT_OPEN,
+    STORAGE_FAULT_WRITE,
+    STORAGE_FAULT_FLUSH,
+    STORAGE_FAULT_CLOSE,
+    STORAGE_FAULT_CAPACITY,
+    STORAGE_FAULT_DRAIN_TIMEOUT,
+} storage_fault_t;
 
 /** Summary of an open session */
 typedef struct {
@@ -129,7 +141,8 @@ esp_err_t storage_write_imu_profile(const char *profile_json);
 /**
  * @brief Write a single IMU row (raw values — scaling happens in caller).
  *
- * Preferred path: use storage_enqueue_row() from the sensor task.
+ * Preferred path: sensor rows are consumed asynchronously by the storage
+ * flush task from the sensor-owned queue.
  * This direct write is for testing / calibration recording.
  *
  * @return ESP_OK on success.
@@ -161,21 +174,19 @@ esp_err_t storage_write_marker(uint32_t tick_ms,
                                 const char *payload);
 
 /**
- * @brief Enqueue a sensor row from the sensor task for async flush.
- *
- * Non-blocking — returns false if the internal queue is full.
- * This is the hot path called 100 times per second from Core 0.
- *
- * @param row  Row to enqueue.
- * @return true if enqueued, false if dropped.
- */
-bool storage_enqueue_row(const sensor_row_t *row);
-
-/**
  * @brief Get the current storage health state (OK / CRITICAL / HARD_STOP).
  * @return Current health enum.
  */
 storage_health_t storage_get_health(void);
+
+/** Return the latched storage fault, or STORAGE_FAULT_NONE. */
+storage_fault_t storage_get_fault(void);
+
+/** Clear a latched fault after the session is closed and the user has recovered. */
+esp_err_t storage_clear_fault(void);
+
+/** Return a short rider/log-friendly name for a storage fault. */
+const char *storage_fault_name(storage_fault_t fault);
 
 /**
  * @brief Get current SD card or flash usage percent.

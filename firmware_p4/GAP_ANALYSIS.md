@@ -9,20 +9,24 @@ Status markers:
 - `[x]` Complete and verified
 
 Current conclusion: the P4 image is still not production-ready. The P4 build
-selects the real BMI323 driver on the dedicated I²C1 bus and the supplied GPS,
-BMI323, battery ADC, and SD card have passed initial bench validation. SD uses
-a verified 1-bit/20 MHz fallback because 4-bit SSR reads fail on the current
-board/card path. The image still selects `network_stub.c`.
+selects the real BMI323 driver on the dedicated I²C1 bus. The supplied BMI323,
+Neo-M8N GPS, battery ADC, SD card, ST7701 display, and GT911 touch controller
+have now passed live bench validation together. GPS obtains a clean satellite
+lock, both accelerometer and gyro channels respond correctly in the IMU view,
+touch calibration is accurate, and SD capacity/read/write operation is proven.
+SD uses a verified 1-bit/20 MHz fallback because 4-bit SSR reads fail on the
+current board/card path. The image still selects `network_stub.c`.
 
 ## 0. Release-blocking summary
 
 - [x] Add a BMI323 four-pin module to the P4 expansion wiring; supplied production wiring uses GPIO21/22.
 - [ ] Bring up ESP32-C6 Wi-Fi through esp-hosted/SDIO.
 - [ ] Resolve ESP-hosted versus SDMMC resource/pin conflicts.
-- [ ] Connect the sensor queue to the storage queue.
-- [-] Freeze the supplied GPS, BMI323, battery-monitor, and SD pin map in firmware; all devices pass runtime checks, but the SD 4-bit D1-D3 path still needs investigation.
+- [-] Connect the sensor queue to the storage queue; the sensor-owned queue
+  and storage drain barrier are implemented, but live-session validation remains.
+- [x] Freeze and verify the supplied GPS, BMI323, battery-monitor, and SD pin map in firmware; SD 1-bit/20 MHz is the accepted working baseline.
 - [ ] Wire the application state machine to real track, calibration, feedback, storage, and network operations.
-- [ ] Correct the firmware/backend upload endpoint contract.
+- [x] Correct the firmware/backend upload endpoint contract in the dormant client; live P4 transport validation remains open.
 - [ ] Make generated CSV markers parse correctly on the server.
 - [ ] Add hardware-in-the-loop, fault-injection, and long-duration testing.
 
@@ -39,9 +43,9 @@ board/card path. The image still selects `network_stub.c`.
 - [ ] Verify that polling/FIFO servicing at 100 Hz does not miss samples under display, SD, and Wi-Fi load.
 - [ ] Do not allocate GPIO34 to BMI323 unless another future hardware function requires it.
 - [x] Replace the P4 BMI323 stub with the real driver; clean P4 build verified.
-- [ ] Verify chip ID and error register on real hardware.
-- [ ] Verify accelerometer range and sensitivity (`8192 LSB/g`).
-- [ ] Verify gyro range and sensitivity (`16.4 LSB/dps`).
+- [x] Verify chip ID and error register on real hardware; chip ID `0x43` initializes cleanly.
+- [-] Verify accelerometer range and sensitivity (`8192 LSB/g`); configured ±4 g values and live lean response pass, precision fixture validation remains.
+- [-] Verify gyro range and sensitivity (`16.4 LSB/dps`); configured ±2000 dps values and live lean response pass, precision rate-table validation remains.
 - [ ] Verify FIFO configuration and sensor timestamp behavior.
 
 ### 1.2 I²C bus separation
@@ -49,7 +53,7 @@ board/card path. The image still selects `network_stub.c`.
 - [x] Keep GT911 on the board's existing I²C0 bus (`GPIO7/8`).
 - [x] Move BMI323 to a separate I²C controller/bus (`GPIO21/22`).
 - [x] Add the BMI323 device to the separate bus rather than calling bus creation twice for one bus.
-- [ ] Test GT911 and BMI323 simultaneously with independent bus traffic.
+- [x] Test GT911 and BMI323 simultaneously with independent bus traffic; calibrated touch and live accel/gyro diagnostics operate together.
 - [ ] Test bus recovery after a stuck device or cable disconnect.
 - [ ] Validate pull-ups and bus speed on the assembled board.
 
@@ -63,31 +67,31 @@ board/card path. The image still selects `network_stub.c`.
 - [ ] Reserve a GPS 1PPS input for precise time alignment; candidate=`GPIO32`.
 - [ ] Define GPS module power, ground, reset/enable, backup supply, antenna connector, and antenna current.
 - [ ] Verify 3.3 V UART levels, cable length, ESD protection, and connector keying.
-- [ ] Verify UART TX/RX routing with a real module.
-- [ ] Verify module boot baud and configured baud.
-- [ ] Verify UBX CFG-PRT command acceptance.
-- [ ] Verify 10 Hz measurement configuration.
-- [ ] Verify antenna, cold-start, warm-start, and weak-signal behavior.
+- [x] Verify UART TX/RX routing with a real module.
+- [x] Verify module boot baud and configured baud; retained 38400-baud startup is handled.
+- [x] Verify UBX CFG-PRT command acceptance.
+- [x] Verify 10 Hz measurement configuration; runtime diagnostics measure approximately 10 Hz.
+- [-] Verify antenna, cold-start, warm-start, and weak-signal behavior; clean satellite lock is confirmed, controlled acquisition and weak-signal tests remain.
 
 ### 1.4 Display and touch
 
-- [ ] Verify ST7701 MIPI-DSI initialization on production panel batches.
-- [ ] Verify 800×480 landscape orientation.
-- [ ] Verify RGB565 color order and outdoor contrast.
+- [-] Verify ST7701 MIPI-DSI initialization on production panel batches; the supplied panel passes, batch coverage remains.
+- [x] Verify 800×480 landscape orientation.
+- [-] Verify RGB565 color order and outdoor contrast; rendering/color pass on the bench, outdoor contrast remains.
 - [ ] Verify frame rate and tearing over a 60-minute soak.
-- [ ] Verify GT911 detection at both supported addresses.
-- [ ] Verify touch coordinates across all corners and edges.
-- [ ] Verify touch calibration persistence across reboot.
+- [-] Verify GT911 detection at both supported addresses; the fitted controller/address passes, alternate-address coverage remains.
+- [x] Verify touch coordinates across all corners and edges.
+- [x] Verify touch calibration persistence across reboot.
 - [ ] Verify touch calibration recovery if the calibration file is corrupt.
 - [ ] Implement and test brightness control through the backlight PWM.
 - [ ] Add display failure reporting instead of silently continuing.
 
 ### 1.5 SD card and storage hardware
 
-- [-] SD card uses the documented P4 default SDMMC host (slot 1), GPIO39–44, and GPIO45 power; 4-bit and 1-bit probes both time out during card initialization, so mount/read/write validation remains blocked by the hardware response.
+- [x] SD card uses P4 SDMMC slot 0, GPIO39–44, LDO_VO4 I/O power, and the active-low GPIO45 card switch; mount, capacity, create/write/readback/remove, and runtime persistence pass in 1-bit/20 MHz fallback mode.
 - [ ] Test multiple SD card vendors and capacities.
-- [ ] Test FAT32 formatting and long filenames.
-- [ ] Test high-volume sequential writes.
+- [-] Test FAT32 formatting and long filenames; FAT mount and LFN configuration pass, explicit multi-name test coverage remains.
+- [-] Test high-volume sequential writes; verified 4 MiB benchmark passes at 0.65 MiB/s write and 0.73 MiB/s read, long-duration volume testing remains.
 - [ ] Test SD card removal during idle.
 - [ ] Test SD card removal during logging.
 - [ ] Test SD card reinsertion and remount behavior.
@@ -142,9 +146,9 @@ board/card path. The image still selects `network_stub.c`.
 - [ ] Build from a clean directory, not only an existing incremental build directory.
 - [ ] Verify all P4-only source files compile in the production configuration.
 - [x] Verify the real BMI323 driver compiles for P4 on I²C1.
-- [ ] Verify the dormant network implementation compiles for P4.
-- [ ] Add reproducible firmware version metadata.
-- [ ] Add manufacturing/build identifiers.
+- [x] Verify the dormant network implementation compiles for P4 toolchain flags; the image still selects `network_stub.c`.
+- [x] Add reproducible firmware release metadata; the shared `server/VERSION` number is embedded as the Mark identity and advances with every commit.
+- [-] Add manufacturing/release identifiers; Mark 199 is present, while per-unit manufacturing identity remains open.
 - [ ] Freeze ESP-IDF and managed-component versions.
 - [ ] Document the exact toolchain and build command.
 
@@ -152,13 +156,19 @@ board/card path. The image still selects `network_stub.c`.
 
 ### 3.1 Queue architecture
 
-- [ ] Remove the duplicate sensor/storage queue ownership.
-- [ ] Choose one queue owner and one producer/consumer contract.
-- [ ] Make the sensor task call `storage_enqueue_row()`, or make storage drain `sensors_dequeue_row()`.
+- [-] Remove the duplicate sensor/storage queue ownership; one sensor-owned queue
+  is now consumed by storage.
+- [-] Choose one queue owner and one producer/consumer contract; the sensor
+  component owns production and storage consumes through `sensors_wait_dequeue_row()`.
+- [-] Make storage drain the sensor-owned queue; the implementation builds, but
+  live-session row delivery remains to be verified on hardware.
 - [ ] Verify rows are actually written during a live session.
-- [ ] Track queue depth, maximum depth, dropped rows, and overflow duration.
-- [ ] Define backpressure behavior when storage cannot keep up.
-- [ ] Ensure stopping logging drains all queued rows before closing the file.
+- [-] Track queue depth, maximum depth, and dropped rows; runtime counters and
+  health logging are implemented, while measured hardware results remain open.
+- [-] Define backpressure behavior when storage cannot keep up; non-blocking
+  enqueue with explicit drop counters is implemented, but performance tuning remains.
+- [-] Ensure stopping logging drains all queued rows before closing the file; a
+  producer-quiescence and flush acknowledgement barrier is implemented and awaits hardware validation.
 
 ### 3.2 IMU acquisition
 
@@ -179,8 +189,8 @@ board/card path. The image still selects `network_stub.c`.
 - [ ] Preserve the last fix separately from fix freshness.
 - [ ] Add GPS stale/fix timeout logic.
 - [ ] Convert GPS date/time to epoch time.
-- [ ] Verify actual 10 Hz fix rate where supported by the receiver.
-- [ ] Track parser health counters in runtime diagnostics.
+- [x] Verify actual 10 Hz fix rate where supported by the receiver.
+- [x] Track parser health counters in runtime diagnostics.
 
 ### 3.4 Thread safety
 
@@ -195,14 +205,18 @@ board/card path. The image still selects `network_stub.c`.
 
 ### 4.1 Session lifecycle
 
-- [ ] Check and handle `storage_session_start()` failure.
-- [ ] Refuse logging when no usable storage exists.
+- [-] Check and handle `storage_session_start()` failure; the UI now refuses
+  to enter logging when session creation fails, while a dedicated error screen remains open.
+- [-] Refuse logging when no usable storage exists; session open/write/flush
+  failures now block logging and surface the storage fault screen.
 - [ ] Define whether logging is allowed without GPS.
 - [ ] Define whether logging is allowed without IMU.
 - [ ] Use session-relative elapsed time.
-- [ ] Close sessions only after producer shutdown and queue drain.
+- [-] Close sessions only after producer shutdown and queue drain; the
+  quiescence/drain barrier is implemented and awaits hardware validation.
 - [ ] Add incomplete-session recovery after reset.
-- [ ] Add explicit storage-write fault state.
+- [-] Add explicit storage-write fault state; the fault is latched in storage,
+  propagated to the app state machine, and cleared only after acknowledgement.
 
 ### 4.2 CSV schema
 
@@ -226,8 +240,10 @@ board/card path. The image still selects `network_stub.c`.
 
 - [ ] Add flash usage reporting, not only SD usage reporting.
 - [ ] Enforce critical and hard-stop thresholds on both media.
-- [ ] Display storage state to the rider.
-- [ ] Stop logging cleanly at the hard limit.
+- [-] Display storage state to the rider with a dedicated fault screen; visual
+  and fault-injection validation remain.
+- [-] Stop logging cleanly at the hard limit by disabling producers, draining
+  queued rows, and closing the file; hardware validation remains.
 - [ ] Avoid automatic formatting of internal flash in production.
 - [ ] Use temporary files plus atomic rename for configuration and copies.
 - [ ] Verify source and destination content, not only file size.
@@ -257,64 +273,64 @@ board/card path. The image still selects `network_stub.c`.
 
 ## 6. Track, lap, and sector timing
 
-- [ ] Initialize `track_engine` at boot.
-- [ ] Fetch active track metadata from the backend.
-- [ ] Validate track JSON before activation.
-- [ ] Support track name and TBL data from the fetched payload.
-- [ ] Call `track_engine_update_gps()` for fresh GPS fixes.
-- [ ] Register a track event callback.
-- [ ] Route track-found events to the UI.
-- [ ] Route sector events to the feedback subsystem.
-- [ ] Route lap events to the live timing UI.
+- [-] Initialize `track_engine` at boot; local initialization and cached metadata loading are wired, while live metadata provisioning remains open.
+- [-] Fetch active track metadata from the backend; the dormant client now uses the device route, preserves the normalized display layout, and atomically caches validated payloads. The Home preview and full-screen Track/Info viewer consume the cache, while P4 network provisioning remains deferred.
+- [-] Validate track JSON before activation; host validation rejects malformed gates/TBL data, with live-device activation still open.
+- [x] Support track name and TBL data from the cached track payload.
+- [-] Call `track_engine_update_gps()` for fresh GPS fixes; the sensor-to-engine path is wired, with hardware GPS validation still open.
+- [x] Register a track event callback.
+- [x] Route track-found events to the application/UI path.
+- [x] Route sector events to the feedback subsystem.
+- [x] Route lap events to the live timing UI.
 - [ ] Implement pit-area behavior or remove the unused pit fields.
-- [ ] Add gate-crossing debounce/hysteresis.
-- [ ] Add direction/crossing validation to prevent false triggers.
-- [ ] Handle GPS jitter near gates.
-- [ ] Test first track identification.
-- [ ] Test all sector transitions.
-- [ ] Test lap completion and reset.
-- [ ] Test missing TBL sectors.
-- [ ] Test missing track metadata.
+- [x] Add gate-crossing debounce/hysteresis.
+- [x] Add optional direction/crossing validation to prevent false triggers.
+- [x] Handle GPS jitter near gates.
+- [x] Test first track identification with the host replay harness.
+- [x] Test sector transitions with synthetic GPS points.
+- [x] Test lap completion and reset.
+- [x] Test missing TBL behavior through neutral classification.
+- [-] Test missing track metadata; no-track startup is handled, while a full device metadata-provisioning test remains open.
 - [ ] Replay recorded GPS traces through the engine.
 
 ## 7. Rider feedback and UI
 
 ### 7.1 Live logging screen
 
-- [ ] Replace hardcoded track name with active-track data.
-- [ ] Replace hardcoded lap count with track-engine data.
-- [ ] Display actual lap time.
-- [ ] Display actual delta versus TBL.
+- [x] Replace hardcoded track name with active-track data.
+- [x] Replace hardcoded lap count with track-engine data.
+- [x] Display actual lap time.
+- [x] Display actual delta versus TBL.
 - [ ] Display actual GPS status and freshness.
 - [ ] Display actual storage health.
 - [ ] Display calibrated lean estimate.
 - [ ] Use gyro/fusion-based lean estimation rather than accelerometer-only tilt.
 - [ ] Add the five-second IMU validation screen.
-- [ ] Add the sector crossing overlay.
+- [-] Add the sector crossing overlay; rendering and expiry are implemented, with hardware visual validation still open.
 - [ ] Implement the specified hold-to-stop interaction.
 - [ ] Add error screens and recovery actions.
 
 ### 7.2 Home and settings
 
 - [ ] Periodically refresh battery state.
-- [ ] Display real storage free space rather than `18.5 GB FREE`.
+- [x] Display real storage free space rather than `18.5 GB FREE`; nominal 8 GB card reports 7.49 GiB total and approximately 7.42 GiB free.
 - [ ] Display the real active mount profile.
 - [ ] Implement auto-log setting and persistence.
 - [ ] Implement track selection.
 - [ ] Implement Wi-Fi setup action.
 - [ ] Implement brightness/display settings.
-- [ ] Implement device diagnostics.
-- [ ] Implement version/build information.
+- [x] Implement device diagnostics; Hardware Debug exposes live GPS and BMI323 status/data.
+- [-] Implement Mark release information; Mark 199 is logged at boot and embedded in the binary, while a rider-facing Settings display remains open.
 - [ ] Implement safe navigation while background tasks are active.
-- [ ] Verify repeated screen transitions do not leak LVGL objects.
+- [x] Verify repeated screen transitions do not leak LVGL objects during current bench navigation testing.
 - [ ] Verify touch targets in outdoor conditions.
 
 ### 7.3 Feedback subsystem
 
-- [ ] Initialize `feedback` at boot.
-- [ ] Call `feedback_tick()` periodically.
-- [ ] Implement actual sector/lap overlay rendering.
-- [ ] Implement overlay expiry and return to logging.
+- [x] Initialize `feedback` at boot.
+- [x] Call `feedback_tick()` periodically.
+- [-] Implement actual sector/lap overlay rendering; sector flash rendering is implemented, while lap completion currently updates the live timing card rather than opening a separate full-screen lap overlay.
+- [x] Implement overlay expiry and return to logging.
 - [ ] Apply brightness to the backlight PWM.
 - [ ] Define behavior for overlapping sector/lap events.
 - [ ] Test overlays at speed and under continuous UI updates.
@@ -323,25 +339,32 @@ board/card path. The image still selects `network_stub.c`.
 
 ### 8.1 ESP32-C6 transport
 
-- [ ] Enable esp-hosted/remote Wi-Fi configuration.
-- [ ] Validate P4-to-C6 reset and handshake.
-- [ ] Validate SDIO pins and host ownership.
-- [ ] Validate coexistence with the SD card.
-- [ ] Add transport failure recovery.
+- [x] Enable esp-hosted/remote Wi-Fi configuration.
+- [x] Validate P4-to-C6 reset and handshake.
+- [x] Validate SDIO pins and host ownership.
+- [x] Validate coexistence with the SD card.
+- [-] Add transport failure recovery; restart-on-failure is configured, but fault injection is still open.
 - [ ] Add transport watchdog and timeout handling.
+
+Live P4 evidence (2026-08-04): SDIO transport reached `TRANSPORT_TX_ACTIVE`,
+identified the slave as `esp32c6`, and a credential-free hosted Wi-Fi scan
+returned 9 access points. The application then remained in `HOME_IDLE` with
+stable health, SD, GPS, and IMU telemetry. The C6 still reports coprocessor
+version `0.0.0` against host `2.12.0`; association, DHCP, DNS/HTTPS, and
+server heartbeat remain to be validated with a real provisioned network.
 
 ### 8.2 Backend contract
 
-- [ ] Change heartbeat to the actual server route: `POST /api/device/ping`.
-- [ ] Send heartbeat telemetry fields expected by the server.
-- [ ] Change active-track fetch to `GET /api/device/active_track`.
-- [ ] Confirm `api_url` semantics for upload versus device endpoints.
-- [ ] Validate `/api/upload/status` response handling.
-- [ ] Validate `/api/upload/batch` request headers.
-- [ ] Validate `/api/upload/complete` request body.
-- [ ] Add URL encoding for filenames.
-- [ ] Validate resume offsets against local file size.
-- [ ] Preserve resumability after reset or Wi-Fi loss.
+- [x] Change heartbeat to the actual server route: `POST /api/device/ping`.
+- [x] Send available heartbeat telemetry fields expected by the server, with explicit telemetry injection for battery/flash values.
+- [x] Change active-track fetch to `GET /api/device/active_track`.
+- [x] Confirm `api_url` semantics: server-root URLs and legacy `/api/upload` values normalize to the same endpoint base.
+- [x] Validate `/api/upload/status` response handling.
+- [x] Validate `/api/upload/batch` request headers and server-side sequential offsets.
+- [x] Validate `/api/upload/complete` response/body contract.
+- [x] Add URL encoding for filenames.
+- [x] Validate resume offsets against local file size.
+- [-] Preserve resumability after reset or Wi-Fi loss; client/server logic is hardened, but live transport testing remains open.
 - [ ] Add cancellation tokens and close the active connection on cancel.
 - [ ] Prevent completed background tasks from mutating a different UI screen.
 - [ ] Add real upload speed and ETA reporting.
@@ -350,13 +373,13 @@ board/card path. The image still selects `network_stub.c`.
 
 ### 8.3 Provisioning portal
 
-- [ ] Implement the P4 captive portal using the active network backend.
-- [ ] Validate request `Content-Length` and read complete POST bodies.
-- [ ] Handle fragmented TCP requests.
-- [ ] Bound all form-field lengths.
-- [ ] Validate SSID, password, token, and API URL.
-- [ ] Save configuration atomically.
-- [ ] Never log passwords or full tokens.
+- [x] Implement the P4 captive portal using the active network backend.
+- [x] Validate request `Content-Length` and read complete POST bodies.
+- [x] Handle fragmented TCP requests.
+- [x] Bound all form-field lengths.
+- [x] Validate SSID, password, token, and API URL.
+- [x] Save configuration atomically.
+- [x] Never log passwords or full tokens.
 - [ ] Test Android, Apple, and Windows captive-detection probes.
 - [ ] Test portal timeout and explicit exit.
 - [ ] Stop DNS and HTTP tasks cleanly.
@@ -464,7 +487,7 @@ board/card path. The image still selects `network_stub.c`.
 - [ ] Cold boot with no Wi-Fi configuration.
 - [ ] Start/stop logging repeatedly.
 - [ ] Verify measured 100 Hz IMU rate.
-- [ ] Verify measured 10 Hz GPS rate.
+- [x] Verify measured 10 Hz GPS rate and obtain a clean satellite lock.
 - [ ] Verify server CSV ingestion.
 - [ ] Reboot during logging.
 - [ ] Brownout during logging.
@@ -482,7 +505,7 @@ board/card path. The image still selects `network_stub.c`.
 ## 13. Release gates
 
 - [ ] Production P4 hardware BOM and pinout are frozen.
-- [ ] Real IMU is operational.
+- [x] Real IMU is operational; live accelerometer and gyro lean response is confirmed.
 - [ ] Real Wi-Fi transport is operational.
 - [ ] Sensor-to-storage path is proven end-to-end.
 - [ ] CSV round-trip is proven through the production server.
@@ -493,7 +516,7 @@ board/card path. The image still selects `network_stub.c`.
 - [ ] OTA and rollback are proven.
 - [ ] Security review is complete.
 - [ ] Hardware-in-the-loop and soak tests pass.
-- [ ] Release binary is reproducible and versioned.
+- [-] Release binary carries the shared Mark identity; full clean-build reproducibility and release qualification remain open.
 - [ ] Manufacturing test procedure is documented.
 
 ## Key source references

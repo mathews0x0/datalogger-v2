@@ -46,6 +46,32 @@ def test_create_device_token(client, app):
     assert 'token' in resp.json
     assert resp.json['token'].startswith('rsk_')
 
+
+def test_device_ping_updates_telemetry(client, app):
+    response = client.post(
+        '/api/device/ping',
+        headers={'Authorization': 'Bearer rsk_123'},
+        json={
+            'device_uid': 'P4-BENCH-01',
+            'vbatt_sense': 3.91,
+            'storage_sd_free': 123456,
+            'storage_sd_total': 654321,
+            'storage_flash_free': 4567,
+            'storage_flash_total': 8910,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json == {'success': True}
+
+    with app.app_context():
+        device = DeviceToken.query.filter_by(token='rsk_123').one()
+        assert device.device_uid == 'P4-BENCH-01'
+        assert device.vbatt_sense == 3.91
+        assert device.storage_sd_free == 123456
+        assert device.storage_sd_total == 654321
+        assert device.storage_flash_free == 4567
+        assert device.storage_flash_total == 8910
+
 def test_delete_device(client, app):
     resp = client.delete('/api/devices/1')
     assert resp.status_code == 200

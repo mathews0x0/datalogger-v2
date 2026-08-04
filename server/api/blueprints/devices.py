@@ -201,7 +201,15 @@ def get_device_active_track():
                         sectors_data = raw_tbl.get('sectors', [])
                         if isinstance(sectors_data, list):
                             sorted_sectors = sorted(sectors_data, key=lambda x: x.get('sector_index', 0))
-                            sectors_list = [s.get('best_time') for s in sorted_sectors]
+                            # The device contract uses zero for an unknown
+                            # benchmark so the firmware can distinguish it
+                            # from malformed/non-numeric TBL data.
+                            sectors_list = [
+                                s.get('best_time')
+                                if isinstance(s.get('best_time'), (int, float)) and s.get('best_time') >= 0
+                                else 0.0
+                                for s in sorted_sectors
+                            ]
                             track_data['tbl'] = {"sectors": sectors_list}
                     except Exception as e:
                         print(f"[active_track] TBL extraction error: {e}")
@@ -215,12 +223,11 @@ def get_device_active_track():
     return jsonify({"error": "Device token required"}), 400
 
 # --- LOCAL DEVICE ENDPOINTS ---
-from api.helpers import get_local_firmware_version, is_compatible
+from api.helpers import get_local_firmware_version, is_compatible, MIN_ESP_VERSION
 from api.decorators import local_only
 from api.helpers import robust_get_json
 from api.update_manager import UpdateManager
 update_mgr = UpdateManager(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../firmware')))
-MIN_ESP_VERSION = '0.0.0'
 import socket
 import subprocess
 @devices_bp.route('/api/device/configure', methods=['POST'])
@@ -319,7 +326,7 @@ def scan_devices():
                     data = robust_get_json(f"http://{ip}/status", timeout=2.0)
                     if data and "storage" in data:
                         with print_lock:
-                            v = data.get('version', '0.0.0')
+                            v = data.get('version', '0')
                             info = {
                                 "ip": ip, 
                                 "info": data,
@@ -426,7 +433,7 @@ def check_device():
             else:
                 print(f"        SD Card: Not inserted")
                 
-            v = data.get('version', '0.0.0')
+            v = data.get('version', '0')
             return jsonify({
                 "reachable": True, 
                 "info": data,
@@ -455,11 +462,11 @@ def device_version_check():
         r = requests.get(f"http://{ip}/status", timeout=5)
         if r.status_code == 200:
             data = r.json()
-            device_v = data.get('version', '0.0.0')
+            device_v = data.get('version', '0')
             return jsonify({
                 "device_version": device_v,
                 "server_version": local_v,
-                "update_available": device_v != local_v,
+                "update_available": str(device_v) != str(local_v),
                 "is_compatible": is_compatible(device_v)
             })
     except Exception as e:

@@ -61,4 +61,20 @@ menu "RaceSense Configuration"
         help
             Duration the sector crossing color flash overlays the logging screen.
 
+      config RS_NETWORK_SELF_TEST
+          bool "Run Wi-Fi scan self-test at boot"
+          default n
+        help
+              Start the hosted Wi-Fi station briefly at boot, perform an active
+              scan, log the result, and stop the station. This validates the
+              P4-to-C6 radio path without requiring credentials.
+
+      config RS_NETWORK_SYNC_SELF_TEST
+          bool "Run provisioned server probe at boot"
+          default n
+          help
+              Use the saved Wi-Fi credentials and device token once at boot to
+              test association, server heartbeat, and active-track retrieval.
+              No session files are uploaded. This is intended for diagnostics.
+
 endmenu

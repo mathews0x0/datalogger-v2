@@ -15,6 +15,7 @@
  */
 
 #include "feedback.h"
+#include "ui.h"
 
 #include <string.h>
 #include "esp_log.h"
@@ -140,6 +141,7 @@ void feedback_tick(void)
         if (now_us >= s_overlay_expiry) {
             ESP_LOGD(TAG, "Overlay expired — returning to LOGGING state");
             s_overlay = FB_OVERLAY_NONE;
+            ui_hide_sector_flash();
             /* Auto-return to logging state after overlay */
             if (s_state == FB_SECTOR_FAST    ||
                 s_state == FB_SECTOR_NEUTRAL ||

@@ -66,6 +66,21 @@ typedef struct {
     float             vbat;      /**< Battery voltage (V)          */
 } sensor_row_t;
 
+/**
+ * @brief Runtime statistics for the sensor-to-storage row queue.
+ *
+ * Counters are scoped to the current logging interval when reset through
+ * sensors_reset_queue_stats(). The CSV contract is intentionally unrelated
+ * to these diagnostics and remains unchanged.
+ */
+typedef struct {
+    uint32_t rows_enqueued;
+    uint32_t rows_dropped;
+    uint32_t max_depth;
+    uint32_t pending_rows;
+    bool     producer_active;
+} sensors_queue_stats_t;
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Public API
  * ────────────────────────────────────────────────────────────────────────*/
@@ -144,6 +159,31 @@ uint64_t sensors_get_tick_count(void);
  * @return true if a row was dequeued.
  */
 bool sensors_dequeue_row(sensor_row_t *row);
+
+/**
+ * @brief Wait for and dequeue the next pending sensor row.
+ *
+ * The sensor component remains the sole owner of the queue. Storage uses
+ * this API as its blocking consumer rather than maintaining a second queue.
+ *
+ * @param[out] row        Destination row.
+ * @param[in] timeout_ms  Maximum wait in milliseconds.
+ * @return true if a row was dequeued.
+ */
+bool sensors_wait_dequeue_row(sensor_row_t *row, uint32_t timeout_ms);
+
+/** Reset queue counters, normally immediately before a new session starts. */
+void sensors_reset_queue_stats(void);
+
+/** Copy queue counters and current producer state. */
+void sensors_get_queue_stats(sensors_queue_stats_t *stats);
+
+/**
+ * @brief Wait until the sensor task is no longer building a logging row.
+ *
+ * Call after sensors_set_logging(false) and before asking storage to drain.
+ */
+bool sensors_wait_for_quiescence(uint32_t timeout_ms);
 
 #ifdef __cplusplus
 }

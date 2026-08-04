@@ -69,6 +69,12 @@ void ui_events_on_navigate_home(void)
     ui_events_dispatch(UI_EVENT_BACK_CLICKED, NULL);
 }
 
+void ui_events_on_open_track_view(void)
+{
+    ESP_LOGI(TAG, "Touch Action: ACTIVE TRACK viewer requested");
+    ui_events_dispatch(UI_EVENT_TRACK_VIEW_CLICKED, NULL);
+}
+
 void ui_events_on_start_captive_portal(void)
 {
     ESP_LOGI(TAG, "Touch Action: START CAPTIVE PORTAL (WiFi Setup) requested");

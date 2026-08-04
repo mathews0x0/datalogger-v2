@@ -8,6 +8,8 @@ idf_component_register(
          "ui_debug.c"
          "ui_calibration.c"
          "ui_sync.c"
+         "ui_track.c"
+         "ui_storage_fault.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_timer driver nvs_flash storage network sensors lvgl esp_lvgl_port
+    REQUIRES esp_timer driver nvs_flash storage network sensors track_engine lvgl esp_lvgl_port
 )

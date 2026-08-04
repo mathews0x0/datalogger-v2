@@ -31,6 +31,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "bsp.h"
+#include "track_engine.h"
 
 static const char *TAG = "sensors";
 
@@ -50,7 +51,11 @@ static SemaphoreHandle_t s_timer_sem    = NULL;
 static volatile bool     s_logging      = false;
 static volatile bool     s_task_running = false;
 static volatile bool     s_imu_ok       = false;
+static volatile bool     s_row_in_flight = false;
 static volatile uint64_t s_tick_count   = 0;
+static volatile uint32_t s_rows_enqueued = 0;
+static volatile uint32_t s_rows_dropped = 0;
+static volatile uint32_t s_max_queue_depth = 0;
 
 /* Lock-free latest samples for UI read-only access */
 static bmi323_raw_t   s_latest_imu = {0};
@@ -119,16 +124,25 @@ static void _sensors_task(void *arg)
         /* ── GPS tick (every 10th IMU tick = 10Hz) ─────────────────────── */
         bool is_gps_tick = (tick % SENSORS_GPS_EVERY_N == 0);
         bool gps_valid = false;
+        bool gps_fresh = false;
         if (is_gps_tick) {
-            gps_update(32); /* drain up to 32 NMEA lines */
+            gps_fresh = gps_update(32); /* drain up to 32 NMEA lines */
             if (gps_has_fix()) {
                 gps_get_fix(&s_latest_gps);
                 gps_valid = true;
             }
         }
 
+        /* Track timing consumes only fresh, valid RMC fixes. The callback
+         * registered by main.c only copies events into a queue; no LVGL or
+         * other UI work occurs on this real-time task. */
+        if (s_logging && gps_fresh && gps_valid) {
+            track_engine_update_gps(s_latest_gps.lat, s_latest_gps.lon, now_ms);
+        }
+
         /* ── Build and enqueue row ─────────────────────────────────────── */
         if (s_logging) {
+            s_row_in_flight = true;
             sensor_row_t row = {
                 .tick_ms  = now_ms,
                 .row_type = is_gps_tick ? ROW_TYPE_GPS : ROW_TYPE_IMU,
@@ -148,9 +162,23 @@ static void _sensors_task(void *arg)
 
             /* Non-blocking enqueue — if queue is full, row is dropped */
             if (xQueueSendToBack(s_row_queue, &row, 0) != pdTRUE) {
-                /* Queue full: storage flush is lagging — not critical for 1 row */
-                ESP_LOGD(TAG, "Row queue full — dropped tick %llu", tick);
+                __atomic_fetch_add(&s_rows_dropped, 1, __ATOMIC_RELAXED);
+                /* Queue full: storage flush is lagging. */
+                ESP_LOGD(TAG, "Row queue full — dropped tick %llu (drops=%lu)",
+                         tick, (unsigned long)s_rows_dropped);
+            } else {
+                __atomic_fetch_add(&s_rows_enqueued, 1, __ATOMIC_RELAXED);
+                uint32_t depth = (uint32_t)uxQueueMessagesWaiting(s_row_queue);
+                uint32_t previous = __atomic_load_n(&s_max_queue_depth, __ATOMIC_RELAXED);
+                while (depth > previous &&
+                       !__atomic_compare_exchange_n(&s_max_queue_depth, &previous,
+                                                    depth, false,
+                                                    __ATOMIC_RELAXED,
+                                                    __ATOMIC_RELAXED)) {
+                    /* previous is refreshed by compare_exchange on failure */
+                }
             }
+            s_row_in_flight = false;
         }
     }
 
@@ -271,4 +299,38 @@ bool sensors_dequeue_row(sensor_row_t *row)
 {
     if (!row || !s_row_queue) return false;
     return xQueueReceive(s_row_queue, row, 0) == pdTRUE;
+}
+
+bool sensors_wait_dequeue_row(sensor_row_t *row, uint32_t timeout_ms)
+{
+    if (!row || !s_row_queue) return false;
+    return xQueueReceive(s_row_queue, row, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
+}
+
+void sensors_reset_queue_stats(void)
+{
+    __atomic_store_n(&s_rows_enqueued, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_rows_dropped, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&s_max_queue_depth, (uint32_t)(s_row_queue ? uxQueueMessagesWaiting(s_row_queue) : 0),
+                     __ATOMIC_RELAXED);
+}
+
+void sensors_get_queue_stats(sensors_queue_stats_t *stats)
+{
+    if (!stats) return;
+    stats->rows_enqueued = __atomic_load_n(&s_rows_enqueued, __ATOMIC_RELAXED);
+    stats->rows_dropped = __atomic_load_n(&s_rows_dropped, __ATOMIC_RELAXED);
+    stats->max_depth = __atomic_load_n(&s_max_queue_depth, __ATOMIC_RELAXED);
+    stats->pending_rows = (uint32_t)(s_row_queue ? uxQueueMessagesWaiting(s_row_queue) : 0);
+    stats->producer_active = s_row_in_flight;
+}
+
+bool sensors_wait_for_quiescence(uint32_t timeout_ms)
+{
+    int64_t deadline_us = esp_timer_get_time() + ((int64_t)timeout_ms * 1000LL);
+    while (s_row_in_flight) {
+        if (esp_timer_get_time() >= deadline_us) return false;
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    return true;
 }

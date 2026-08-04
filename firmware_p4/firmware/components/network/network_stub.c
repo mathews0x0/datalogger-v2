@@ -1,5 +1,5 @@
-/* P4 display bring-up: network functions are deliberately inert until the
- * ESP32-C6 SDIO transport is enabled and validated. */
+/* Fallback implementation for builds that intentionally disable the
+ * ESP32-C6 SDIO/ESP-Hosted transport. */
 #include <stdio.h>
 #include <string.h>
 
@@ -48,6 +48,14 @@ esp_err_t network_save_device_config(const network_device_config_t *cfg)
 esp_err_t network_heartbeat(const char *token, const char *api_url)
 {
     (void)token; (void)api_url;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t network_heartbeat_with_telemetry(
+    const char *token, const char *api_url,
+    const network_heartbeat_telemetry_t *telemetry)
+{
+    (void)token; (void)api_url; (void)telemetry;
     return ESP_ERR_NOT_SUPPORTED;
 }
 

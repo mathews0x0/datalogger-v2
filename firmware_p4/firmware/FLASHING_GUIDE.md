@@ -87,7 +87,7 @@ idf.py monitor
 When booted successfully, your console will output:
 ```text
 I (xxx) racesense: ╔══════════════════════════════════════════╗
-I (xxx) racesense: ║   RaceSense ESP32-P4 Firmware  v0.1.0  ║
+I (xxx) racesense: ║   RaceSense ESP32-P4 Firmware Mark 199   ║
 I (xxx) racesense: ║   Waveshare ESP32-P4-WIFI6-LCD-4.3     ║
 I (xxx) racesense: ╚══════════════════════════════════════════╝
 I (xxx) ui_engine: Hardware driver abstraction ready: ILI9341 SPI + XPT2046 Touch

@@ -6044,3 +6044,389 @@ the 4-bit status transfer. Until D1–D3 wiring and 4-bit signal integrity are
 validated, **1-bit/20 MHz is the accepted P4 baseline**. The measured speed is
 adequate for the current telemetry stream but should not be treated as the
 final performance ceiling of the card or controller.
+
+### [2026-08-04] P4 Full Peripheral Bring-Up Milestone
+
+**Objective:** Record the first point at which the complete local P4 hardware
+set operates together on the assembled unit: storage, motion sensing, GPS,
+display, and calibrated touch.
+
+This entry supersedes the temporary hardware states recorded earlier on the
+same date where SD was blocked, GPS was still searching, or GT911 failed on an
+individual boot. Those entries remain useful investigation history, but they
+are no longer the current system status.
+
+### Final Bench Confirmation
+
+The assembled Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3 system now passes the
+following live checks:
+
+- **SD card:** detected and mounted reliably through the accepted
+  1-bit/20 MHz path. The Home screen reports the card's real capacity rather
+  than the former placeholder, and write/readback validation passes.
+- **BMI323 IMU:** operational on the dedicated I²C1 GPIO21/22 bus. Both
+  accelerometer and gyroscope channels respond to physical lean/motion, and
+  their values are visible in Hardware Debug.
+- **GPS:** the Neo-M8N has obtained a clean satellite lock. UART transport,
+  UBX configuration, NMEA parsing, satellite reporting, and approximately
+  10 Hz output are functioning.
+- **Display:** the ST7701 panel renders the full 800×480 landscape interface
+  correctly.
+- **Touch:** GT911 input is aligned with the display, calibration is accurate
+  across the active area, and the saved calibration remains usable after
+  reboot.
+- **Combined operation:** display/touch navigation, live GPS diagnostics,
+  BMI323 accel/gyro updates, and mounted SD storage operate together on the
+  same firmware image.
+
+The Hardware Debug IMU view also gained a **CENTER** control. Its coordinate
+origin was corrected so the current motion pose can be captured as the visual
+zero without modifying sensor calibration or logged data.
+
+### Documentation and Checklist Reconciliation
+
+The P4 gap analysis and hardware validation reference were updated to reflect
+the evidence now available:
+
+- closed the real GPS routing, baud/configuration, 10 Hz rate, and satellite
+  lock checks
+- closed BMI323 chip detection, real-driver operation, and simultaneous
+  BMI323/GT911 bus-operation checks
+- closed the supplied-panel landscape display, calibrated touch-coordinate,
+  and calibration-persistence checks
+- closed SD slot/power mapping, mount, capacity reporting, and basic data
+  integrity checks
+- closed the hardcoded `18.5 GB FREE` UI gap
+- closed the real-IMU release gate
+
+Checks requiring broader evidence remain open or partial. These include exact
+IMU sensitivity validation on a reference fixture, alternate panel/touch
+batches, GPS cold/warm/weak-signal characterization, SD 4-bit D1–D3 recovery,
+large/long-duration writes, card removal and brownout behavior, and full soak
+testing.
+
+### PM Interpretation
+
+The P4 is no longer in basic peripheral bring-up. The complete local hardware
+stack required for on-device telemetry development is operational and usable.
+The next gate is end-to-end product behavior rather than basic device
+detection: connect the sensor producer to the storage consumer, prove complete
+CSV sessions and recovery behavior, bring up ESP32-C6 networking, validate
+backend upload compatibility, and run long-duration/fault-injection tests.
+
+**Status: ✅ P4 local peripheral stack validated; production firmware parity
+and release qualification remain in progress.**
+
+### [2026-08-04] Unified RaceSense Mark 199
+
+**Decision:** Continue the existing numeric sequence as a single RaceSense
+**Mark** identity across server and device firmware. The prior release was Mark
+180; the P4 hardware-validation milestone is designated **Mark 199**.
+
+“Mark” references Tony Stark's sequential Iron Man suits. It is not a semantic
+version and must not be presented as “Version 199” or “Build 199.”
+
+The temporary P4 `v0.1.0` label and Git-derived ESP-IDF app version were not a
+new semantic-version line. They were migration placeholders and are
+superseded by the unified Mark identity.
+
+### Implementation
+
+- `server/VERSION` is the authoritative numeric source and now contains `199`;
+  products render it as `Mark 199`.
+- `/api/health` and the admin settings response read that source instead of
+  reporting an unrelated hardcoded server version.
+- Server firmware comparison no longer searches for the removed S3
+  `firmware/lib/miniserver.py`; it compares Mark release numbers.
+- The P4 CMake configuration reads `server/VERSION`, validates that it is
+  numeric, and embeds `Mark 199` as the ESP-IDF application identity.
+- The P4 boot banner reads the embedded application descriptor instead of a
+  hardcoded `v0.1.0` string.
+- A tracked pre-commit hook increments the Mark number once per commit and
+  stages it automatically. Explicit jumps such as 180 to 199 are preserved.
+
+### Verification and Deployment State
+
+The native firmware builds successfully, and `esptool image_info` reports:
+
+- Project: `racesense_p4`
+- ESP-IDF app identity: `Mark 199`
+- ESP-IDF: `v5.5.5`
+- Image checksum and validation hash: valid
+
+The generated binary is therefore Mark 199. At the time of this entry the P4
+USB serial device was disconnected, so the newly identified image was not yet
+flashed. Likewise, the deployed server continues to report its prior identity
+until the repository change is deployed.
+
+**Status: Mark 199 defined and compiled; device flash and server deployment
+remain operational follow-up steps.**
+
+### [2026-08-04] Consolidated Gap-Fix Ledger and P4 Cloud-Sync Closure
+
+**Objective:** Consolidate the product and engineering gaps closed so far,
+record the final P4 network investigation, and distinguish implemented work
+from items that still require broader qualification.
+
+This entry is a summary ledger. The preceding PM entries remain the detailed
+history for the individual bring-up investigations.
+
+#### Earlier Project Gaps Already Closed
+
+The project also carries forward these major gaps closed before the current P4
+bring-up cycle:
+
+- **Truth capture:** reliable GPS/IMU sampling, buffered CSV writes, physical
+  logger controls, health indication, and a stable raw-telemetry data model.
+- **Track understanding:** automatic track discovery, lap detection, distance
+  normalization, persistent track geometry, and robust start-line closure.
+- **Performance primitives:** best real lap, fixed sector segmentation,
+  distance-aligned delta/ghost calculations, theoretical best lap (TBL), and
+  persistent learning across sessions.
+- **GPS capability:** migration to the Neo-M8N, higher-rate acquisition, and
+  automated post-session processing around a 10 Hz GPS source.
+- **Post-session automation:** one-command CSV processing, known-track
+  matching, new-track generation, TBL updates, and UI-ready session JSON.
+- **Track-generation quality:** heading-verified closure, pit-area exclusion,
+  clean flying-lap selection, smoothing, immutable geometry, and GPS privacy
+  handling.
+- **Filesystem and identity:** one authoritative UI-ready output boundary,
+  immutable track IDs, safe display-name/folder renaming, collision checks,
+  dry-run behavior, rollback protection, and registry updates.
+- **Companion application:** local hotspot/browser workflow, track/session
+  browsing, one-tap processing, renaming, sector comparisons, and session
+  visualization.
+- **Live feedback:** sector/lap feedback state, LED/visual feedback behavior,
+  overlay expiry, GPS-wait-state handling, and live track-ID corrections.
+- **ESP32/cloud migration:** standalone ESP32 firmware direction, cloud-first
+  data flow, deployment tooling, direct-to-cloud sync, device management, and
+  production hosting/environment separation.
+- **Upload durability:** chunked batch upload, resume status, global progress,
+  storage/power telemetry, upload crash fixes, and PostgreSQL/host migration
+  hardening.
+- **Server architecture:** API security hardening, blueprint/app-factory
+  cleanup, subscription/admin refinements, deployment health checks, and
+  server-side track/session processing improvements.
+- **Playback and analysis:** session replay, lap switching, playback tuning,
+  public race-view foundations, processed-session visibility behavior, and
+  live-CSV track-layout generation.
+
+#### Consolidated Fixes Completed
+
+##### 1. P4 hardware and board contract
+
+- Reconciled the production P4 pin map and documented the Waveshare-specific
+  wiring instead of relying on the older S3 assumptions.
+- Integrated the real BMI323 driver on a dedicated I²C1 bus:
+  - SDA=`GPIO21`.
+  - SCL=`GPIO22`.
+  - Address=`0x68`.
+  - Timer-driven polling because the four-wire module exposes no interrupt.
+  - Runtime chip ID `0x43` detection and live accelerometer/gyro response.
+- Kept the GT911 display touch controller on the independent I²C0 bus:
+  - SDA=`GPIO7`.
+  - SCL=`GPIO8`.
+  - Touch coordinates, calibration, calibration persistence, and simultaneous
+    BMI323/GT911 traffic were validated.
+- Reconciled GPS routing and removed the conflicting definitions:
+  - P4 UART1 TX=`GPIO3` → GPS RX.
+  - P4 UART1 RX=`GPIO4` ← GPS TX.
+  - The board's labeled RX/TX debug connector is treated as the C6 path, not
+    the P4 GPS UART.
+- Added GPS boot-baud handling and UBX configuration:
+  - Initial 9600-baud probe.
+  - Retry/configuration at retained 38400 baud.
+  - CFG-PRT, CFG-RATE, and NMEA sentence configuration acknowledgements.
+  - Runtime health counters and approximately 10 Hz measurement cadence.
+- Corrected battery sensing to the production route:
+  - `GPIO20` / `ADC1_CHANNEL_4`.
+  - Divider scale corrected from `2.1` to `3.0` for the documented 3:1
+    resistor network.
+- Established the ST7701 display as an 800×480 landscape target and brought
+  the graphical UI, touch calibration, and navigation onto the P4 image.
+- Added a production hardware configuration that selects the real BMI323
+  implementation rather than the BMI323 stub.
+
+##### 2. SD card, storage, and data integrity
+
+- Corrected the SDMMC host from the wrong P4 slot to **slot 0**.
+- Enabled the P4 LDO_VO4 I/O domain required by the GPIO39–44 SD signal path.
+- Preserved the board's active-low SD power switch on `GPIO45` and corrected
+  power sequencing and cleanup.
+- Added automatic fallback to verified 1-bit / 20 MHz operation when native
+  4-bit negotiation fails.
+- Added boot-time SD create/write/readback/remove validation and runtime
+  persistence checks.
+- Replaced the hardcoded `18.5 GB FREE` Home-screen value with live FAT
+  filesystem capacity/free-space reporting.
+- Enabled FAT long filenames, UTF-8 filename handling, and a 255-character
+  LFN limit for session storage.
+- Added SD error diagnostics with readable `errno` context and safe handling
+  for optional/nonexistent power GPIOs.
+- Added the storage fault state, fault-latched behavior, UI fault surface,
+  session-stop drain barrier, and storage queue health counters. These are
+  implemented; long-duration and fault-injection validation remains open.
+- Validated a 4 MiB sequential storage test at approximately 0.65 MiB/s write
+  and 0.73 MiB/s read with readback verification.
+
+##### 3. Sensor, track, timing, and feedback behavior
+
+- Connected the sensor producer/storage consumer architecture around one
+  sensor-owned queue, with queue depth, maximum depth, dropped-row, and
+  producer-quiescence diagnostics.
+- Wired fresh GPS fixes into the track engine and connected track events to
+  application/UI behavior.
+- Added gate debounce/hysteresis, direction/crossing validation, and GPS
+  jitter handling to reduce false track events.
+- Added host replay coverage for first track identification, sector
+  transitions, lap completion/reset, missing TBL, and neutral classification.
+- Replaced Home-screen placeholders with live track name, lap count, lap time,
+  and delta-versus-TBL values.
+- Added active-track metadata support from the server/cache, including track
+  name, layout, sectors, TBL data, and atomic validated cache replacement.
+- Added the active-track Home preview and the full-screen Track/Info viewer
+  path, with sector/TBL information available to the UI.
+- Registered track callbacks and routed sector events to feedback and lap
+  events to the live timing UI.
+- Added sector overlay rendering/expiry and return-to-logging behavior.
+- Initialized the feedback subsystem and integrated periodic feedback ticks.
+- Added live Hardware Debug views for GPS and BMI323 diagnostics, including a
+  CENTER control that captures the visual motion origin without changing
+  calibration or logged data.
+- Added LVGL transition cleanup checks and verified that repeated screen
+  transitions do not leak objects during bench navigation.
+
+##### 4. Application state and release identity
+
+- Moved the P4 firmware from a mostly dormant/stubbed migration image to a
+  production configuration containing real storage, sensors, UI, track,
+  feedback, and network components.
+- Embedded the shared server/device release identity as **RaceSense Mark 199**
+  from `server/VERSION`.
+- Updated the server health/admin version path and P4 boot identity to use the
+  same Mark source.
+- Added reproducible release metadata and a tracked pre-commit Mark increment
+  hook while preserving explicit release jumps.
+
+##### 5. Wi-Fi transport and provisioning
+
+- Enabled ESP-Hosted remote Wi-Fi between the P4 and onboard ESP32-C6.
+- Validated the P4-to-C6 reset and handshake, C6 identification, SDIO
+  ownership, and coexistence with the SD card.
+- Established the verified SDIO transport configuration:
+  - Slot 1, 4-bit mode, 40 MHz.
+  - CLK=`GPIO18`, CMD=`GPIO19`.
+  - D0=`GPIO14`, D1=`GPIO15`, D2=`GPIO16`, D3=`GPIO17`.
+  - C6 reset=`GPIO54`.
+- Enabled PSRAM-backed hosted buffers/mempool to preserve internal RAM for
+  application and DMA work.
+- Implemented credential-free Wi-Fi scanning and a P4 captive portal.
+- Added captive-portal request hardening:
+  - Complete `Content-Length` validation.
+  - Fragmented TCP request handling.
+  - Bounded form-field lengths.
+  - SSID, password, token, and API URL validation.
+  - Atomic configuration save to `/data/metadata/device.json`.
+  - No password or full-token logging.
+- Added support for the server's magic-link/query provisioning request in
+  addition to the original form POST.
+- Confirmed by serial after server provisioning that the saved configuration
+  parses successfully with all four fields present:
+  `ret=ESP_OK ssid=set password=set token=set api_url=set`.
+
+##### 6. Backend contract and cloud sync
+
+- Corrected the heartbeat route to `POST /api/device/ping`.
+- Corrected active-track retrieval to `GET /api/device/active_track`.
+- Normalized server-root and legacy `/api/upload` API URLs.
+- Hardened upload contract handling for:
+  - Resume status requests.
+  - Sequential batch offsets.
+  - Batch headers and binary bodies.
+  - Completion/finalization responses.
+  - URL-encoded filenames.
+  - Local file-size validation before resume.
+- Added battery, device UID, and storage telemetry to heartbeat payloads.
+- Fixed P4 remote-Wi-Fi device UID collection by using
+  `esp_wifi_get_mac(WIFI_IF_STA)` rather than the local P4 MAC API.
+- Attached the ESP-IDF certificate bundle to every HTTPS client so server
+  certificate verification works in the field.
+- Added SNTP synchronization before TLS operations.
+- Fixed the server telemetry unit mismatch: the server stores SD telemetry in
+  32-bit MB fields, while the firmware storage API reports bytes. Firmware now
+  converts SD capacity/free space to MB at the network boundary, preventing
+  the normal multi-gigabyte card from causing a server database overflow and
+  HTTP 500.
+- Increased the cloud-sync worker stack from 8 KiB to 16 KiB. The earlier
+  white-screen/reboot path reproduced as a FreeRTOS stack overflow during the
+  HTTPS heartbeat.
+- Added a one-shot boot-time server probe for development validation. It was
+  used to exercise Wi-Fi, DHCP, SNTP, TLS, heartbeat, active-track retrieval,
+  and clean disconnect without requiring a touchscreen tap; it is disabled in
+  the final runtime image.
+- Live P4 probe result:
+  - Wi-Fi association and DHCP passed; observed IP=`192.168.1.37`.
+  - Certificate validation passed.
+  - Heartbeat returned success.
+  - Active-track endpoint returned a valid no-active-track response.
+  - Device disconnected cleanly and reported `Provisioned server probe: PASS`.
+- Final non-diagnostic image was flashed and remained in `HOME_IDLE` with
+  stable health, SD, GPS, and BMI323 telemetry for more than 40 seconds.
+
+##### 7. Verification and documentation
+
+- Network provisioning host test: **PASS**.
+- Network contract host test: **PASS**.
+- Storage fault host test: **PASS**.
+- Track-engine host test: **PASS**.
+- Final `git diff --check`: **PASS**.
+- Final generated configuration confirms:
+  - `RS_NETWORK_SELF_TEST` disabled.
+  - `RS_NETWORK_SYNC_SELF_TEST` disabled.
+  - ESP-Hosted mempool preference for PSRAM enabled.
+  - External-memory task-stack support enabled.
+- Updated the P4 gap analysis, hardware validation notes, firmware flashing
+  guide, and this PM diary as evidence accumulated.
+
+#### Gaps Still Open or Partially Qualified
+
+The fixes above close implementation gaps; the following remain qualification
+items rather than unimplemented foundations:
+
+- GT911 initialization is intermittent on some boots. A reset has recovered
+  touch on the bench, but automatic I²C retry/recovery is still needed.
+- The C6 reports coprocessor version `0.0.0` while the P4 host reports
+  `2.12.0`; the production C6 firmware/versioning gap remains.
+- The complete sensor → SD → stop/drain → CSV → cloud-upload flow still needs
+  a live recorded session and reset/Wi-Fi-loss resumability test.
+- Native SD 4-bit D1–D3 signal integrity remains unresolved; 1-bit/20 MHz is
+  the accepted baseline.
+- Long-duration SD writes, card removal/reinsertion, brownout recovery, and
+  broader hardware soak testing remain open.
+- GPS cold-start, warm-start, weak-signal, antenna, and outdoor repeatability
+  testing remain open despite the validated 10 Hz transport/configuration.
+- IMU sensitivity/range validation on a reference fixture remains open.
+- Alternate panel/touch batches, outdoor readability, brightness control, and
+  rider-facing release information remain open.
+- Upload cancellation, real upload ETA/speed reporting, revoked-token tests,
+  and full production deployment/release qualification remain open.
+
+#### PM Interpretation
+
+The project has crossed the major P4 bring-up boundary. The device now has a
+working local peripheral stack, a real graphical/touch interface, persistent
+provisioning, remote C6 Wi-Fi, verified HTTPS connectivity, and a server
+contract that survives real device telemetry. The white-screen reboot was a
+firmware/runtime defect, not lost provisioning credentials or a basic Wi-Fi
+association failure.
+
+The next product gate is a complete rider workflow: record a real session,
+stop it safely, confirm the CSV format and session persistence, upload it over
+the verified cloud path, and validate recovery under interruption. Touch
+retry/recovery and the C6 coprocessor firmware version should be handled in
+parallel because they affect field reliability, but neither invalidates the
+network path demonstrated in this milestone.
+
+**Status: ✅ Major P4 implementation gaps closed; live session/upload,
+reliability qualification, C6 version alignment, and production release
+qualification remain in progress.**

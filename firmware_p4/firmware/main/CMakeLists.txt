@@ -11,4 +11,5 @@ idf_component_register(
         track_engine
         imu_calibration
         feedback
+        esp_app_format
 )

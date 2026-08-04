@@ -56,7 +56,7 @@ def health():
     """Health check endpoint"""
     return jsonify({
         "status": "ok",
-        "version": "1.0",
+        "version": config.get_app_version(),
         "timestamp": datetime.now().isoformat(),
         "is_recording": False # Mock for now
     })
@@ -281,12 +281,21 @@ def upload_batch():
 
         if not filename or content_length <= 0:
             return jsonify({"error": "X-Filename and Content-Length required"}), 400
+        if offset < 0 or total_size <= 0 or offset > total_size or \
+                content_length > total_size - offset:
+            return jsonify({"error": "Invalid upload offset or total size"}), 400
 
         safe_name = os.path.basename(filename)
         learning_dir = config.get_user_learning_dir(user_id)
         chunks_dir = learning_dir / '.chunks'
         chunks_dir.mkdir(parents=True, exist_ok=True)
         partial_path = chunks_dir / (safe_name + '.partial')
+
+        # Batches are strictly sequential. This prevents a bad resume offset
+        # from creating a sparse file or silently corrupting the session.
+        if offset > 0:
+            if not partial_path.exists() or partial_path.stat().st_size != offset:
+                return jsonify({"error": "Upload offset does not match server state"}), 409
 
         # Stream request body to .partial file at the correct offset
         bytes_written = 0
@@ -300,6 +309,9 @@ def upload_batch():
                     break
                 f.write(block)
                 bytes_written += len(block)
+
+        if bytes_written != content_length:
+            return jsonify({"error": "Request body shorter than Content-Length"}), 400
 
         new_offset = offset + bytes_written
 
@@ -437,7 +449,7 @@ def upload_complete():
                 tracker_val = int(tracker_path.read_text().strip())
                 if total_size > 0:
                     # Batch mode: tracker stores byte offset
-                    if tracker_val >= total_size:
+                    if tracker_val == total_size and partial_path.stat().st_size == total_size:
                         partial_complete = True
                 elif tracker_val >= total_chunks:
                     # Legacy chunk mode: tracker stores chunk count
@@ -446,7 +458,7 @@ def upload_complete():
                 pass
         # Also check: batch mode with total_size — partial file size is enough
         if not partial_complete and total_size > 0 and partial_path.exists():
-            if partial_path.stat().st_size >= total_size:
+            if partial_path.stat().st_size == total_size:
                 partial_complete = True
 
         if partial_complete:

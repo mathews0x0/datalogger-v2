@@ -2,33 +2,27 @@ import os
 import subprocess
 import json
 import sys
+import re
 
 import api.config as config
 from api.models import db, TrackMeta, SessionMeta, GlobalTrack, UnmatchedTrackReport
 
-MIN_ESP_VERSION = "0.0.0"
-FIRMWARE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../firmware'))
+MIN_ESP_VERSION = config.get_app_version()
 
 def get_local_firmware_version():
-    try:
-        p = os.path.join(FIRMWARE_DIR, 'lib/miniserver.py')
-        with open(p, 'r') as f:
-            for line in f:
-                if 'VERSION =' in line:
-                    return line.split('=')[1].strip().replace('"', '').replace("'", "")
-    except:
-        pass
-    return "Unknown"
+    """Return the single RaceSense build shared by server and firmware."""
+    return config.get_app_version()
 
 def is_compatible(esp_version):
-    """Check if ESP firmware meets minimum requirements"""
+    """Check whether a device is on this or a newer Mark release."""
     if not esp_version: return False
     try:
-        # Simple version comparison (e.g. 1.0.2)
-        v_parts = [int(p) for p in esp_version.split('.')]
-        min_parts = [int(p) for p in MIN_ESP_VERSION.split('.')]
-        return v_parts >= min_parts
-    except:
+        device_match = re.fullmatch(r"(?:Mark\s+)?(\d+)", str(esp_version).strip(), re.IGNORECASE)
+        minimum_match = re.fullmatch(r"Mark\s+(\d+)", MIN_ESP_VERSION, re.IGNORECASE)
+        if not device_match or not minimum_match:
+            return False
+        return int(device_match.group(1)) >= int(minimum_match.group(1))
+    except (TypeError, ValueError, AttributeError):
         return False
 
 def load_registry(user_id=None):

@@ -17,6 +17,7 @@
 #include "ui_layout.h"
 #include "ui_events.h"
 #include "ui_theme.h"
+#include "storage.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,6 +89,18 @@ void ui_home_deactivate(void);
 void ui_home_update(bool sd_ok, bool imu_ok, bool gps_ok, int sats, int bat_pct,
                     int storage_pct, const char *track_name);
 
+/** Render the compact active-track preview inside a Home card. */
+void ui_track_preview_render(lv_obj_t *parent, int x, int y, int width, int height);
+
+/** Screen 15: Full-screen active-track map and TBL information viewer. */
+void ui_show_track_view(void);
+
+/** Update the rider marker while the full-screen map is visible. */
+void ui_track_update_position(double lat, double lon, bool valid);
+
+/** Stop track-view updates before another screen replaces the root. */
+void ui_track_view_deactivate(void);
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Wave 2: Telemetry & Trackside Feedback (ui_logging.c)
  * ────────────────────────────────────────────────────────────────────────*/
@@ -128,6 +141,12 @@ void ui_show_imu_validation(void);
  */
 void ui_show_sector_flash(int sector_num, const char *delta, bool faster,
                           const char *sector_time, const char *tbl_time);
+
+/** Hide the active sector/lap feedback overlay, if one is visible. */
+void ui_hide_sector_flash(void);
+
+/** @brief Screen 14: Explain why logging stopped after a storage fault. */
+void ui_show_storage_fault(storage_fault_t fault);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Wave 3: Settings & IMU Calibration (ui_settings.c / ui_calibration.c)

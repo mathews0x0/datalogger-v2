@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+version_file="$repo_root/server/VERSION"
+
+if [ ! -f "$version_file" ]; then
+    echo "Mark auto-increment: missing server/VERSION" >&2
+    exit 1
+fi
+
+current=$(tr -d '[:space:]' < "$version_file")
+case "$current" in
+    ''|*[!0-9]*)
+        echo "Mark auto-increment: server/VERSION must contain only a number" >&2
+        exit 1
+        ;;
+esac
+
+head_value=$(git -C "$repo_root" show HEAD:server/VERSION 2>/dev/null | tr -d '[:space:]' || true)
+
+if [ "$current" != "$head_value" ]; then
+    # Preserve an explicitly selected Mark jump, including 180 -> 199.
+    git -C "$repo_root" add -- server/VERSION
+    echo "RaceSense Mark $current (explicit Mark change staged)"
+    exit 0
+fi
+
+next=$((current + 1))
+printf '%s\n' "$next" > "$version_file"
+git -C "$repo_root" add -- server/VERSION
+echo "RaceSense Mark $next (auto-incremented for commit)"

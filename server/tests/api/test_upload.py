@@ -378,3 +378,21 @@ def test_batch_status_returns_bytes(upload_client, app):
         assert resp.status_code == 200
         result = resp.get_json()
         assert result['received_bytes'] == 256
+
+
+def test_batch_upload_rejects_non_sequential_offset(upload_client, app):
+    """A resume offset must match the server's current partial-file size."""
+    with app.app_context():
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_offset.csv'
+        headers['X-Offset'] = '0'
+        headers['X-Total-Size'] = '8'
+        response = upload_client.post('/api/upload/batch', data=b'1234', headers=headers)
+        assert response.status_code == 200
+
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_offset.csv'
+        headers['X-Offset'] = '2'
+        headers['X-Total-Size'] = '8'
+        response = upload_client.post('/api/upload/batch', data=b'5678', headers=headers)
+        assert response.status_code == 409

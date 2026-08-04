@@ -1,6 +1,6 @@
 # 🏍️ RaceSense Hardware & Firmware (RS-Core)
 
-This document details the physical data acquisition hardware (**RS-Core V4.2 / V2 & ESP32-P4**) and the **Native C/C++ ESP-IDF v5.3 Firmware** (with historical MicroPython reference) that powers it.
+This document details the physical data acquisition hardware (**RS-Core V4.2 / V2 & ESP32-P4**) and the **Native C/C++ ESP-IDF 5.x Firmware** (currently validated with ESP-IDF v5.5.5, with historical MicroPython reference) that powers it.
 
 ---
 
@@ -60,18 +60,60 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 
 ---
 
-## 🧠 Firmware Architecture (Native C/C++ ESP-IDF v5.3)
+## 🧠 Firmware Architecture (Native C/C++ ESP-IDF 5.x)
 
-The RaceSense firmware has transitioned from legacy MicroPython to **Native C/C++ under ESP-IDF v5.3 with FreeRTOS SMP**. This architectural upgrade resolves historical cadence limitations and introduces seamless dual-target support across hardware platforms.
+The RaceSense firmware has transitioned from legacy MicroPython to **Native C/C++ under ESP-IDF 5.x with FreeRTOS SMP**. This architectural upgrade resolves historical cadence limitations and introduces dual-target support across hardware platforms.
 
 ### **Dual-Target Hardware Abstraction (`bsp.h` / `bsp_display_target.h`)**
 The codebase compiled under `firmware_p4/firmware/` operates as a unified target-agnostic repository:
 *   **ESP32-S3 (`idf.py set-target esp32s3`)**: Target 2 configuration for RS-Core V4.2 PCB. Automatically routes I2C0 to IO21/39, UART1 to IO17/18, Battery ADC to IO7 (CH6, 100k/100k divider @ 2.0x scale), and configures the 2.8" SPI ILI9341 (320x240) + XPT2046 resistive touch controller on dedicated SPI pins. Supports soft-power self-hold latch on **IO41** (`PWR_HOLD`) and button intent sense on **IO8** (`PWR_SENSE`).
-*   **ESP32-P4 (`idf.py set-target esp32p4`)**: Target 0 configuration for Waveshare 4.3" development board. Automatically routes I2C0 to IO7/8, UART1 to IO3/4, Battery ADC to IO5 (CH4 @ 2.1x scale), SDMMC to Slot 0 4-bit (IO39-44 + IO45 load switch), and configures the 4.3" MIPI-DSI ST7701 (800x480) + GT911 capacitive touch controller.
+*   **ESP32-P4 (`idf.py set-target esp32p4`)**: Target 0 configuration for the Waveshare 4.3" development board. It routes GT911 touch on I²C0 IO7/8, the external BMI323 on I²C1 IO21/22, Neo-M8N UART1 on IO3/4, and battery ADC to IO20 / ADC1 channel 4 with the schematic's 200 kΩ/100 kΩ divider (3.0× scale). SDMMC uses slot 0 on IO39–44, the active-low IO45 card switch, and the P4 LDO_VO4 I/O supply. The card currently mounts through the verified 1-bit/20 MHz fallback because the fitted board/card path fails its 4-bit SSR transfer. Display output is the 4.3" MIPI-DSI ST7701 at 800×480 landscape with GT911 capacitive touch.
+
+### **P4 Live Hardware Validation (2026-08-04)**
+
+The supplied P4 assembly has passed simultaneous bench validation for the
+current peripheral baseline:
+
+*   **Display/touch:** correct 800×480 landscape rendering and accurate,
+    persistent GT911 calibration.
+*   **IMU:** BMI323 chip ID `0x43`; live accelerometer and gyro channels both
+    produce the expected motion/lean response.
+*   **GPS:** Neo-M8N obtains a clean satellite lock with approximately 10 Hz
+    configured and measured output.
+*   **Storage:** the nominal 8 GB SDHC card mounts, reports 7.49 GiB total and
+    approximately 7.42 GiB free, and passes create/write/readback/remove. A
+    verified 4 MiB test measured 0.65 MiB/s write and 0.73 MiB/s read.
+
+This is a peripheral bring-up milestone, not a production-release declaration.
+ESP32-C6 Wi-Fi transport, the sensor-to-storage queue bridge, complete CSV
+session validation, recovery testing, and soak testing remain open.
+
+### **Unified RaceSense Mark Identity**
+
+Server and device firmware use one monotonically increasing RaceSense **Mark**
+identity, referencing Tony Stark's successive Iron Man suits. It is neither a
+semantic version nor a generic build label. The authoritative numeric source
+is `server/VERSION`; the current release identity is **Mark 199**.
+
+The server reads this value for its health response, admin display, local
+firmware comparison, and minimum-compatible Mark release. The P4 CMake
+configuration reads the same file and embeds `Mark N` in the standard ESP-IDF
+application descriptor. Firmware also prints the Mark identity during boot.
+Configuration fails if the shared number is absent or non-numeric, preventing
+an unrelated Git hash or hardcoded placeholder from silently becoming the
+device identity.
+
+The tracked `.githooks/pre-commit` hook advances the number once per commit. An
+explicitly selected jump is preserved, which is how the sequence moves from
+Mark 180 to Mark 199 without being incremented again by that commit.
+
+Mark identity and Git revision serve different purposes: Mark 199 identifies
+the coordinated RaceSense release, while the Git SHA remains useful engineering
+traceability.
 
 ### **Core Allocation & Deterministic Sampling (Core 0 vs Core 1)**
-*   **Core 0 (Hard Real-Time Telemetry)**: Dedicated exclusively to high-frequency sensor acquisition via `sensors.c`. Runs an unperturbed FreeRTOS timer/task loop sampling the BMI323 6-DOF IMU at an exact **100 Hz** and the Neo-M8N GNSS module at **10 Hz**. This deterministically overcomes the legacy MicroPython field loop degradation (where May 2026 field validation logs observed ~53-58Hz IMU and 4-7Hz GPS drift due to GC and interpreter overhead).
-*   **Core 1 (Application, UI & Storage Flush)**: Houses the top-level application state machine (`main.c`), drains sensor rows from the FreeRTOS ring-queue to SDMMC (`storage.c`), processes Wi-Fi 6 / HTTPS persistent chunked syncing (`network.c`), and drives the 12-screen LVGL 8.4 user interface (`ui/`).
+*   **Core 0 (Hard Real-Time Telemetry)**: Dedicated to high-frequency sensor acquisition via `sensors.c`. The FreeRTOS timer/task loop is configured for a **100 Hz** BMI323 target and **10 Hz** Neo-M8N processing. GPS cadence has been measured at approximately 10 Hz on the P4; exact 100 Hz IMU cadence and worst-case jitter under simultaneous display, SD, and future Wi-Fi load remain validation items.
+*   **Core 1 (Application, UI & Storage Flush)**: Houses the top-level application state machine (`main.c`), the SDMMC storage flush task (`storage.c`), networking, and the LVGL UI. The sensor-owned queue is consumed by the storage flush task through an explicit drain barrier; live CSV-session validation remains open, and P4 networking still selects `network_stub.c`.
 
 ### **Legacy MicroPython Reference (Firmware V2)**
 Historically, firmware operated under an exclusive two-mode structure in MicroPython v1.22 on the ESP32_GENERIC_S3 "spiram-oct" variant:
@@ -281,9 +323,9 @@ Pass criteria:
 
 ## 🏎️ ESP32-P4 & S3 Native C/C++ UI & Telemetry Architecture
 
-With Phase 8 implementation, RaceSense utilizes a dual-core architectural split under native ESP-IDF v5.3:
-* **Core 0 (PRO_CPU):** Dedicated exclusively to high-frequency hardware sensor ingestion via `gptimer` interrupts (100Hz SPI BMI323 IMU and 10Hz UART Neo-M8N GPS). Telemetry rows are pushed into thread-safe queues without waiting for UI or SD filesystem access.
-* **Core 1 (APP_CPU):** Manages the application state machine (`main.c`), SD card queue flushing (`storage.c`), and the LVGL 9 graphical interface suite (`ui.c`).
+With Phase 8 implementation, RaceSense utilizes a dual-core architectural split under native ESP-IDF 5.x:
+* **Core 0 (PRO_CPU):** Dedicated to high-frequency hardware sensor ingestion through the timer-driven acquisition task (100 Hz target over I²C1 for the BMI323 and approximately 10 Hz over UART1 for the Neo-M8N GPS). Telemetry rows are pushed into a sensor queue without waiting for UI or SD filesystem access.
+* **Core 1 (APP_CPU):** Manages the application state machine (`main.c`), the storage flush task (`storage.c`), and the LVGL graphical interface suite (`ui.c`). The P4 storage task now consumes the sensor-owned queue and waits for a producer/consumer drain acknowledgement before closing a session; live-session CSV writing is still awaiting hardware proof.
 
 ### **Thread-Safe LVGL Synchronization**
 To eliminate thread deadlocks and memory corruption during simultaneous Core 0 telemetry reporting and Core 1 capacitive/resistive input handling:

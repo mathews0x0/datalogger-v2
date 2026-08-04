@@ -1,0 +1,4 @@
+#ifndef RACESENSE_HOST_ESP_TIMER_H
+#define RACESENSE_HOST_ESP_TIMER_H
+
+#endif

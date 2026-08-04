@@ -6,8 +6,8 @@
  *
  * Architecture:
  *   - storage_init() starts a Core 1 flush task.
- *   - Sensor task (Core 0) calls storage_enqueue_row() 100x/sec.
- *   - Flush task (Core 1) drains the sensor queue → writes to FILE* in
+ *   - Sensor task (Core 0) owns the row queue and produces rows 100x/sec.
+ *   - Flush task (Core 1) drains that sensor queue → writes to FILE* in
  *     ~32-row batches → fflush() to commit to FATFS.
  *   - Marker rows are written directly (not queued) with an fflush().
  *
@@ -25,7 +25,6 @@
 #include <dirent.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -39,10 +38,10 @@ static const char *TAG = "storage";
  * Internal configuration
  * ────────────────────────────────────────────────────────────────────────*/
 #define FLUSH_BATCH_ROWS     32       /* Write to disk every N rows           */
-#define FLUSH_QUEUE_DEPTH    512      /* Row queue depth (5s headroom @100Hz) */
 #define FLUSH_TASK_STACK     4096
 #define FLUSH_TASK_PRIORITY  5        /* Lower than sensor task               */
 #define FLUSH_TASK_CORE      1        /* Core 1 — same as UI                  */
+#define FLUSH_DRAIN_TIMEOUT_MS 2000   /* Maximum normal session-stop drain    */
 
 /* CSV header — column order is the server contract */
 static const char *CSV_HEADER =
@@ -53,13 +52,15 @@ static const char *CSV_HEADER =
  * Module state
  * ────────────────────────────────────────────────────────────────────────*/
 static FILE             *s_file          = NULL;
-static QueueHandle_t     s_row_queue     = NULL;
 static SemaphoreHandle_t s_file_mutex    = NULL;
+static SemaphoreHandle_t s_drain_complete = NULL;
 static TaskHandle_t      s_flush_task    = NULL;
 static volatile bool     s_flush_running = false;
+static volatile bool     s_drain_requested = false;
 
 static storage_session_info_t  s_session  = {0};
 static storage_health_t        s_health   = STORAGE_HEALTH_OK;
+static volatile int            s_fault_code = STORAGE_FAULT_NONE;
 static uint32_t                s_row_since_checkpoint = 0;
 static wl_handle_t             s_flash_wl = WL_INVALID_HANDLE;
 
@@ -141,50 +142,121 @@ static void _refresh_health(void)
     }
 }
 
+static void _latch_fault(storage_fault_t fault, const char *operation)
+{
+    if (fault == STORAGE_FAULT_NONE) return;
+
+    int expected = STORAGE_FAULT_NONE;
+    if (__atomic_compare_exchange_n(&s_fault_code, &expected, (int)fault,
+                                    false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        ESP_LOGE(TAG, "Storage fault latched: %s (%s)",
+                 storage_fault_name(fault), operation ? operation : "unknown");
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────────────────
  * CSV row formatting
  * ────────────────────────────────────────────────────────────────────────*/
 
 /** Write one IMU or GPS row directly to the open file (must hold file_mutex) */
-static void _write_imu_row_locked(uint32_t tick_ms,
-                                   float ax, float ay, float az,
-                                   float gx, float gy, float gz)
+static esp_err_t _write_imu_row_locked(uint32_t tick_ms,
+                                       float ax, float ay, float az,
+                                       float gx, float gy, float gz)
 {
-    fprintf(s_file,
-            "%lu,I,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,,,,,,\n",
-            (unsigned long)tick_ms,
-            ax, ay, az, gx, gy, gz);
+    int written = fprintf(s_file,
+                          "%lu,I,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,,,,,,\n",
+                          (unsigned long)tick_ms,
+                          ax, ay, az, gx, gy, gz);
+    return written < 0 ? ESP_FAIL : ESP_OK;
 }
 
-static void _write_gps_row_locked(uint32_t tick_ms,
-                                   float ax, float ay, float az,
-                                   float gx, float gy, float gz,
-                                   double lat, double lon,
-                                   float alt, float speed, int sats, float vbat)
+static esp_err_t _write_gps_row_locked(uint32_t tick_ms,
+                                       float ax, float ay, float az,
+                                       float gx, float gy, float gz,
+                                       double lat, double lon,
+                                       float alt, float speed, int sats, float vbat)
 {
-    fprintf(s_file,
-            "%lu,G,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.8f,%.8f,%.2f,%.3f,%d,%.3f\n",
-            (unsigned long)tick_ms,
-            ax, ay, az, gx, gy, gz,
-            lat, lon, alt, speed, sats, vbat);
+    int written = fprintf(s_file,
+                          "%lu,G,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.8f,%.8f,%.2f,%.3f,%d,%.3f\n",
+                          (unsigned long)tick_ms,
+                          ax, ay, az, gx, gy, gz,
+                          lat, lon, alt, speed, sats, vbat);
+    return written < 0 ? ESP_FAIL : ESP_OK;
 }
 
-static void _write_marker_locked(uint32_t tick_ms,
-                                  const char *marker_type,
-                                  const char *payload)
+static esp_err_t _write_marker_locked(uint32_t tick_ms,
+                                      const char *marker_type,
+                                      const char *payload)
 {
+    int written;
     if (payload && payload[0]) {
-        fprintf(s_file, "%lu,M,%s,\"%s\"\n",
-                (unsigned long)tick_ms, marker_type, payload);
+        written = fprintf(s_file, "%lu,M,%s,\"%s\"\n",
+                          (unsigned long)tick_ms, marker_type, payload);
     } else {
-        fprintf(s_file, "%lu,M,%s,\n",
-                (unsigned long)tick_ms, marker_type);
+        written = fprintf(s_file, "%lu,M,%s,\n",
+                          (unsigned long)tick_ms, marker_type);
     }
-    fflush(s_file); /* Marker rows always flush immediately */
+    if (written < 0 || fflush(s_file) != 0) return ESP_FAIL;
+    return ESP_OK;
+}
+
+/** Close a file after a fault without attempting to append another marker. */
+static void _close_faulted_file_locked(void)
+{
+    if (!s_file) return;
+    if (fclose(s_file) != 0) _latch_fault(STORAGE_FAULT_CLOSE, "fclose after fault");
+    s_file = NULL;
+}
+
+/**
+ * @brief Complete a requested queue drain after the consumer is idle.
+ *
+ * This is called only by the flush task. Because the task reaches this point
+ * after a receive timeout, it cannot still be holding a dequeued row while it
+ * acknowledges the drain barrier.
+ */
+static void _maybe_complete_drain(void)
+{
+    if (!__atomic_load_n(&s_drain_requested, __ATOMIC_ACQUIRE)) return;
+
+    sensors_queue_stats_t stats = {0};
+    sensors_get_queue_stats(&stats);
+    if (stats.pending_rows != 0 || stats.producer_active) return;
+
+    if (s_file) {
+        xSemaphoreTake(s_file_mutex, portMAX_DELAY);
+        if (fflush(s_file) != 0) {
+            _latch_fault(STORAGE_FAULT_FLUSH, "drain flush");
+            _close_faulted_file_locked();
+        }
+        xSemaphoreGive(s_file_mutex);
+    }
+
+    __atomic_store_n(&s_drain_requested, false, __ATOMIC_RELEASE);
+    xSemaphoreGive(s_drain_complete);
+}
+
+/**
+ * @brief Ask the flush task to consume all rows currently produced.
+ */
+static esp_err_t _wait_for_queue_drain(uint32_t timeout_ms)
+{
+    if (!s_drain_complete) return ESP_ERR_INVALID_STATE;
+
+    /* A binary semaphore should normally be empty; clear a stale completion
+     * defensively before starting a new barrier. */
+    (void)xSemaphoreTake(s_drain_complete, 0);
+    __atomic_store_n(&s_drain_requested, true, __ATOMIC_RELEASE);
+
+    if (xSemaphoreTake(s_drain_complete, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        __atomic_store_n(&s_drain_requested, false, __ATOMIC_RELEASE);
+        return ESP_ERR_TIMEOUT;
+    }
+    return ESP_OK;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
- * Flush task (Core 1) — drains sensor queue and writes to SD
+ * Flush task (Core 1) — drains the sensor-owned queue and writes to SD
  * ────────────────────────────────────────────────────────────────────────*/
 static void _flush_task(void *arg)
 {
@@ -194,14 +266,21 @@ static void _flush_task(void *arg)
 
     while (s_flush_running) {
         /* Block for up to 20ms waiting for a row */
-        if (xQueueReceive(s_row_queue, &row, pdMS_TO_TICKS(20)) != pdTRUE) {
+        if (!sensors_wait_dequeue_row(&row, 20)) {
             /* Nothing in queue — flush pending writes if we have any */
             if (batch_count > 0 && s_file) {
                 xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-                fflush(s_file);
+                if (fflush(s_file) != 0) {
+                    _latch_fault(STORAGE_FAULT_FLUSH, "batch flush");
+                    _close_faulted_file_locked();
+                }
                 xSemaphoreGive(s_file_mutex);
                 batch_count = 0;
             }
+            _maybe_complete_drain();
+            /* The sensor queue is created after storage_init() during boot.
+             * Avoid a tight loop during that short startup window. */
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
@@ -210,27 +289,53 @@ static void _flush_task(void *arg)
             _refresh_health();
         }
 
-        /* HARD_STOP: discard rows, do not write */
-        if (s_health == STORAGE_HEALTH_HARD_STOP) {
+        /* Once a write fault is latched, consume and discard queued rows so
+         * the producer can quiesce cleanly while the app transitions UI. */
+        if (storage_get_fault() != STORAGE_FAULT_NONE) {
             s_session.rows_dropped++;
             continue;
         }
 
-        if (!s_file) continue;
+        /* HARD_STOP: discard rows, do not write */
+        if (s_health == STORAGE_HEALTH_HARD_STOP) {
+            _latch_fault(STORAGE_FAULT_CAPACITY, "storage usage threshold");
+            if (s_file) {
+                xSemaphoreTake(s_file_mutex, portMAX_DELAY);
+                _close_faulted_file_locked();
+                xSemaphoreGive(s_file_mutex);
+            }
+            s_session.rows_dropped++;
+            continue;
+        }
+
+        if (!s_file || !s_session.active) {
+            ESP_LOGW(TAG, "Discarding row because no session is active");
+            continue;
+        }
 
         xSemaphoreTake(s_file_mutex, portMAX_DELAY);
 
+        esp_err_t write_ret;
         if (row.row_type == ROW_TYPE_GPS) {
-            _write_gps_row_locked(row.tick_ms,
-                                   row.ax, row.ay, row.az,
-                                   row.gx, row.gy, row.gz,
-                                   row.lat, row.lon,
-                                   row.altitude_m, row.speed_kmh,
-                                   row.satellites, row.vbat);
+            write_ret = _write_gps_row_locked(row.tick_ms,
+                                              row.ax, row.ay, row.az,
+                                              row.gx, row.gy, row.gz,
+                                              row.lat, row.lon,
+                                              row.altitude_m, row.speed_kmh,
+                                              row.satellites, row.vbat);
         } else {
-            _write_imu_row_locked(row.tick_ms,
-                                   row.ax, row.ay, row.az,
-                                   row.gx, row.gy, row.gz);
+            write_ret = _write_imu_row_locked(row.tick_ms,
+                                              row.ax, row.ay, row.az,
+                                              row.gx, row.gy, row.gz);
+        }
+
+        if (write_ret != ESP_OK) {
+            _latch_fault(STORAGE_FAULT_WRITE, "telemetry row");
+            s_session.rows_dropped++;
+            _close_faulted_file_locked();
+            xSemaphoreGive(s_file_mutex);
+            batch_count = 0;
+            continue;
         }
 
         s_session.rows_written++;
@@ -240,13 +345,23 @@ static void _flush_task(void *arg)
         /* Auto-checkpoint */
         s_row_since_checkpoint++;
         if (s_row_since_checkpoint >= STORAGE_CHECKPOINT_INTERVAL) {
-            _write_marker_locked(row.tick_ms, "CHECKPOINT", NULL);
+            if (_write_marker_locked(row.tick_ms, "CHECKPOINT", NULL) != ESP_OK) {
+                _latch_fault(STORAGE_FAULT_WRITE, "telemetry checkpoint");
+                _close_faulted_file_locked();
+                s_row_since_checkpoint = 0;
+                xSemaphoreGive(s_file_mutex);
+                batch_count = 0;
+                continue;
+            }
             s_row_since_checkpoint = 0;
         }
 
         /* Batch flush every FLUSH_BATCH_ROWS rows */
         if (batch_count >= FLUSH_BATCH_ROWS) {
-            fflush(s_file);
+            if (fflush(s_file) != 0) {
+                _latch_fault(STORAGE_FAULT_FLUSH, "telemetry batch");
+                _close_faulted_file_locked();
+            }
             batch_count = 0;
         }
 
@@ -291,13 +406,13 @@ esp_err_t storage_init(void)
         _mkdir_safe(STORAGE_SD_ARCHIVE_DIR);
     }
 
-    /* Row queue for sensor→flush pipeline */
-    s_row_queue = xQueueCreate(FLUSH_QUEUE_DEPTH, sizeof(sensor_row_t));
-    if (!s_row_queue) return ESP_ERR_NO_MEM;
-
     /* Mutex protecting file handle */
     s_file_mutex = xSemaphoreCreateMutex();
     if (!s_file_mutex) return ESP_ERR_NO_MEM;
+
+    /* Completion barrier used when stopping a session. */
+    s_drain_complete = xSemaphoreCreateBinary();
+    if (!s_drain_complete) return ESP_ERR_NO_MEM;
 
     /* Start flush task on Core 1 */
     s_flush_running = true;
@@ -315,9 +430,24 @@ esp_err_t storage_init(void)
 
 esp_err_t storage_session_start(void)
 {
+    if (!s_file_mutex || s_flash_wl == WL_INVALID_HANDLE) {
+        _latch_fault(STORAGE_FAULT_NOT_READY, "session start before storage init");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (storage_get_fault() != STORAGE_FAULT_NONE) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
     if (s_session.active) {
         ESP_LOGW(TAG, "Session already open — stopping first");
-        storage_session_stop();
+        esp_err_t stop_ret = storage_session_stop();
+        if (stop_ret != ESP_OK) return stop_ret;
+    }
+
+    _refresh_health();
+    if (s_health == STORAGE_HEALTH_HARD_STOP) {
+        _latch_fault(STORAGE_FAULT_CAPACITY, "session start capacity check");
+        return ESP_ERR_NO_MEM;
     }
 
     const char *dir = _active_dir();
@@ -331,14 +461,27 @@ esp_err_t storage_session_start(void)
 
     if (!s_file) {
         ESP_LOGE(TAG, "Failed to open: %s", s_session.filepath);
+        _latch_fault(STORAGE_FAULT_OPEN, "session file open");
         return ESP_FAIL;
     }
 
     /* Write CSV header */
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-    fputs(CSV_HEADER, s_file);
-    _write_marker_locked((uint32_t)(esp_timer_get_time() / 1000ULL),
-                          "LOG_OPEN", s_session.filename);
+    bool header_ok = fputs(CSV_HEADER, s_file) != EOF;
+    esp_err_t marker_ret = header_ok
+        ? _write_marker_locked((uint32_t)(esp_timer_get_time() / 1000ULL),
+                               "LOG_OPEN", s_session.filename)
+        : ESP_FAIL;
+    if (header_ok && marker_ret == ESP_OK) {
+        /* Make the session visible on disk before producers start. */
+        header_ok = fflush(s_file) == 0;
+    }
+    if (!header_ok || marker_ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_WRITE, "session header/LOG_OPEN");
+        _close_faulted_file_locked();
+        xSemaphoreGive(s_file_mutex);
+        return ESP_FAIL;
+    }
     xSemaphoreGive(s_file_mutex);
 
     s_session.active          = true;
@@ -346,6 +489,7 @@ esp_err_t storage_session_start(void)
     s_session.rows_dropped    = 0;
     s_session.bytes_written   = 0;
     s_row_since_checkpoint    = 0;
+    sensors_reset_queue_stats();
 
     ESP_LOGI(TAG, "Session started: %s", s_session.filepath);
     return ESP_OK;
@@ -355,12 +499,42 @@ esp_err_t storage_session_stop(void)
 {
     if (!s_session.active) return ESP_OK;
 
+    /* The caller normally disables logging first; repeat it here so every
+     * storage stop path has the same producer/consumer ordering. */
+    sensors_set_logging(false);
+    bool producer_quiesced = sensors_wait_for_quiescence(FLUSH_DRAIN_TIMEOUT_MS);
+    esp_err_t drain_ret = producer_quiesced
+        ? _wait_for_queue_drain(FLUSH_DRAIN_TIMEOUT_MS)
+        : ESP_ERR_TIMEOUT;
+    if (drain_ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_DRAIN_TIMEOUT, "session drain");
+        sensors_queue_stats_t queue_stats = {0};
+        sensors_get_queue_stats(&queue_stats);
+        ESP_LOGE(TAG, "Session drain timed out: pending=%lu active=%s drops=%lu",
+                 (unsigned long)queue_stats.pending_rows,
+                 queue_stats.producer_active ? "yes" : "no",
+                 (unsigned long)queue_stats.rows_dropped);
+    }
+
+    sensors_queue_stats_t queue_stats = {0};
+    sensors_get_queue_stats(&queue_stats);
+    s_session.rows_dropped += queue_stats.rows_dropped;
+
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
     if (s_file) {
-        _write_marker_locked((uint32_t)(esp_timer_get_time() / 1000ULL),
-                              "LOG_STOP", NULL);
-        fflush(s_file);
-        fclose(s_file);
+        if (storage_get_fault() == STORAGE_FAULT_NONE) {
+            if (_write_marker_locked((uint32_t)(esp_timer_get_time() / 1000ULL),
+                                     "LOG_STOP", NULL) != ESP_OK) {
+                _latch_fault(STORAGE_FAULT_WRITE, "LOG_STOP");
+            }
+        }
+        if (s_file && storage_get_fault() == STORAGE_FAULT_NONE &&
+            fflush(s_file) != 0) {
+            _latch_fault(STORAGE_FAULT_FLUSH, "session stop flush");
+        }
+        if (s_file && fclose(s_file) != 0) {
+            _latch_fault(STORAGE_FAULT_CLOSE, "session stop close");
+        }
         s_file = NULL;
     }
     xSemaphoreGive(s_file_mutex);
@@ -370,51 +544,83 @@ esp_err_t storage_session_stop(void)
              s_session.filename,
              (unsigned long)s_session.rows_written,
              s_session.bytes_written);
-    return ESP_OK;
+    ESP_LOGI(TAG, "Session queue stats: enqueued=%lu dropped=%lu max_depth=%lu pending=%lu",
+             (unsigned long)queue_stats.rows_enqueued,
+             (unsigned long)queue_stats.rows_dropped,
+             (unsigned long)queue_stats.max_depth,
+             (unsigned long)queue_stats.pending_rows);
+    if (storage_get_fault() != STORAGE_FAULT_NONE) return ESP_FAIL;
+    return drain_ret;
 }
 
 esp_err_t storage_write_checkpoint(void)
 {
-    if (!s_file || !s_session.active) return ESP_ERR_INVALID_STATE;
+    if (storage_get_fault() != STORAGE_FAULT_NONE || !s_file || !s_session.active) {
+        return ESP_ERR_INVALID_STATE;
+    }
     uint32_t tick = (uint32_t)(esp_timer_get_time() / 1000ULL);
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-    _write_marker_locked(tick, "CHECKPOINT", NULL);
+    esp_err_t ret = _write_marker_locked(tick, "CHECKPOINT", NULL);
+    if (ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_WRITE, "CHECKPOINT");
+        _close_faulted_file_locked();
+    }
     xSemaphoreGive(s_file_mutex);
+    if (ret != ESP_OK) return ret;
     s_row_since_checkpoint = 0;
     return ESP_OK;
 }
 
 esp_err_t storage_write_imu_profile(const char *profile_json)
 {
-    if (!s_file || !s_session.active) return ESP_ERR_INVALID_STATE;
+    if (storage_get_fault() != STORAGE_FAULT_NONE || !s_file || !s_session.active) {
+        return ESP_ERR_INVALID_STATE;
+    }
     uint32_t tick = (uint32_t)(esp_timer_get_time() / 1000ULL);
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-    _write_marker_locked(tick, "IMU_PROFILE", profile_json ? profile_json : "");
+    esp_err_t ret = _write_marker_locked(tick, "IMU_PROFILE",
+                                         profile_json ? profile_json : "");
+    if (ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_WRITE, "IMU_PROFILE");
+        _close_faulted_file_locked();
+    }
     xSemaphoreGive(s_file_mutex);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t storage_write_marker(uint32_t tick_ms,
                                 const char *marker_type,
                                 const char *payload)
 {
-    if (!s_file || !s_session.active) return ESP_ERR_INVALID_STATE;
+    if (storage_get_fault() != STORAGE_FAULT_NONE || !s_file || !s_session.active) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-    _write_marker_locked(tick_ms, marker_type, payload);
+    esp_err_t ret = _write_marker_locked(tick_ms, marker_type, payload);
+    if (ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_WRITE, "marker");
+        _close_faulted_file_locked();
+    }
     xSemaphoreGive(s_file_mutex);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t storage_write_imu_row(uint32_t tick_ms,
                                  float ax, float ay, float az,
                                  float gx, float gy, float gz)
 {
-    if (!s_file || !s_session.active) return ESP_ERR_INVALID_STATE;
+    if (storage_get_fault() != STORAGE_FAULT_NONE || !s_file || !s_session.active) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-    _write_imu_row_locked(tick_ms, ax, ay, az, gx, gy, gz);
-    s_session.rows_written++;
+    esp_err_t ret = _write_imu_row_locked(tick_ms, ax, ay, az, gx, gy, gz);
+    if (ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_WRITE, "direct IMU row");
+        _close_faulted_file_locked();
+    }
+    if (ret == ESP_OK) s_session.rows_written++;
     xSemaphoreGive(s_file_mutex);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t storage_write_gps_row(uint32_t tick_ms,
@@ -423,25 +629,36 @@ esp_err_t storage_write_gps_row(uint32_t tick_ms,
                                  double lat, double lon,
                                  float alt, float speed, int sats, float vbat)
 {
-    if (!s_file || !s_session.active) return ESP_ERR_INVALID_STATE;
+    if (storage_get_fault() != STORAGE_FAULT_NONE || !s_file || !s_session.active) {
+        return ESP_ERR_INVALID_STATE;
+    }
     xSemaphoreTake(s_file_mutex, portMAX_DELAY);
-    _write_gps_row_locked(tick_ms, ax, ay, az, gx, gy, gz,
-                           lat, lon, alt, speed, sats, vbat);
-    s_session.rows_written++;
+    esp_err_t ret = _write_gps_row_locked(tick_ms, ax, ay, az, gx, gy, gz,
+                                          lat, lon, alt, speed, sats, vbat);
+    if (ret != ESP_OK) {
+        _latch_fault(STORAGE_FAULT_WRITE, "direct GPS row");
+        _close_faulted_file_locked();
+    }
+    if (ret == ESP_OK) s_session.rows_written++;
     xSemaphoreGive(s_file_mutex);
-    return ESP_OK;
-}
-
-bool storage_enqueue_row(const sensor_row_t *row)
-{
-    if (!row || !s_row_queue) return false;
-    if (s_health == STORAGE_HEALTH_HARD_STOP) return false;
-    return xQueueSendToBack(s_row_queue, row, 0) == pdTRUE;
+    return ret;
 }
 
 storage_health_t storage_get_health(void)
 {
     return s_health;
+}
+
+storage_fault_t storage_get_fault(void)
+{
+    return (storage_fault_t)__atomic_load_n(&s_fault_code, __ATOMIC_ACQUIRE);
+}
+
+esp_err_t storage_clear_fault(void)
+{
+    if (s_session.active) return ESP_ERR_INVALID_STATE;
+    __atomic_store_n(&s_fault_code, STORAGE_FAULT_NONE, __ATOMIC_RELEASE);
+    return ESP_OK;
 }
 
 int storage_get_usage_percent(void)

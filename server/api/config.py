@@ -83,12 +83,17 @@ def get_default_sector_count():
         return SECTOR_COUNT
 
 
-def get_app_version():
+def get_mark_number():
     try:
         if APP_VERSION_FILE.exists():
             value = APP_VERSION_FILE.read_text(encoding="utf-8").strip()
-            if value:
-                return value
+            if value.isdigit():
+                return int(value)
     except Exception:
         pass
-    return "0.0.0"
+    return 0
+
+
+def get_app_version():
+    """Return the rider-facing RaceSense release identity."""
+    return f"Mark {get_mark_number()}"

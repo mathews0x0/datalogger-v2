@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "storage.c"
+        "storage_fault.c"
     INCLUDE_DIRS
         "include"
     REQUIRES

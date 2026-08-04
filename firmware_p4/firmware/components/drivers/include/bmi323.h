@@ -2,7 +2,7 @@
  * @file bmi323.h
  * @brief BMI323 6-axis IMU driver — Waveshare ESP32-P4 / RaceSense
  *
- * I2C address: 0x69 (SDO pulled high on the module)
+ * I2C address: 0x68 or 0x69 (auto-probed; fitted P4 module uses 0x68)
  * Bus:         P4 I2C1, GPIO 21 (SDA), GPIO 22 (SCL), 400kHz
  *
  * BMI323 uses a 16-bit word-based I2C protocol:
@@ -100,7 +100,7 @@ typedef struct {
  * ────────────────────────────────────────────────────────────────────────*/
 
 /**
- * @brief Initialize BMI323 on I2C0 (GPIO 7/8 @ 400kHz).
+ * @brief Initialize BMI323 on I2C1 (GPIO 21/22 @ 400kHz).
  *
  * Performs: soft reset → dummy read → chip ID verify → error check →
  * FIFO config → ACC_CONF → GYR_CONF → FIFO flush.

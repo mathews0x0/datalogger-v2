@@ -7,11 +7,12 @@
  * uses the standard esp_wifi / esp_netif IDF APIs; the SDIO transport is
  * transparent after esp-hosted init.
  *
- * Upload protocol (exact S3 API contract preserved):
- *   POST /batch         — chunked binary body with X-Filename, X-Offset, X-Total-Size headers
- *   GET  /status        — resume query (returns received_bytes, next_chunk, chunk_size)
- *   POST /complete      — finalize, moves file server-side
- *   Heartbeat: GET /heartbeat?token=<tok>
+ * Device/server API contract:
+ *   POST /api/device/ping          — authenticated heartbeat JSON
+ *   GET  /api/device/active_track — authenticated active-track wrapper
+ *   POST /api/upload/batch         — chunked binary body
+ *   GET  /api/upload/status        — resume query
+ *   POST /api/upload/complete      — finalize, moves file server-side
  *
  * Captive portal:
  *   SoftAP SSID:  RS-Core-XXXX  (last 4 MAC hex digits, uppercase)
@@ -27,6 +28,7 @@
 #define NETWORK_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include "esp_err.h"
 
@@ -55,6 +57,19 @@ typedef struct {
     char token[128];
     char api_url[192];
 } network_device_config_t;
+
+/** Optional telemetry fields sent by network_heartbeat_with_telemetry().
+ * Storage values use the server contract units: MB for SD and KB for flash.
+ */
+typedef struct {
+    const char *device_uid;
+    bool        has_vbatt_sense;
+    float       vbatt_sense;
+    uint64_t    storage_sd_free;
+    uint64_t    storage_sd_total;
+    uint64_t    storage_flash_free;
+    uint64_t    storage_flash_total;
+} network_heartbeat_telemetry_t;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Upload progress callback
@@ -105,6 +120,17 @@ esp_err_t network_init(void);
  * @return ESP_OK if connected and IP obtained.
  */
 esp_err_t network_wifi_connect(const char *ssid, const char *password);
+
+/**
+ * @brief Run a credential-free station scan through the hosted C6 radio.
+ *
+ * The station is started for the duration of the scan and stopped before
+ * returning. This is intended for diagnostics and does not persist state.
+ *
+ * @param[out] ap_count Optional number of access points discovered.
+ * @return ESP_OK when the scan completed, even if no APs were found.
+ */
+esp_err_t network_wifi_scan(uint16_t *ap_count);
 
 /**
  * @brief Disconnect from WiFi and disable the STA interface.
@@ -160,7 +186,7 @@ esp_err_t network_save_device_config(const network_device_config_t *cfg);
 /**
  * @brief Send heartbeat ping to the cloud API.
  *
- * GET /heartbeat?token=<token>  → 200 OK expected.
+ * POST /api/device/ping with the locally available device/storage telemetry.
  * Used for the sync heartbeat screen before uploading.
  *
  * @param token    Auth token (if NULL, loads from device config).
@@ -169,13 +195,18 @@ esp_err_t network_save_device_config(const network_device_config_t *cfg);
  */
 esp_err_t network_heartbeat(const char *token, const char *api_url);
 
+/** Send a heartbeat with explicitly supplied telemetry values. */
+esp_err_t network_heartbeat_with_telemetry(const char *token,
+                                            const char *api_url,
+                                            const network_heartbeat_telemetry_t *telemetry);
+
 /**
  * @brief Upload a single file to the cloud API with batch streaming.
  *
  * Uses the same 3-phase protocol as S3 uploader.py:
- *   1. GET /status?filename=X      — resume check
- *   2. POST /batch (×N batches)    — 512KB each over persistent TCP
- *   3. POST /complete              — finalize
+ *   1. GET /api/upload/status?filename=X — resume check
+ *   2. POST /api/upload/batch (×N)       — 512KB each
+ *   3. POST /api/upload/complete         — finalize
  *
  * @param filepath   Filesystem path to the CSV session file.
  * @param token      Auth token.
@@ -209,6 +240,12 @@ esp_err_t network_upload_file(const char *filepath,
  * @return true if all files uploaded successfully.
  */
 bool network_sync_all(upload_progress_cb_t cb, void *cb_ctx);
+
+/**
+ * @brief Probe saved Wi-Fi and server credentials without uploading sessions.
+ * @return true if Wi-Fi, heartbeat, and active-track retrieval all succeed.
+ */
+bool network_sync_probe(void);
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Captive Portal API

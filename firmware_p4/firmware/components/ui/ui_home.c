@@ -161,6 +161,7 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
                   const char *track_name, const char *mount_label, int storage_pct)
 {
     ui_lock(-1);
+    ui_track_view_deactivate();
     const int m = ui_margin();
     const int header_h = UI_HEADER_HEIGHT;
     const int dock_h = UI_FOOTER_HEIGHT;
@@ -206,8 +207,37 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     lv_obj_t *card = make_card(scr, m, content_y, card_w, card_h);
     card_text(card, "SYSTEM STATUS", state, sd_ok && imu_ok ? "SD mounted  |  100Hz IMU online" : "Check hardware before riding", state_color, &s_lbl_status);
     card = make_card(scr, 2 * m + card_w, content_y, card_w, card_h);
-    char track[48]; snprintf(track, sizeof(track), "%s", track_name ? track_name : "NO TRACK");
-    card_text(card, "ACTIVE CIRCUIT", track, "TBL Best: 1:54.320", UI_COLOR_TEXT_PRIMARY, &s_lbl_track);
+    /* Card coordinates are relative to the padded content box, not the outer
+     * card rectangle.  The old preview used card_w/card_h here, which pushed
+     * the map past the card's bottom and right clipping edges. */
+    lv_obj_update_layout(card);
+    const int card_content_w = lv_obj_get_content_width(card);
+    const int card_content_h = lv_obj_get_content_height(card);
+    const int preview_x = UI_RES_CLASS_COMPACT ? card_content_w / 3 : card_content_w / 2;
+    lv_obj_t *track_title = lv_label_create(card);
+    lv_label_set_text(track_title, "ACTIVE CIRCUIT");
+    label_style(track_title, UI_COLOR_TEXT_MUTED, font_small());
+    lv_obj_align(track_title, LV_ALIGN_TOP_LEFT, 0, 0);
+
+    char track[48];
+    snprintf(track, sizeof(track), "%s", track_name ? track_name : "NO TRACK");
+    s_lbl_track = lv_label_create(card);
+    lv_label_set_text(s_lbl_track, track);
+    lv_label_set_long_mode(s_lbl_track, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s_lbl_track, preview_x - UI_SCALE_X(8));
+    label_style(s_lbl_track, UI_COLOR_TEXT_PRIMARY, font_value());
+    lv_obj_align(s_lbl_track, LV_ALIGN_LEFT_MID, 0, UI_SCALE_Y(3));
+
+    lv_obj_t *track_hint = lv_label_create(card);
+    lv_label_set_text(track_hint, "TAP FOR FULL MAP");
+    label_style(track_hint, UI_COLOR_PRIMARY, font_small());
+    lv_obj_align(track_hint, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+
+    ui_track_preview_render(card,
+                            preview_x,
+                            0,
+                            card_content_w - preview_x,
+                            card_content_h);
     card = make_card(scr, m, content_y + card_h + gap, card_w, card_h);
     card_text(card, "IMU PROFILE", mount_label ? mount_label : "TANK MOUNT", "Pitch -10.7 / Roll +5.0", UI_COLOR_TEXT_PRIMARY, NULL);
     card = make_card(scr, 2 * m + card_w, content_y + card_h + gap, card_w, card_h);

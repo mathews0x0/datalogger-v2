@@ -12,6 +12,18 @@
 extern "C" {
 #endif
 
+/** Public feedback states used by the application event bridge. */
+typedef enum {
+    FEEDBACK_STATE_IDLE = 0,
+    FEEDBACK_STATE_LOGGING,
+    FEEDBACK_STATE_SECTOR_FAST,
+    FEEDBACK_STATE_SECTOR_NEUTRAL,
+    FEEDBACK_STATE_SECTOR_SLOW,
+    FEEDBACK_STATE_LAP_COMPLETE,
+    FEEDBACK_STATE_SYNC,
+    FEEDBACK_STATE_ERROR,
+} feedback_state_t;
+
 /**
  * @brief Initialize feedback state machine and visual indicators.
  *

@@ -86,7 +86,7 @@ void ui_show_settings(void)
     lv_obj_add_event_cb(btn_wifi, _on_btn_wifi_setup_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t *lbl_btn_wifi = lv_label_create(btn_wifi);
-    lv_label_set_text(lbl_btn_wifi, "WIFI SETUP PORTAL (QR)");
+    lv_label_set_text(lbl_btn_wifi, "WIFI SETUP PORTAL");
     lv_obj_set_style_text_color(lbl_btn_wifi, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn_wifi, LV_ALIGN_CENTER, 0, 0);
 

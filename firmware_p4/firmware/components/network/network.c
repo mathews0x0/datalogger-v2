@@ -15,9 +15,13 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <stdlib.h>
+#include <math.h>
+#include <errno.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #ifndef CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM
@@ -47,12 +51,15 @@
 #include "esp_sntp.h"
 #include "esp_http_client.h"
 #include "esp_tls.h"
+#include "esp_crt_bundle.h"
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 #include "lwip/dns.h"
 #include "nvs_flash.h"
 #include "cJSON.h"
 #include "storage.h"
+#include "network_contract.h"
+#include "network_provisioning.h"
 
 static const char *TAG = "network";
 
@@ -67,6 +74,7 @@ static esp_netif_t       *s_sta_netif   = NULL;
 static esp_netif_t       *s_ap_netif    = NULL;
 static bool               s_initialized = false;
 static int                s_retry_count = 0;
+static bool               s_connect_requested = false;
 #define MAX_STA_RETRIES   5
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -84,13 +92,15 @@ static void _wifi_event_handler(void *arg, esp_event_base_t base,
 {
     if (base == WIFI_EVENT) {
         if (event_id == WIFI_EVENT_STA_START) {
-            esp_wifi_connect();
+            if (s_connect_requested) {
+                esp_wifi_connect();
+            }
         } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
-            if (s_retry_count < MAX_STA_RETRIES) {
+            if (s_connect_requested && s_retry_count < MAX_STA_RETRIES) {
                 s_retry_count++;
                 ESP_LOGW(TAG, "WiFi disconnected, retry %d/%d", s_retry_count, MAX_STA_RETRIES);
                 esp_wifi_connect();
-            } else {
+            } else if (s_connect_requested) {
                 xEventGroupSetBits(s_wifi_events, WIFI_FAIL_BIT);
             }
         }
@@ -147,6 +157,7 @@ esp_err_t network_wifi_connect(const char *ssid, const char *password)
     ESP_LOGI(TAG, "Connecting to WiFi: %s", ssid);
     xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAIL_BIT);
     s_retry_count = 0;
+    s_connect_requested = true;
 
     wifi_config_t wifi_cfg = {0};
     strncpy((char *)wifi_cfg.sta.ssid,     ssid,     sizeof(wifi_cfg.sta.ssid) - 1);
@@ -190,12 +201,56 @@ esp_err_t network_wifi_connect(const char *ssid, const char *password)
     }
 
     ESP_LOGE(TAG, "WiFi connection failed after %d retries", MAX_STA_RETRIES);
+    s_connect_requested = false;
     esp_wifi_stop();
     return ESP_FAIL;
 }
 
+esp_err_t network_wifi_scan(uint16_t *ap_count)
+{
+    if (!s_initialized || !s_sta_netif) return ESP_ERR_INVALID_STATE;
+    if (ap_count) *ap_count = 0;
+    s_connect_requested = false;
+
+    ESP_LOGI(TAG, "Starting credential-free Wi-Fi scan via hosted C6");
+
+    esp_err_t ret = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (ret != ESP_OK) return ret;
+    ret = esp_wifi_start();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) return ret;
+
+    wifi_scan_config_t scan_cfg = {
+        .ssid = NULL,
+        .bssid = NULL,
+        .channel = 0,
+        .show_hidden = true,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time.active = {
+            .min = 100,
+            .max = 300,
+        },
+    };
+    ret = esp_wifi_scan_start(&scan_cfg, true);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Wi-Fi scan failed: %s", esp_err_to_name(ret));
+        esp_wifi_stop();
+        return ret;
+    }
+
+    uint16_t count = 0;
+    ret = esp_wifi_scan_get_ap_num(&count);
+    if (ret == ESP_OK) {
+        if (ap_count) *ap_count = count;
+        ESP_LOGI(TAG, "Wi-Fi scan completed: %u access point(s)", count);
+    }
+    esp_wifi_clear_ap_list();
+    esp_wifi_stop();
+    return ret;
+}
+
 esp_err_t network_wifi_disconnect(void)
 {
+    s_connect_requested = false;
     esp_wifi_stop();
     return ESP_OK;
 }
@@ -252,13 +307,13 @@ esp_err_t network_load_device_config(network_device_config_t *cfg)
     if (!root) return ESP_FAIL;
 
     cJSON *item;
-    if ((item = cJSON_GetObjectItem(root, "ssid")))
+    if ((item = cJSON_GetObjectItem(root, "ssid")) && cJSON_IsString(item))
         strncpy(cfg->ssid, item->valuestring, sizeof(cfg->ssid) - 1);
-    if ((item = cJSON_GetObjectItem(root, "password")))
+    if ((item = cJSON_GetObjectItem(root, "password")) && cJSON_IsString(item))
         strncpy(cfg->password, item->valuestring, sizeof(cfg->password) - 1);
-    if ((item = cJSON_GetObjectItem(root, "token")))
+    if ((item = cJSON_GetObjectItem(root, "token")) && cJSON_IsString(item))
         strncpy(cfg->token, item->valuestring, sizeof(cfg->token) - 1);
-    if ((item = cJSON_GetObjectItem(root, "api_url")))
+    if ((item = cJSON_GetObjectItem(root, "api_url")) && cJSON_IsString(item))
         strncpy(cfg->api_url, item->valuestring, sizeof(cfg->api_url) - 1);
 
     cJSON_Delete(root);
@@ -271,13 +326,16 @@ esp_err_t network_load_device_config(network_device_config_t *cfg)
 
 esp_err_t network_save_device_config(const network_device_config_t *cfg)
 {
-    if (!cfg) return ESP_ERR_INVALID_ARG;
+    if (!cfg || network_provisioning_validate_config(cfg) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     /* Ensure directory exists */
     mkdir("/data", 0755);
     mkdir("/data/metadata", 0755);
 
     cJSON *root = cJSON_CreateObject();
+    if (!root) return ESP_ERR_NO_MEM;
     cJSON_AddStringToObject(root, "ssid",     cfg->ssid);
     cJSON_AddStringToObject(root, "password", cfg->password);
     cJSON_AddStringToObject(root, "token",    cfg->token);
@@ -287,11 +345,19 @@ esp_err_t network_save_device_config(const network_device_config_t *cfg)
     cJSON_Delete(root);
     if (!json_str) return ESP_ERR_NO_MEM;
 
-    FILE *f = fopen(NETWORK_DEVICE_CONFIG_PATH, "w");
+    const char *tmp_path = NETWORK_DEVICE_CONFIG_PATH ".tmp";
+    FILE *f = fopen(tmp_path, "w");
     if (!f) { free(json_str); return ESP_FAIL; }
-    fputs(json_str, f);
+    bool write_ok = fputs(json_str, f) >= 0 && fflush(f) == 0;
+    int fd = fileno(f);
+    if (write_ok && fd >= 0) write_ok = fsync(fd) == 0;
     fclose(f);
     free(json_str);
+
+    if (!write_ok || rename(tmp_path, NETWORK_DEVICE_CONFIG_PATH) != 0) {
+        remove(tmp_path);
+        return ESP_FAIL;
+    }
 
     ESP_LOGI(TAG, "Device config saved to %s", NETWORK_DEVICE_CONFIG_PATH);
     return ESP_OK;
@@ -318,27 +384,97 @@ static bool _validate_session(const char *filepath)
 /** HTTP event handler for esp_http_client (captures response body) */
 typedef struct {
     char   body[4096];
-    int    body_len;
+    char  *external_body;
+    size_t external_capacity;
+    size_t body_len;
+    bool   truncated;
     int    status_code;
 } http_ctx_t;
+
+static char *_http_ctx_buffer(http_ctx_t *ctx, size_t *capacity)
+{
+    if (ctx->external_body && ctx->external_capacity > 0) {
+        if (capacity) *capacity = ctx->external_capacity;
+        return ctx->external_body;
+    }
+    if (capacity) *capacity = sizeof(ctx->body);
+    return ctx->body;
+}
+
+static const char *_http_ctx_data(const http_ctx_t *ctx)
+{
+    return (ctx->external_body && ctx->external_capacity > 0)
+               ? ctx->external_body : ctx->body;
+}
 
 static esp_err_t _http_event_handler(esp_http_client_event_t *evt)
 {
     http_ctx_t *ctx = (http_ctx_t *)evt->user_data;
     if (!ctx) return ESP_OK;
     if (evt->event_id == HTTP_EVENT_ON_DATA && evt->data_len > 0) {
-        int rem = sizeof(ctx->body) - ctx->body_len - 1;
+        size_t capacity = 0;
+        char *buffer = _http_ctx_buffer(ctx, &capacity);
+        size_t rem = capacity > ctx->body_len ? capacity - ctx->body_len - 1 : 0;
         if (rem > 0) {
-            int copy = evt->data_len < rem ? evt->data_len : rem;
-            memcpy(ctx->body + ctx->body_len, evt->data, copy);
+            size_t copy = (size_t)evt->data_len < rem ? (size_t)evt->data_len : rem;
+            memcpy(buffer + ctx->body_len, evt->data, copy);
             ctx->body_len += copy;
-            ctx->body[ctx->body_len] = '\0';
+            buffer[ctx->body_len] = '\0';
         }
+        if ((size_t)evt->data_len > rem) ctx->truncated = true;
     }
     return ESP_OK;
 }
 
+static void _collect_heartbeat_telemetry(network_heartbeat_telemetry_t *telemetry,
+                                         char *device_uid,
+                                         size_t device_uid_len)
+{
+    memset(telemetry, 0, sizeof(*telemetry));
+    telemetry->device_uid = NULL;
+
+    uint8_t mac[6] = {0};
+    if (device_uid && device_uid_len > 0 &&
+        esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        snprintf(device_uid, device_uid_len, "%02X%02X%02X%02X%02X%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        telemetry->device_uid = device_uid;
+    }
+
+    /* The server stores SD telemetry as 32-bit MB values.  Keep the local
+     * storage API in bytes, but convert at the network boundary so a normal
+     * multi-gigabyte card cannot overflow the server's integer columns. */
+    uint64_t sd_total_bytes = 0;
+    uint64_t sd_free_bytes = 0;
+    if (storage_get_space_bytes(&sd_total_bytes, &sd_free_bytes) == ESP_OK) {
+        telemetry->storage_sd_total = sd_total_bytes / (1024ULL * 1024ULL);
+        telemetry->storage_sd_free = sd_free_bytes / (1024ULL * 1024ULL);
+    }
+
+}
+
+static bool _response_success(const http_ctx_t *ctx)
+{
+    if (!ctx || ctx->truncated || ctx->body_len == 0) return false;
+    cJSON *root = cJSON_Parse(_http_ctx_data(ctx));
+    if (!root) return false;
+    cJSON *success = cJSON_GetObjectItemCaseSensitive(root, "success");
+    bool ok = cJSON_IsTrue(success);
+    cJSON_Delete(root);
+    return ok;
+}
+
 esp_err_t network_heartbeat(const char *token, const char *api_url)
+{
+    network_heartbeat_telemetry_t telemetry;
+    char device_uid[32] = {0};
+    _collect_heartbeat_telemetry(&telemetry, device_uid, sizeof(device_uid));
+    return network_heartbeat_with_telemetry(token, api_url, &telemetry);
+}
+
+esp_err_t network_heartbeat_with_telemetry(const char *token,
+                                            const char *api_url,
+                                            const network_heartbeat_telemetry_t *telemetry)
 {
     network_device_config_t cfg = {0};
     if (!token || !api_url) {
@@ -348,15 +484,45 @@ esp_err_t network_heartbeat(const char *token, const char *api_url)
     }
 
     char url[256];
-    snprintf(url, sizeof(url), "%s/heartbeat", api_url);
+    if (network_contract_build_url(api_url, NETWORK_ENDPOINT_DEVICE_PING,
+                                   url, sizeof(url)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *body = cJSON_CreateObject();
+    if (!body) return ESP_ERR_NO_MEM;
+    if (telemetry) {
+        if (telemetry->device_uid && telemetry->device_uid[0]) {
+            cJSON_AddStringToObject(body, "device_uid", telemetry->device_uid);
+        }
+        if (telemetry->has_vbatt_sense && isfinite(telemetry->vbatt_sense)) {
+            cJSON_AddNumberToObject(body, "vbatt_sense", telemetry->vbatt_sense);
+        }
+        if (telemetry->storage_sd_total > 0) {
+            cJSON_AddNumberToObject(body, "storage_sd_total",
+                                    (double)telemetry->storage_sd_total);
+            cJSON_AddNumberToObject(body, "storage_sd_free",
+                                    (double)telemetry->storage_sd_free);
+        }
+        if (telemetry->storage_flash_total > 0) {
+            cJSON_AddNumberToObject(body, "storage_flash_total",
+                                    (double)telemetry->storage_flash_total);
+            cJSON_AddNumberToObject(body, "storage_flash_free",
+                                    (double)telemetry->storage_flash_free);
+        }
+    }
+    char *body_str = cJSON_PrintUnformatted(body);
+    cJSON_Delete(body);
+    if (!body_str) return ESP_ERR_NO_MEM;
 
     http_ctx_t ctx = {0};
     esp_http_client_config_t hcfg = {
         .url            = url,
-        .method         = HTTP_METHOD_GET,
+        .method         = HTTP_METHOD_POST,
         .timeout_ms     = 10000,
         .event_handler  = _http_event_handler,
         .user_data      = &ctx,
+        .crt_bundle_attach = esp_crt_bundle_attach,
         .skip_cert_common_name_check = false,
     };
 
@@ -364,14 +530,21 @@ esp_err_t network_heartbeat(const char *token, const char *api_url)
     snprintf(auth_hdr, sizeof(auth_hdr), "Bearer %s", token);
 
     esp_http_client_handle_t client = esp_http_client_init(&hcfg);
+    if (!client) {
+        free(body_str);
+        return ESP_ERR_NO_MEM;
+    }
     esp_http_client_set_header(client, "Authorization", auth_hdr);
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+    esp_http_client_set_post_field(client, body_str, (int)strlen(body_str));
 
     esp_err_t ret = esp_http_client_perform(client);
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
+    free(body_str);
 
-    if (ret == ESP_OK && status == 200) {
-        ESP_LOGI(TAG, "Heartbeat OK (200)");
+    if (ret == ESP_OK && status == 200 && _response_success(&ctx)) {
+        ESP_LOGI(TAG, "Heartbeat OK (POST /api/device/ping)");
         return ESP_OK;
     }
     ESP_LOGW(TAG, "Heartbeat failed: err=%s status=%d", esp_err_to_name(ret), status);
@@ -396,11 +569,24 @@ esp_err_t network_upload_file(const char *filepath,
     const char *fname = strrchr(filepath, '/');
     fname = fname ? fname + 1 : filepath;
 
-    /* Build endpoint URLs */
+    if (!token || !api_url) return ESP_ERR_INVALID_ARG;
+
+    /* Build endpoint URLs from the server root. This also accepts legacy
+     * configs containing /api/upload and normalizes them to the root. */
     char batch_url[256], status_url[256], complete_url[256];
-    snprintf(batch_url,    sizeof(batch_url),    "%s/batch",    api_url);
-    snprintf(status_url,   sizeof(status_url),   "%s/status",   api_url);
-    snprintf(complete_url, sizeof(complete_url), "%s/complete", api_url);
+    if (network_contract_build_url(api_url, NETWORK_ENDPOINT_UPLOAD_BATCH,
+                                   batch_url, sizeof(batch_url)) != ESP_OK ||
+        network_contract_build_url(api_url, NETWORK_ENDPOINT_UPLOAD_STATUS,
+                                   status_url, sizeof(status_url)) != ESP_OK ||
+        network_contract_build_url(api_url, NETWORK_ENDPOINT_UPLOAD_COMPLETE,
+                                   complete_url, sizeof(complete_url)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    char encoded_fname[320];
+    if (network_contract_url_encode(fname, encoded_fname, sizeof(encoded_fname)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     char auth_hdr[160];
     snprintf(auth_hdr, sizeof(auth_hdr), "Bearer %s", token);
@@ -409,27 +595,46 @@ esp_err_t network_upload_file(const char *filepath,
     size_t offset = 0;
     {
         char resume_url[320];
-        snprintf(resume_url, sizeof(resume_url), "%s?filename=%s", status_url, fname);
+        int resume_len = snprintf(resume_url, sizeof(resume_url),
+                                  "%s?filename=%s", status_url, encoded_fname);
+        if (resume_len < 0 || (size_t)resume_len >= sizeof(resume_url)) {
+            return ESP_FAIL;
+        }
 
         http_ctx_t ctx = {0};
         esp_http_client_config_t hcfg = {
             .url = resume_url, .method = HTTP_METHOD_GET,
             .timeout_ms = 10000, .event_handler = _http_event_handler, .user_data = &ctx,
+            .crt_bundle_attach = esp_crt_bundle_attach,
         };
         esp_http_client_handle_t client = esp_http_client_init(&hcfg);
+        if (!client) return ESP_ERR_NO_MEM;
         esp_http_client_set_header(client, "Authorization", auth_hdr);
-        if (esp_http_client_perform(client) == ESP_OK &&
-            esp_http_client_get_status_code(client) == 200 && ctx.body_len > 0) {
-            cJSON *root = cJSON_Parse(ctx.body);
-            if (root) {
-                cJSON *rb = cJSON_GetObjectItem(root, "received_bytes");
-                if (rb && cJSON_IsNumber(rb) && rb->valuedouble > 0) {
-                    offset = (size_t)rb->valuedouble;
-                    ESP_LOGI(TAG, "Resuming %s from byte %zu", fname, offset);
-                }
-                cJSON_Delete(root);
-            }
+        esp_err_t status_ret = esp_http_client_perform(client);
+        int status = esp_http_client_get_status_code(client);
+        if (status_ret != ESP_OK || status != 200 || ctx.truncated || ctx.body_len == 0) {
+            esp_http_client_cleanup(client);
+            ESP_LOGW(TAG, "Upload resume check failed: err=%s status=%d",
+                     esp_err_to_name(status_ret), status);
+            return ESP_FAIL;
         }
+
+        cJSON *root = cJSON_Parse(_http_ctx_data(&ctx));
+        if (!root) {
+            esp_http_client_cleanup(client);
+            return ESP_FAIL;
+        }
+        cJSON *rb = cJSON_GetObjectItemCaseSensitive(root, "received_bytes");
+        if (!rb || !cJSON_IsNumber(rb) || !isfinite(rb->valuedouble) ||
+            rb->valuedouble < 0.0 || rb->valuedouble > (double)total_size) {
+            cJSON_Delete(root);
+            esp_http_client_cleanup(client);
+            ESP_LOGW(TAG, "Invalid resume offset for %s", fname);
+            return ESP_FAIL;
+        }
+        offset = (size_t)rb->valuedouble;
+        if (offset > 0) ESP_LOGI(TAG, "Resuming %s from byte %zu", fname, offset);
+        cJSON_Delete(root);
         esp_http_client_cleanup(client);
     }
 
@@ -462,30 +667,18 @@ esp_err_t network_upload_file(const char *filepath,
         size_t batch_size = total_size - offset;
         if (batch_size > NETWORK_BATCH_SIZE) batch_size = NETWORK_BATCH_SIZE;
 
-        /* Build batch POST headers manually since we stream the body */
-        char extra_headers[512];
-        snprintf(extra_headers, sizeof(extra_headers),
-                 "Authorization: %s\r\n"
-                 "Content-Type: application/octet-stream\r\n"
-                 "X-Filename: %s\r\n"
-                 "X-Offset: %zu\r\n"
-                 "X-Total-Size: %zu\r\n"
-                 "X-Global-Progress: %zu\r\n"
-                 "X-Global-Total: %zu\r\n"
-                 "X-Total-Files: %d\r\n"
-                 "X-File-Index: %d\r\n",
-                 auth_hdr,
-                 fname, offset, total_size,
-                 global_offset + offset, global_total,
-                 total_files, file_index);
-
         http_ctx_t ctx = {0};
         esp_http_client_config_t hcfg = {
             .url = batch_url, .method = HTTP_METHOD_POST,
             .timeout_ms = (int)NETWORK_UPLOAD_TIMEOUT_MS,
             .event_handler = _http_event_handler, .user_data = &ctx,
+            .crt_bundle_attach = esp_crt_bundle_attach,
         };
         esp_http_client_handle_t client = esp_http_client_init(&hcfg);
+        if (!client) {
+            upload_ret = ESP_ERR_NO_MEM;
+            break;
+        }
         esp_http_client_set_header(client, "Authorization", auth_hdr);
         esp_http_client_set_header(client, "Content-Type", "application/octet-stream");
         esp_http_client_set_header(client, "X-Filename",   fname);
@@ -513,18 +706,55 @@ esp_err_t network_upload_file(const char *filepath,
             size_t n = fread(read_buf, 1, to_read, f);
             if (n == 0) break;
             int written = esp_http_client_write(client, (const char *)read_buf, (int)n);
-            if (written < 0) { upload_ret = ESP_FAIL; break; }
-            sent_in_batch += n;
+            if (written != (int)n) { upload_ret = ESP_FAIL; break; }
+            sent_in_batch += (size_t)written;
         }
 
         /* Fetch response */
         esp_http_client_fetch_headers(client);
+        if (upload_ret == ESP_OK) {
+            size_t body_capacity = 0;
+            char *body_buffer = _http_ctx_buffer(&ctx, &body_capacity);
+            size_t remaining = body_capacity > ctx.body_len
+                                 ? body_capacity - ctx.body_len - 1 : 0;
+            int read = remaining > 0
+                     ? esp_http_client_read_response(client,
+                                                     body_buffer + ctx.body_len,
+                                                     (int)remaining)
+                     : 0;
+            if (read > 0) {
+                ctx.body_len += (size_t)read;
+                body_buffer[ctx.body_len] = '\0';
+            }
+        }
         int status = esp_http_client_get_status_code(client);
         esp_http_client_cleanup(client);
 
         if (upload_ret != ESP_OK) break;
-        if (status != 200) {
+        if (status != 200 || ctx.truncated || ctx.body_len == 0) {
             ESP_LOGE(TAG, "Batch %d HTTP error: %d", batch_count + 1, status);
+            upload_ret = ESP_FAIL;
+            break;
+        }
+
+        cJSON *batch_response = cJSON_Parse(_http_ctx_data(&ctx));
+        cJSON *received = batch_response
+                            ? cJSON_GetObjectItemCaseSensitive(batch_response, "received")
+                            : NULL;
+        cJSON *server_offset = batch_response
+                               ? cJSON_GetObjectItemCaseSensitive(batch_response, "offset")
+                               : NULL;
+        cJSON *server_bytes = batch_response
+                              ? cJSON_GetObjectItemCaseSensitive(batch_response, "bytes")
+                              : NULL;
+        bool response_ok = cJSON_IsTrue(received) &&
+                           cJSON_IsNumber(server_offset) &&
+                           cJSON_IsNumber(server_bytes) &&
+                           server_offset->valuedouble == (double)(offset + sent_in_batch) &&
+                           server_bytes->valuedouble == (double)sent_in_batch;
+        if (batch_response) cJSON_Delete(batch_response);
+        if (!response_ok || sent_in_batch != batch_size) {
+            ESP_LOGE(TAG, "Batch %d response/length mismatch", batch_count + 1);
             upload_ret = ESP_FAIL;
             break;
         }
@@ -564,6 +794,7 @@ esp_err_t network_upload_file(const char *filepath,
             .url = complete_url, .method = HTTP_METHOD_POST,
             .timeout_ms = 15000,
             .event_handler = _http_event_handler, .user_data = &ctx,
+            .crt_bundle_attach = esp_crt_bundle_attach,
         };
         esp_http_client_handle_t client = esp_http_client_init(&hcfg);
         esp_http_client_set_header(client, "Authorization", auth_hdr);
@@ -575,7 +806,7 @@ esp_err_t network_upload_file(const char *filepath,
         esp_http_client_cleanup(client);
         free(body_str);
 
-        if (ret == ESP_OK && status == 200) {
+        if (ret == ESP_OK && status == 200 && _response_success(&ctx)) {
             ESP_LOGI(TAG, "Upload finalized: %s (%d batches, %zu bytes)", fname, batch_count, total_size);
             if (cb) {
                 upload_progress_t prog = {
@@ -599,17 +830,43 @@ esp_err_t network_upload_file(const char *filepath,
 bool network_sync_all(upload_progress_cb_t cb, void *cb_ctx)
 {
     network_device_config_t cfg = {0};
-    if (network_load_device_config(&cfg) != ESP_OK) {
+    esp_err_t config_ret = network_load_device_config(&cfg);
+    ESP_LOGI(TAG,
+             "Sync config load: ret=%s ssid=%s password=%s token=%s api_url=%s",
+             esp_err_to_name(config_ret),
+             cfg.ssid[0] ? "set" : "missing",
+             cfg.password[0] ? "set" : "empty",
+             cfg.token[0] ? "set" : "missing",
+             cfg.api_url[0] ? "set" : "missing");
+    if (config_ret != ESP_OK) {
         ESP_LOGE(TAG, "No device config — cannot sync");
         return false;
     }
 
     /* Connect to WiFi */
     if (!network_is_connected()) {
+        ESP_LOGI(TAG, "Sync phase: connecting to provisioned WiFi");
         if (network_wifi_connect(cfg.ssid, cfg.password) != ESP_OK) {
             ESP_LOGE(TAG, "WiFi connection failed — aborting sync");
             return false;
         }
+    }
+
+    ESP_LOGI(TAG, "Sync phase: heartbeat");
+    if (network_heartbeat(cfg.token, cfg.api_url) != ESP_OK) {
+        ESP_LOGE(TAG, "Heartbeat failed — aborting sync");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Sync phase: active-track fetch");
+    esp_err_t track_ret = network_fetch_active_track(cfg.token, cfg.api_url);
+    if (track_ret == ESP_OK) {
+        ESP_LOGI(TAG, "Active track metadata refreshed");
+    } else if (track_ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGI(TAG, "No active track configured");
+    } else {
+        /* Track refresh must not strand already-recorded sessions. */
+        ESP_LOGW(TAG, "Active track refresh failed: %s", esp_err_to_name(track_ret));
     }
 
     /* Scan session directory for pending CSVs */
@@ -692,6 +949,42 @@ bool network_sync_all(upload_progress_cb_t cb, void *cb_ctx)
     return success_count == entry_count;
 }
 
+bool network_sync_probe(void)
+{
+    network_device_config_t cfg = {0};
+    esp_err_t config_ret = network_load_device_config(&cfg);
+    if (config_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Probe config load failed: %s", esp_err_to_name(config_ret));
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Probe phase: connecting to saved WiFi");
+    if (!network_is_connected() &&
+        network_wifi_connect(cfg.ssid, cfg.password) != ESP_OK) {
+        ESP_LOGE(TAG, "Probe WiFi connection failed");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Probe phase: server heartbeat");
+    if (network_heartbeat(cfg.token, cfg.api_url) != ESP_OK) {
+        ESP_LOGE(TAG, "Probe heartbeat failed");
+        network_wifi_disconnect();
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Probe phase: active-track fetch");
+    esp_err_t track_ret = network_fetch_active_track(cfg.token, cfg.api_url);
+    if (track_ret != ESP_OK && track_ret != ESP_ERR_NOT_FOUND) {
+        ESP_LOGE(TAG, "Probe active-track fetch failed: %s", esp_err_to_name(track_ret));
+        network_wifi_disconnect();
+        return false;
+    }
+
+    network_wifi_disconnect();
+    ESP_LOGI(TAG, "Probe completed without session upload");
+    return true;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
  * SECTION 4: Captive Portal — DNS hijack + HTTP provisioning server
  * ══════════════════════════════════════════════════════════════════════════*/
@@ -750,39 +1043,38 @@ static const char *SUCCESS_HTML =
 "document.getElementById('c').innerText=n},1000);</script>"
 "</body></html>";
 
-/** Simple URL-decode for form fields (subset matching S3 _parse_params) */
-static void _url_decode(const char *src, char *dst, int dst_len)
+/**
+ * Read one HTTP request, including a fragmented form body when the client
+ * sends Content-Length. The portal is intentionally small, but a single
+ * recv() is not sufficient for real phones on a busy AP.
+ */
+static int _read_http_request(int client_fd, char *req, size_t req_len)
 {
-    int i = 0, j = 0;
-    while (src[i] && j < dst_len - 1) {
-        if (src[i] == '+') {
-            dst[j++] = ' ';
-            i++;
-        } else if (src[i] == '%' && src[i+1] && src[i+2]) {
-            char hex[3] = {src[i+1], src[i+2], 0};
-            dst[j++] = (char)strtol(hex, NULL, 16);
-            i += 3;
-        } else {
-            dst[j++] = src[i++];
-        }
-    }
-    dst[j] = '\0';
-}
+    if (client_fd < 0 || !req || req_len < 2) return -1;
 
-/** Parse a single key from a form body string (modifies working copy) */
-static void _parse_form_field(const char *body, const char *key, char *out, int out_len)
-{
-    char search[64];
-    snprintf(search, sizeof(search), "%s=", key);
-    const char *p = strstr(body, search);
-    if (!p) { out[0] = '\0'; return; }
-    p += strlen(search);
-    const char *end = strchr(p, '&');
-    int raw_len = end ? (int)(end - p) : (int)strlen(p);
-    char raw[256] = {0};
-    if (raw_len > (int)sizeof(raw) - 1) raw_len = sizeof(raw) - 1;
-    memcpy(raw, p, raw_len);
-    _url_decode(raw, out, out_len);
+    size_t total = 0;
+    while (total + 1 < req_len) {
+        int received = recv(client_fd, req + total, req_len - total - 1, 0);
+        if (received <= 0) break;
+        total += (size_t)received;
+        req[total] = '\0';
+
+        const char *headers_end = strstr(req, "\r\n\r\n");
+        if (!headers_end) continue;
+
+        size_t expected = (size_t)(headers_end + 4 - req);
+        const char *length_header = strcasestr(req, "Content-Length:");
+        if (length_header) {
+            long body_len = strtol(length_header + 15, NULL, 10);
+            if (body_len < 0 || (size_t)body_len > req_len - expected - 1) {
+                return -1;
+            }
+            expected += (size_t)body_len;
+        }
+        if (total >= expected || !length_header) break;
+    }
+    req[total] = '\0';
+    return (int)total;
 }
 
 /** DNS hijack task — all queries resolve to AP IP */
@@ -848,8 +1140,13 @@ static void _dns_task(void *arg)
 
 esp_err_t network_start_captive_portal(const char *ap_name)
 {
+    if (!s_initialized) {
+        esp_err_t init_ret = network_init();
+        if (init_ret != ESP_OK) return init_ret;
+    }
+
     /* ── Start SoftAP ───────────────────────────────────────────────────── */
-    char ap_ssid[32];
+    char ap_ssid[32] = {0};
     if (ap_name && ap_name[0]) {
         strncpy(ap_ssid, ap_name, sizeof(ap_ssid) - 1);
     } else {
@@ -879,10 +1176,20 @@ esp_err_t network_start_captive_portal(const char *ap_name)
         .sin_port = htons(80),
     };
     int server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (server_fd < 0) {
+        s_dns_running = false;
+        esp_wifi_stop();
+        return ESP_FAIL;
+    }
     int reuse = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
-    bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr));
-    listen(server_fd, 4);
+    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) != 0 ||
+        listen(server_fd, 4) != 0) {
+        close(server_fd);
+        s_dns_running = false;
+        esp_wifi_stop();
+        return ESP_FAIL;
+    }
 
     struct timeval tv = {.tv_sec = 0, .tv_usec = 100000}; /* 100ms timeout */
     setsockopt(server_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -891,7 +1198,7 @@ esp_err_t network_start_captive_portal(const char *ap_name)
     network_device_config_t saved_cfg = {0};
     network_load_device_config(&saved_cfg);
     if (saved_cfg.api_url[0] == '\0') {
-        strncpy(saved_cfg.api_url, "https://racesense.in/api/upload", sizeof(saved_cfg.api_url) - 1);
+        strncpy(saved_cfg.api_url, "https://racesense.in", sizeof(saved_cfg.api_url) - 1);
     }
 
     s_portal_running = true;
@@ -912,15 +1219,18 @@ esp_err_t network_start_captive_portal(const char *ap_name)
 
         last_conn_ms = esp_timer_get_time() / 1000;
 
-        /* Read request (up to 2KB) */
-        char req[2048] = {0};
+        /* Read request, including fragmented form bodies. */
+        char req[4096] = {0};
         struct timeval rtv = {.tv_sec = 3};
         setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
-        recv(client_fd, req, sizeof(req) - 1, 0);
+        if (_read_http_request(client_fd, req, sizeof(req)) < 0) {
+            close(client_fd);
+            continue;
+        }
 
         /* Parse method and path */
-        char method[8] = {0}, path[128] = {0};
-        sscanf(req, "%7s %127s", method, path);
+        char method[8] = {0}, path[512] = {0};
+        sscanf(req, "%7s %511s", method, path);
 
         /* OS captive detection probe suppression (Apple / Android / Windows) */
         const char *stealth_200 = NULL;
@@ -944,34 +1254,23 @@ esp_err_t network_start_captive_portal(const char *ap_name)
             continue;
         }
 
-        /* Extract POST body */
-        char body_ssid[64]={0}, body_pass[64]={0}, body_token[128]={0}, body_api[192]={0};
-        if (strcmp(method, "POST") == 0) {
-            const char *body = strstr(req, "\r\n\r\n");
-            if (body) {
-                body += 4;
-                _parse_form_field(body, "ssid",     body_ssid,  sizeof(body_ssid));
-                _parse_form_field(body, "password", body_pass,  sizeof(body_pass));
-                _parse_form_field(body, "token",    body_token, sizeof(body_token));
-                _parse_form_field(body, "api_url",  body_api,   sizeof(body_api));
-            }
-        }
+        const char *body = strstr(req, "\r\n\r\n");
+        if (body) body += 4;
 
-        /* Resolve final field values (POST overrides saved) */
-        const char *ssid  = body_ssid[0]  ? body_ssid  : saved_cfg.ssid;
-        const char *pass  = body_pass[0]  ? body_pass  : saved_cfg.password;
-        const char *token = body_token[0] ? body_token : saved_cfg.token;
-        const char *api   = body_api[0]   ? body_api   : saved_cfg.api_url;
+        /* Parse both the original form POST and the existing web-app magic
+         * link. The latter sends ssid/pass/token/api_url in the URL query. */
+        network_device_config_t new_cfg = saved_cfg;
+        network_provisioning_source_t source = NETWORK_PROVISIONING_NONE;
+        esp_err_t provision_ret = network_provisioning_parse_request(
+            method, path, body, &saved_cfg, &new_cfg, &source);
 
         /* Provisioning: save and reboot */
-        if ((strcmp(method, "POST") == 0 || (ssid[0] && token[0])) &&
-            body_ssid[0] && body_token[0]) {
-            network_device_config_t new_cfg = {0};
-            strncpy(new_cfg.ssid,     ssid,  sizeof(new_cfg.ssid)  - 1);
-            strncpy(new_cfg.password, pass,  sizeof(new_cfg.password) - 1);
-            strncpy(new_cfg.token,    token, sizeof(new_cfg.token)  - 1);
-            strncpy(new_cfg.api_url,  api,   sizeof(new_cfg.api_url) - 1);
-            network_save_device_config(&new_cfg);
+        if (provision_ret == ESP_OK) {
+            if (network_save_device_config(&new_cfg) != ESP_OK) {
+                ESP_LOGE(TAG, "Provisioning rejected: unable to persist device config");
+                close(client_fd);
+                continue;
+            }
 
             /* Send success page */
             char hdr[128];
@@ -982,7 +1281,9 @@ esp_err_t network_start_captive_portal(const char *ap_name)
             send(client_fd, SUCCESS_HTML, strlen(SUCCESS_HTML), 0);
             close(client_fd);
 
-            ESP_LOGI(TAG, "PROVISIONED! SSID=%s Token=%.*s...", ssid, 8, token);
+            ESP_LOGI(TAG, "PROVISIONED via %s; SSID=%s",
+                     source == NETWORK_PROVISIONING_MAGIC_LINK ? "magic link" : "form",
+                     new_cfg.ssid);
             vTaskDelay(pdMS_TO_TICKS(15000)); /* 15s countdown */
             esp_restart(); /* Never returns */
         }
@@ -990,7 +1291,8 @@ esp_err_t network_start_captive_portal(const char *ap_name)
         /* Show setup form (pre-filled) */
         char *html = malloc(4096);
         if (html) {
-            snprintf(html, 4096, SETUP_HTML_TMPL, ssid, pass, token, api);
+            snprintf(html, 4096, SETUP_HTML_TMPL,
+                     new_cfg.ssid, new_cfg.password, new_cfg.token, new_cfg.api_url);
             char hdr[128];
             snprintf(hdr, sizeof(hdr),
                      "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n"
@@ -1027,36 +1329,96 @@ esp_err_t network_fetch_active_track(const char *token, const char *api_url)
     }
 
     char url[256];
-    snprintf(url, sizeof(url), "%s/tracks/active", api_url);
+    if (network_contract_build_url(api_url, NETWORK_ENDPOINT_ACTIVE_TRACK,
+                                   url, sizeof(url)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     char auth_hdr[160];
     snprintf(auth_hdr, sizeof(auth_hdr), "Bearer %s", token);
 
-    http_ctx_t ctx = {0};
+    const size_t response_capacity = 65536;
+    char *response_body = calloc(1, response_capacity);
+    char *track_payload = calloc(1, response_capacity);
+    if (!response_body || !track_payload) {
+        free(response_body);
+        free(track_payload);
+        return ESP_ERR_NO_MEM;
+    }
+
+    http_ctx_t ctx = {
+        .external_body = response_body,
+        .external_capacity = response_capacity,
+    };
     esp_http_client_config_t hcfg = {
         .url = url, .method = HTTP_METHOD_GET,
         .timeout_ms = 10000,
         .event_handler = _http_event_handler, .user_data = &ctx,
+        .crt_bundle_attach = esp_crt_bundle_attach,
     };
     esp_http_client_handle_t client = esp_http_client_init(&hcfg);
+    if (!client) {
+        free(response_body);
+        free(track_payload);
+        return ESP_ERR_NO_MEM;
+    }
     esp_http_client_set_header(client, "Authorization", auth_hdr);
     esp_err_t ret = esp_http_client_perform(client);
     int status    = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
-    if (ret != ESP_OK || status != 200) {
+    if (ret != ESP_OK || status != 200 || ctx.truncated || ctx.body_len == 0) {
         ESP_LOGW(TAG, "Track fetch failed: %s / status %d", esp_err_to_name(ret), status);
+        free(response_body);
+        free(track_payload);
         return ESP_FAIL;
     }
 
-    /* Save track JSON to /data/metadata/track.json */
+    esp_err_t extract_ret = network_contract_extract_active_track(
+        _http_ctx_data(&ctx), ctx.body_len, track_payload, response_capacity);
+    free(response_body);
+    if (extract_ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGI(TAG, "No active track assigned by server");
+        if (unlink("/data/metadata/track.json") != 0 && errno != ENOENT) {
+            ESP_LOGW(TAG, "Could not clear stale active-track cache: errno=%d", errno);
+            free(track_payload);
+            return ESP_FAIL;
+        }
+        free(track_payload);
+        return ESP_ERR_NOT_FOUND;
+    }
+    if (extract_ret != ESP_OK) {
+        ESP_LOGW(TAG, "Active track response failed schema validation");
+        free(track_payload);
+        return extract_ret;
+    }
+
+    /* Save only after the wrapper/schema has been validated. */
     mkdir("/data", 0755);
     mkdir("/data/metadata", 0755);
-    FILE *f = fopen("/data/metadata/track.json", "w");
-    if (f) {
-        fputs(ctx.body, f);
-        fclose(f);
-        ESP_LOGI(TAG, "Track JSON saved (%d bytes)", ctx.body_len);
+    const char *track_path = "/data/metadata/track.json";
+    const char *temp_path  = "/data/metadata/track.json.tmp";
+    FILE *f = fopen(temp_path, "w");
+    if (!f) {
+        free(track_payload);
+        return ESP_FAIL;
     }
+    size_t payload_len = strlen(track_payload);
+    bool write_ok = fwrite(track_payload, 1, payload_len, f) == payload_len &&
+                    fflush(f) == 0;
+    if (write_ok) {
+        int fd = fileno(f);
+        if (fd >= 0 && fsync(fd) != 0) write_ok = false;
+    }
+    if (fclose(f) != 0) write_ok = false;
+    if (!write_ok || rename(temp_path, track_path) != 0) {
+        unlink(temp_path);
+        free(track_payload);
+        ESP_LOGW(TAG, "Could not atomically replace %s", track_path);
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Track JSON saved atomically (%zu bytes)", payload_len);
+    free(track_payload);
     return ESP_OK;
 }
