@@ -36,6 +36,7 @@ typedef enum {
     UI_EVENT_SYNC_CANCEL_CLICKED,     /**< User cancelled active cloud upload sync  */
     UI_EVENT_SYNC_DONE_CLICKED,       /**< User dismissed sync complete screen      */
     UI_EVENT_HARDWARE_DEBUG_CLICKED,  /**< User opened GPS/IMU hardware debug       */
+    UI_EVENT_DATA_CLICKED,            /**< User opened pending session data browser */
 } ui_event_type_t;
 
 /**
@@ -84,6 +85,9 @@ void ui_events_on_open_settings(void);
 
 /** @brief Open live GPS/IMU hardware diagnostics */
 void ui_events_on_open_hardware_debug(void);
+
+/** @brief Open the pending session file browser and sync controls. */
+void ui_events_on_open_data(void);
 
 /** @brief Helper: Navigate Back / Cancel to Home dashboard */
 void ui_events_on_navigate_home(void);

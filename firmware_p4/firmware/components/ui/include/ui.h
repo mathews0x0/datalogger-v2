@@ -159,6 +159,11 @@ void ui_show_settings(void);
 void ui_show_hardware_debug(void);
 void ui_hardware_debug_update(void);
 
+/** Screen 16: Pending session files and manual cloud-sync browser. */
+void ui_show_data(void);
+void ui_data_update(void);
+void ui_data_deactivate(void);
+
 /** @brief Screen 11: Launch 5-Stage IMU Mount Calibration Wizard. */
 void ui_show_imu_calibration_wizard(void);
 
@@ -189,11 +194,16 @@ void ui_show_sync_heartbeat(void);
  * @param total_files Total count of pending session CSV files in sync queue.
  * @param filename File name currently streaming over MbedTLS.
  * @param progress_pct Overall file transfer progress percentage (0-100).
+ * @param global_sent_bytes Bytes transferred across the full sync queue.
+ * @param global_total_bytes Total bytes across the full sync queue.
+ * @param files_remaining Number of files still waiting or in progress.
  * @param speed Calculated transfer bandwidth speed string.
  * @param eta Estimated completion time string.
  */
 void ui_show_sync_uploading(int file_idx, int total_files, const char *filename,
-                            int progress_pct, const char *speed, const char *eta);
+                            int progress_pct, size_t global_sent_bytes,
+                            size_t global_total_bytes, int files_remaining,
+                            const char *speed, const char *eta);
 
 /**
  * @brief Screen 9: Show sync completion and upload summary report screen.

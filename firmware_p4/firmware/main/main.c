@@ -67,12 +67,15 @@ typedef enum {
     STATE_IMU_CALIBRATION,   /* Screen 11: IMU Calibration Flow      */
     STATE_CAPTIVE_PORTAL,    /* Screen 12: Captive Portal Active     */
     STATE_HARDWARE_DEBUG,    /* Screen 13: GPS/IMU hardware debug    */
+    STATE_DATA,              /* Screen 16: Pending session browser    */
     STATE_SHUTDOWN,          /* Internal:  Clean shutdown            */
 } app_state_t;
 
 static volatile app_state_t s_state = STATE_BOOT_INIT;
+static volatile bool s_data_screen_pending;
 static volatile int s_sync_files_done;
 static volatile int s_sync_total_files;
+static int64_t s_sync_started_us;
 static QueueHandle_t s_track_event_queue;
 static volatile uint32_t s_track_events_dropped;
 #if !CONFIG_IDF_TARGET_ESP32P4 || CONFIG_ESP_WIFI_REMOTE_ENABLED
@@ -221,11 +224,36 @@ static void _sync_progress_cb(const upload_progress_t *p, void *ctx)
     (void)ctx;
     if (!p) return;
     s_sync_total_files = p->total_files;
+    if (p->event == UPLOAD_EVT_START) s_sync_started_us = esp_timer_get_time();
     if (p->event == UPLOAD_EVT_DONE) s_sync_files_done++;
     if (p->event == UPLOAD_EVT_START || p->event == UPLOAD_EVT_PROGRESS || p->event == UPLOAD_EVT_DONE) {
         int pct = p->total_bytes ? (int)((p->sent_bytes * 100U) / p->total_bytes) : 0;
-        ui_show_sync_uploading(p->file_index, p->total_files, p->filename, pct,
-                               p->detail ? p->detail : "Uploading", "");
+        int64_t elapsed_us = esp_timer_get_time() - s_sync_started_us;
+        double elapsed_s = elapsed_us > 0 ? (double)elapsed_us / 1000000.0 : 0.0;
+        double bytes_per_s = elapsed_s > 0.5
+                           ? (double)p->global_sent / elapsed_s : 0.0;
+        char speed[32] = "measuring speed";
+        char eta[32] = "calculating";
+        if (bytes_per_s > 0.0) {
+            if (bytes_per_s >= 1024.0 * 1024.0) {
+                snprintf(speed, sizeof(speed), "%.1f MB/s",
+                         bytes_per_s / (1024.0 * 1024.0));
+            } else {
+                snprintf(speed, sizeof(speed), "%.0f KB/s",
+                         bytes_per_s / 1024.0);
+            }
+            double remaining_s = (p->global_total > p->global_sent)
+                               ? (double)(p->global_total - p->global_sent) / bytes_per_s
+                               : 0.0;
+            int remaining_seconds = (int)ceil(remaining_s);
+            snprintf(eta, sizeof(eta), "%02d:%02d",
+                     remaining_seconds / 60, remaining_seconds % 60);
+        }
+        int files_remaining = p->total_files - p->file_index;
+        if (p->event == UPLOAD_EVT_DONE && files_remaining > 0) files_remaining--;
+        ui_show_sync_uploading(p->file_index + 1, p->total_files, p->filename, pct,
+                               p->global_sent, p->global_total, files_remaining,
+                               speed, eta);
     }
 }
 #endif
@@ -420,6 +448,16 @@ static void _on_ui_event_cb(ui_event_type_t event, void *param)
             ESP_LOGI(TAG, "[NAV] Transitioning to HARDWARE DEBUG (Screen 13)");
             s_state = STATE_HARDWARE_DEBUG;
             ui_show_hardware_debug();
+            break;
+
+        case UI_EVENT_DATA_CLICKED:
+            ESP_LOGI(TAG, "[NAV] Transitioning to DATA / pending files (Screen 16)");
+            s_state = STATE_DATA;
+            /* Defer LVGL screen construction until the application loop.  The
+             * event arrives from the LVGL touch callback; building a composed
+             * screen there can starve the input handler long enough to look
+             * like a frozen device. */
+            s_data_screen_pending = true;
             break;
 
         case UI_EVENT_IMU_CALIB_CLICKED:
@@ -740,6 +778,15 @@ void app_main(void)
             case STATE_HARDWARE_DEBUG:
                 ui_hardware_debug_update();
                 vTaskDelay(pdMS_TO_TICKS(50));
+                break;
+
+            case STATE_DATA:
+                if (s_data_screen_pending) {
+                    s_data_screen_pending = false;
+                    ui_show_data();
+                }
+                ui_data_update();
+                vTaskDelay(pdMS_TO_TICKS(100));
                 break;
 
             case STATE_SECTOR_FLASH:

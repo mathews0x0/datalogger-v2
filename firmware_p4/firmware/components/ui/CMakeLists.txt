@@ -6,6 +6,7 @@ idf_component_register(
          "ui_logging.c"
          "ui_settings.c"
          "ui_debug.c"
+         "ui_data.c"
          "ui_calibration.c"
          "ui_sync.c"
          "ui_track.c"

@@ -385,6 +385,22 @@ esp_err_t track_engine_load_track(const char *json_path)
         }
     }
 
+    /* Older server payloads carried only per-sector TBL values.  Recover the
+     * theoretical lap target locally so the detail view remains useful even
+     * before the device receives a refreshed payload with lap_time. */
+    if (s_track.tbl_lap_time <= 0.0f && s_track.sector_count > 0) {
+        float sector_total = 0.0f;
+        bool complete_tbl = true;
+        for (int i = 0; i < s_track.sector_count; ++i) {
+            if (s_track.tbl_sectors[i] <= 0.0f) {
+                complete_tbl = false;
+                break;
+            }
+            sector_total += s_track.tbl_sectors[i];
+        }
+        if (complete_tbl) s_track.tbl_lap_time = sector_total;
+    }
+
     /* Pit area */
     cJSON *pit_lat = cJSON_GetObjectItem(root, "pit_center_lat");
     cJSON *pit_lon = cJSON_GetObjectItem(root, "pit_center_lon");

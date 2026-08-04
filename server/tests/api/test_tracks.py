@@ -193,6 +193,7 @@ def test_device_active_track_includes_device_layout_and_tbl(client, app):
     active_track = resp.json['active_track']
     assert active_track['sector_count'] == 3
     assert active_track['tbl']['sectors'] == [11.5, 12.2, 12.8]
+    assert active_track['tbl']['lap_time'] == 36.5
     assert 'device_layout' in active_track
     assert len(active_track['device_layout']['polyline']) >= 2
     assert active_track['device_layout']['start_marker'] is not None

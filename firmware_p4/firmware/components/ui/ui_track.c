@@ -80,7 +80,7 @@ static void _draw_marker(lv_obj_t *parent, track_layout_point_t source,
 }
 
 static void _draw_layout(lv_obj_t *parent, int width, int height,
-                         bool show_position)
+                         bool show_position, bool show_sector_markers)
 {
     if (!s_layout.has_layout || s_layout.polyline_count < 2) {
         lv_obj_t *empty = lv_label_create(parent);
@@ -113,7 +113,7 @@ static void _draw_layout(lv_obj_t *parent, int width, int height,
                      UI_COLOR_TEXT_PRIMARY, true);
     }
 
-    for (int i = 0; i < s_layout.sector_marker_count; ++i) {
+    if (show_sector_markers) for (int i = 0; i < s_layout.sector_marker_count; ++i) {
         const track_layout_marker_t *marker = &s_layout.sector_markers[i];
         _draw_marker(parent, marker->point, width, height,
                      UI_RES_CLASS_WIDESCREEN ? 14 : 8,
@@ -165,7 +165,7 @@ void ui_track_preview_render(lv_obj_t *parent, int x, int y, int width, int heig
     lv_obj_set_pos(panel, x, y);
     _style_surface(panel, 0x11131A, UI_COLOR_BORDER, UI_CARD_RADIUS);
     lv_obj_set_style_pad_all(panel, 0, 0);
-    _draw_layout(panel, width, height, false);
+    _draw_layout(panel, width, height, false, false);
 
     /* A transparent hit target keeps the preview clickable without changing
      * the visual treatment or stealing focus from the Home dashboard. */
@@ -187,20 +187,86 @@ static void _set_tab_style(lv_obj_t *button, bool active)
                               lv_color_hex(active ? UI_COLOR_PRIMARY : 0x242430), 0);
     lv_obj_set_style_border_color(button,
                                   lv_color_hex(active ? UI_COLOR_PRIMARY : UI_COLOR_BORDER), 0);
+    lv_obj_set_style_border_width(button, active ? 2 : 1, 0);
+    lv_obj_set_style_shadow_width(button, active ? 12 : 0, 0);
+    lv_obj_set_style_shadow_color(button, lv_color_hex(UI_COLOR_PRIMARY), 0);
 }
 
 static void _render_map_tab(void)
 {
+    /* Percentage-sized children are resolved by LVGL during layout.  Resolve
+     * them before using their dimensions to place the track geometry. */
+    lv_obj_update_layout(s_content);
     s_map_panel = lv_obj_create(s_content);
     lv_obj_set_size(s_map_panel, lv_pct(100), lv_pct(100));
+    lv_obj_update_layout(s_map_panel);
     _style_surface(s_map_panel, 0x11131A, UI_COLOR_BORDER, UI_CARD_RADIUS);
-    _draw_layout(s_map_panel, lv_obj_get_width(s_map_panel),
-                 lv_obj_get_height(s_map_panel), true);
+    const int map_w = lv_obj_get_width(s_map_panel);
+    const int map_h = lv_obj_get_height(s_map_panel);
+    _draw_layout(s_map_panel, map_w, map_h, true, true);
 
-    lv_obj_t *legend = lv_label_create(s_map_panel);
-    lv_label_set_text(legend, "● RIDER   ◆ SECTORS   ■ START / FINISH");
-    lv_obj_set_style_text_color(legend, lv_color_hex(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_align(legend, LV_ALIGN_BOTTOM_LEFT, UI_SCALE_X(14), -UI_SCALE_Y(10));
+    /* Use real LVGL shapes instead of Unicode glyphs: the bundled font does
+     * not contain all of the old legend symbols, which made the legend look
+     * incomplete on the device. */
+    lv_obj_t *legend = lv_obj_create(s_map_panel);
+    const int legend_h = UI_RES_CLASS_WIDESCREEN ? 42 : 32;
+    lv_obj_set_size(legend, lv_pct(100), legend_h);
+    lv_obj_align(legend, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(legend, lv_color_hex(0x0B0D12), 0);
+    lv_obj_set_style_bg_opa(legend, LV_OPA_90, 0);
+    lv_obj_set_style_border_width(legend, 0, 0);
+    lv_obj_set_style_radius(legend, 0, 0);
+    lv_obj_set_style_pad_all(legend, 0, 0);
+    lv_obj_clear_flag(legend, LV_OBJ_FLAG_SCROLLABLE);
+
+    const int legend_icon = UI_RES_CLASS_WIDESCREEN ? 12 : 9;
+    const int legend_y = (legend_h - legend_icon) / 2;
+    const int legend_x[] = {UI_SCALE_X(18), UI_SCALE_X(180), UI_SCALE_X(390)};
+    const char *legend_text[] = {"RIDER", "SECTOR GATES", "START / FINISH"};
+    const uint32_t legend_color[] = {0x00E5FF, UI_COLOR_PAIRING, UI_COLOR_TEXT_PRIMARY};
+    for (int i = 0; i < 3; ++i) {
+        lv_obj_t *icon = lv_obj_create(legend);
+        lv_obj_set_size(icon, legend_icon, legend_icon);
+        lv_obj_set_pos(icon, legend_x[i], legend_y);
+        lv_obj_set_style_bg_color(icon, lv_color_hex(legend_color[i]), 0);
+        lv_obj_set_style_bg_opa(icon, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(icon, 1, 0);
+        lv_obj_set_style_border_color(icon, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
+        lv_obj_set_style_radius(icon, i == 2 ? 2 : LV_RADIUS_CIRCLE, 0);
+        lv_obj_clear_flag(icon, LV_OBJ_FLAG_SCROLLABLE);
+
+        lv_obj_t *label = lv_label_create(legend);
+        lv_label_set_text(label, legend_text[i]);
+        lv_obj_set_style_text_color(label, lv_color_hex(UI_COLOR_TEXT_MUTED), 0);
+        lv_obj_set_style_text_font(label,
+                                   UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_14
+                                                           : &lv_font_montserrat_12,
+                                   0);
+        lv_obj_set_pos(label, legend_x[i] + legend_icon + UI_SCALE_X(8),
+                       UI_RES_CLASS_WIDESCREEN ? 12 : 8);
+    }
+}
+
+static lv_obj_t *_info_panel(lv_obj_t *parent, int x, int y, int width,
+                             int height, uint32_t color, int radius)
+{
+    lv_obj_t *panel = lv_obj_create(parent);
+    lv_obj_set_size(panel, width, height);
+    lv_obj_set_pos(panel, x, y);
+    _style_surface(panel, color, UI_COLOR_BORDER, radius);
+    lv_obj_set_style_pad_all(panel, 0, 0);
+    return panel;
+}
+
+static lv_obj_t *_info_label(lv_obj_t *parent, const char *text, int x, int y,
+                             uint32_t color, const lv_font_t *font)
+{
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text ? text : "");
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(label, font, 0);
+    lv_obj_set_pos(label, x, y);
+    return label;
 }
 
 static void _render_info_tab(void)
@@ -209,70 +275,93 @@ static void _render_info_tab(void)
     lv_obj_set_style_bg_color(s_content, lv_color_hex(UI_COLOR_BG_DARK), 0);
     lv_obj_set_style_bg_opa(s_content, LV_OPA_COVER, 0);
 
-    lv_obj_t *summary = lv_obj_create(s_content);
-    lv_obj_set_size(summary, lv_pct(100), UI_RES_CLASS_WIDESCREEN ? 86 : 58);
-    _style_surface(summary, 0x11131A, UI_COLOR_BORDER, UI_CARD_RADIUS);
+    lv_obj_update_layout(s_content);
+    const bool wide = UI_RES_CLASS_WIDESCREEN;
+    const int content_w = lv_obj_get_width(s_content);
+    const int content_h = lv_obj_get_height(s_content);
+    const int margin = wide ? 16 : 10;
+    const int summary_h = wide ? 72 : 52;
+    const int body_y = summary_h + (wide ? 12 : 8);
+    const int footer_h = wide ? 52 : 34;
+    const int footer_y = content_h - footer_h;
+    const int body_h = footer_y - body_y - (wide ? 12 : 8);
+    const int tbl_w = wide ? 220 : 132;
+    const int sector_x = tbl_w + (wide ? 16 : 8);
+    const int sector_w = content_w - sector_x;
 
-    lv_obj_t *name = lv_label_create(summary);
-    lv_label_set_text(name, track_engine_get_track_name());
-    lv_obj_set_style_text_color(name, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
-    lv_obj_align(name, LV_ALIGN_LEFT_MID, UI_SCALE_X(16), -UI_SCALE_Y(12));
-    lv_obj_t *meta = lv_label_create(summary);
-    char meta_text[64];
-    snprintf(meta_text, sizeof(meta_text), "%d SECTORS  •  %s",
+    lv_obj_t *summary = _info_panel(s_content, 0, 0, content_w, summary_h,
+                                    0x11131A, UI_CARD_RADIUS);
+    lv_obj_t *name = _info_label(summary, track_engine_get_track_name(),
+                                 margin, wide ? 9 : 6,
+                                 UI_COLOR_TEXT_PRIMARY,
+                                 wide ? &lv_font_montserrat_28 : &lv_font_montserrat_16);
+    lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(name, content_w - (wide ? 300 : 170));
+
+    char meta_text[80];
+    snprintf(meta_text, sizeof(meta_text), "%d SECTORS   •   %s",
              s_layout.sector_count,
              s_layout.has_layout ? "LAYOUT READY" : "LAYOUT UNAVAILABLE");
-    lv_label_set_text(meta, meta_text);
-    lv_obj_set_style_text_color(meta, lv_color_hex(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_align(meta, LV_ALIGN_LEFT_MID, UI_SCALE_X(16), UI_SCALE_Y(16));
+    _info_label(summary, meta_text, margin, wide ? 43 : 31,
+                s_layout.has_layout ? UI_COLOR_SUCCESS : UI_COLOR_WARNING,
+                wide ? &lv_font_montserrat_14 : &lv_font_montserrat_12);
+    _info_label(summary, "ACTIVE TRACK", content_w - (wide ? 150 : 110),
+                wide ? 25 : 17, UI_COLOR_PRIMARY,
+                wide ? &lv_font_montserrat_14 : &lv_font_montserrat_12);
 
-    lv_obj_t *tbl_title = lv_label_create(s_content);
-    lv_label_set_text(tbl_title, "THEORETICAL BEST LAP");
-    lv_obj_set_style_text_color(tbl_title, lv_color_hex(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_align(tbl_title, LV_ALIGN_TOP_LEFT, UI_SCALE_X(16),
-                 UI_RES_CLASS_WIDESCREEN ? UI_SCALE_Y(104) : UI_SCALE_Y(70));
-
-    lv_obj_t *tbl = lv_label_create(s_content);
+    lv_obj_t *tbl_card = _info_panel(s_content, 0, body_y, tbl_w, body_h,
+                                     0x11131A, UI_CARD_RADIUS);
+    _info_label(tbl_card, "THEORETICAL BEST", margin, wide ? 16 : 10,
+                UI_COLOR_TEXT_MUTED, wide ? &lv_font_montserrat_14 : &lv_font_montserrat_12);
+    _info_label(tbl_card, "LAP TARGET", margin, wide ? 48 : 31,
+                UI_COLOR_TEXT_PRIMARY, wide ? &lv_font_montserrat_16 : &lv_font_montserrat_14);
     char lap[24];
     _format_seconds(s_layout.tbl_lap_time, lap, sizeof(lap));
-    lv_label_set_text(tbl, lap);
-    lv_obj_set_style_text_color(tbl, lv_color_hex(UI_COLOR_SUCCESS), 0);
-    lv_obj_align(tbl, LV_ALIGN_TOP_LEFT, UI_SCALE_X(16),
-                 UI_RES_CLASS_WIDESCREEN ? UI_SCALE_Y(124) : UI_SCALE_Y(88));
+    _info_label(tbl_card, lap, margin, wide ? 76 : 51,
+                UI_COLOR_SUCCESS, wide ? &lv_font_montserrat_48 : &lv_font_montserrat_28);
+    _info_label(tbl_card, "SECTOR SUM REFERENCE", margin,
+                body_h - (wide ? 30 : 23), UI_COLOR_TEXT_MUTED,
+                &lv_font_montserrat_12);
 
-    lv_obj_t *sector_title = lv_label_create(s_content);
-    lv_label_set_text(sector_title, "SECTOR BENCHMARKS");
-    lv_obj_set_style_text_color(sector_title, lv_color_hex(UI_COLOR_TEXT_MUTED), 0);
-    lv_obj_align(sector_title, LV_ALIGN_TOP_LEFT, UI_SCALE_X(190),
-                 UI_RES_CLASS_WIDESCREEN ? UI_SCALE_Y(104) : UI_SCALE_Y(70));
+    lv_obj_t *sector_card = _info_panel(s_content, sector_x, body_y, sector_w,
+                                        body_h, 0x11131A, UI_CARD_RADIUS);
+    _info_label(sector_card, "SECTOR BENCHMARKS", margin, wide ? 14 : 9,
+                UI_COLOR_TEXT_MUTED, wide ? &lv_font_montserrat_14 : &lv_font_montserrat_12);
 
     int sector_count = s_layout.sector_count;
     if (sector_count > TRACK_ENGINE_MAX_SECTORS) sector_count = TRACK_ENGINE_MAX_SECTORS;
-    const int cols = UI_RES_CLASS_WIDESCREEN ? 2 : 1;
-    const int row_h = UI_RES_CLASS_WIDESCREEN ? 34 : 24;
-    const int start_y = UI_RES_CLASS_WIDESCREEN ? 128 : 92;
-    const int col_w = UI_RES_CLASS_WIDESCREEN ? 250 : 140;
+    const int cols = wide ? 2 : 1;
+    const int row_gap = wide ? 8 : 5;
+    const int row_h = wide ? 34 : 25;
+    const int row_y = wide ? 45 : 32;
+    const int col_gap = wide ? 10 : 0;
+    const int row_w = (sector_w - 2 * margin - (cols - 1) * col_gap) / cols;
     for (int i = 0; i < sector_count; ++i) {
-        int col = i % cols;
-        int row = i / cols;
-        char text[40];
+        const int col = i % cols;
+        const int row = i / cols;
+        const int x = margin + col * (row_w + col_gap);
+        const int y = row_y + row * (row_h + row_gap);
+        lv_obj_t *row_card = _info_panel(sector_card, x, y, row_w, row_h,
+                                         0x1D202A, 8);
+        char sector_name[8];
         char time[20];
+        snprintf(sector_name, sizeof(sector_name), "S%d", i + 1);
         _format_seconds(s_layout.tbl_sector_times[i], time, sizeof(time));
-        snprintf(text, sizeof(text), "S%d     %s", i + 1, time);
-        lv_obj_t *label = lv_label_create(s_content);
-        lv_label_set_text(label, text);
-        lv_obj_set_style_text_color(label, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
-        lv_obj_set_pos(label, UI_SCALE_X(190) + col * UI_SCALE_X(col_w),
-                       UI_SCALE_Y(start_y + row * row_h));
+        _info_label(row_card, sector_name, 10, wide ? 7 : 5,
+                    UI_COLOR_PAIRING, wide ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
+        lv_obj_t *time_label = _info_label(row_card, time, 0, 0,
+                                           UI_COLOR_TEXT_PRIMARY,
+                                           wide ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
+        lv_obj_align(time_label, LV_ALIGN_RIGHT_MID, -10, 0);
     }
 
-    lv_obj_t *last = lv_label_create(s_content);
-    char last_text[80];
-    snprintf(last_text, sizeof(last_text), "LAST LAP  %s     LAST GAP  %s",
+    lv_obj_t *footer = _info_panel(s_content, 0, footer_y, content_w, footer_h,
+                                   0x11131A, UI_CARD_RADIUS);
+    char last_text[96];
+    snprintf(last_text, sizeof(last_text), "LAST LAP  %s    •    LAST GAP  %s",
              track_engine_get_last_lap_time(), track_engine_get_last_sector_gap());
-    lv_label_set_text(last, last_text);
-    lv_obj_set_style_text_color(last, lv_color_hex(UI_COLOR_WARNING), 0);
-    lv_obj_align(last, LV_ALIGN_BOTTOM_LEFT, UI_SCALE_X(16), -UI_SCALE_Y(12));
+    _info_label(footer, last_text, margin, wide ? 16 : 9,
+                UI_COLOR_WARNING, wide ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
 }
 
 static void _render_tab(void)
@@ -308,14 +397,18 @@ static lv_obj_t *_make_tab(lv_obj_t *parent, int x, int width, const char *text,
                            bool active, lv_event_cb_t callback)
 {
     lv_obj_t *button = lv_btn_create(parent);
-    lv_obj_set_size(button, width, UI_RES_CLASS_WIDESCREEN ? 38 : 30);
-    lv_obj_set_pos(button, x, UI_RES_CLASS_WIDESCREEN ? 5 : 4);
+    lv_obj_set_size(button, width, UI_RES_CLASS_WIDESCREEN ? 42 : 30);
+    lv_obj_set_pos(button, x, UI_RES_CLASS_WIDESCREEN ? 3 : 4);
     _set_tab_style(button, active);
     lv_obj_set_style_radius(button, UI_BTN_RADIUS, 0);
     lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, NULL);
     lv_obj_t *label = lv_label_create(button);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_color(label, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(label,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16
+                                                       : &lv_font_montserrat_12,
+                               0);
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);
     return button;
 }
@@ -357,6 +450,10 @@ void ui_show_track_view(void)
     lv_obj_t *title = lv_label_create(header);
     lv_label_set_text(title, "ACTIVE TRACK");
     lv_obj_set_style_text_color(title, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28
+                                                       : &lv_font_montserrat_16,
+                               0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t *track = lv_label_create(header);
@@ -370,11 +467,13 @@ void ui_show_track_view(void)
     lv_obj_set_style_bg_color(tabs, lv_color_hex(UI_COLOR_SURFACE), 0);
     lv_obj_set_style_border_width(tabs, 0, 0);
     lv_obj_clear_flag(tabs, LV_OBJ_FLAG_SCROLLABLE);
-    int tab_width = UI_RES_CLASS_WIDESCREEN ? 190 : 120;
-    s_map_tab_button = _make_tab(tabs, UI_SCALE_X(12), tab_width,
-                                 "TRACK MAP", true, _on_map_tab);
-    s_info_tab_button = _make_tab(tabs, UI_SCALE_X(16) + tab_width, tab_width,
-                                  "INFO / TBL", false, _on_info_tab);
+    const int tab_margin = UI_RES_CLASS_WIDESCREEN ? UI_SCALE_X(12) : UI_SCALE_X(8);
+    const int tab_gap = UI_RES_CLASS_WIDESCREEN ? UI_SCALE_X(10) : UI_SCALE_X(6);
+    const int tab_width = (UI_HOR_RES - 2 * tab_margin - tab_gap) / 2;
+    s_map_tab_button = _make_tab(tabs, tab_margin, tab_width,
+                                 "MAP  /  LIVE LAYOUT", true, _on_map_tab);
+    s_info_tab_button = _make_tab(tabs, tab_margin + tab_width + tab_gap, tab_width,
+                                  "INFO  /  TBL", false, _on_info_tab);
 
     s_content = lv_obj_create(scr);
     lv_obj_set_size(s_content, UI_HOR_RES - UI_SCALE_X(24),

@@ -673,7 +673,12 @@ def build_device_track_payload(track_data):
             payload[key] = track_data.get(key)
     payload["sectors"] = list(track_data.get("sectors") or [])
     payload["sector_count"] = len(payload["sectors"])
-    payload["device_layout"] = _build_device_layout(track_data)
+    # Keep a previously-normalized layout when the source track does not
+    # currently expose a centerline (for example, older imported packages).
+    device_layout = _build_device_layout(track_data)
+    if device_layout is None and isinstance(track_data.get("device_layout"), dict):
+        device_layout = track_data.get("device_layout")
+    payload["device_layout"] = device_layout
     return payload
 
 

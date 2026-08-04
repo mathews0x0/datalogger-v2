@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 #include "sensors.h"
 
@@ -83,6 +84,13 @@ typedef struct {
     int      count;
     uint64_t total_bytes;
 } storage_pending_summary_t;
+
+/** One pending session file shown in the Data / sync browser. */
+typedef struct {
+    char     filepath[128];
+    char     filename[32];
+    uint64_t size_bytes;
+} storage_pending_file_t;
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Public API
@@ -208,6 +216,15 @@ void storage_get_session_info(storage_session_info_t *info);
  * @param[out] summary  Filled with count and total_bytes.
  */
 void storage_get_pending_summary(storage_pending_summary_t *summary);
+
+/**
+ * @brief Enumerate pending session CSV files in the active storage directory.
+ *
+ * @param[out] files    Caller-owned output array.
+ * @param capacity      Number of entries available in @p files.
+ * @return Number of entries copied into the output array.
+ */
+size_t storage_list_pending_files(storage_pending_file_t *files, size_t capacity);
 
 /**
  * @brief Check if any session CSV files exist on internal flash.

@@ -25,11 +25,19 @@ void ui_show_storage_fault(storage_fault_t fault)
     lv_obj_t *header = lv_label_create(scr);
     lv_label_set_text(header, "LOGGING STOPPED");
     lv_obj_set_style_text_color(header, lv_color_hex(UI_COLOR_DANGER), 0);
+    lv_obj_set_style_text_font(header,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28
+                                                       : &lv_font_montserrat_16,
+                               0);
     lv_obj_align(header, LV_ALIGN_TOP_MID, 0, UI_SCALE_Y(34));
 
     lv_obj_t *title = lv_label_create(scr);
     lv_label_set_text(title, "STORAGE ERROR");
     lv_obj_set_style_text_color(title, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_36
+                                                       : &lv_font_montserrat_20,
+                               0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, UI_SCALE_Y(-70));
 
     lv_obj_t *reason = lv_label_create(scr);

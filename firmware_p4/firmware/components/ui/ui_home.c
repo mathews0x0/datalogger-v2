@@ -22,17 +22,50 @@ static lv_obj_t *s_lbl_track;
 static lv_obj_t *s_lbl_store;
 static lv_obj_t *s_storage_bar;
 
-static void storage_free_text(char *buf, size_t size, bool sd_ok)
+static void format_bytes_short(char *buf, size_t size, uint64_t bytes)
 {
-    uint64_t total_bytes = 0;
-    uint64_t free_bytes = 0;
+    if (bytes >= (1024ULL * 1024ULL * 1024ULL)) {
+        snprintf(buf, size, "%.1f GB", (double)bytes / (1024.0 * 1024.0 * 1024.0));
+    } else if (bytes >= (1024ULL * 1024ULL)) {
+        snprintf(buf, size, "%.1f MB", (double)bytes / (1024.0 * 1024.0));
+    } else if (bytes >= 1024ULL) {
+        snprintf(buf, size, "%.1f KB", (double)bytes / 1024.0);
+    } else {
+        snprintf(buf, size, "%llu B", (unsigned long long)bytes);
+    }
+}
+
+static void storage_queue_text(char *buf, size_t size, bool sd_ok)
+{
     if (!sd_ok) {
         snprintf(buf, size, "NO SD CARD");
-    } else if (storage_get_space_bytes(&total_bytes, &free_bytes) == ESP_OK) {
-        snprintf(buf, size, "%.1f GB FREE",
-                 (double)free_bytes / (1024.0 * 1024.0 * 1024.0));
+        return;
+    }
+
+    storage_pending_summary_t summary = {0};
+    storage_get_pending_summary(&summary);
+    snprintf(buf, size, "%d FILE%s", summary.count, summary.count == 1 ? "" : "S");
+}
+
+static void storage_queue_detail(char *buf, size_t size, bool sd_ok)
+{
+    if (!sd_ok) {
+        snprintf(buf, size, "Insert card before recording");
+        return;
+    }
+
+    storage_pending_summary_t summary = {0};
+    storage_get_pending_summary(&summary);
+    char queued[20];
+    char free_space[20];
+    format_bytes_short(queued, sizeof(queued), summary.total_bytes);
+    uint64_t total_bytes = 0;
+    uint64_t free_bytes = 0;
+    if (storage_get_space_bytes(&total_bytes, &free_bytes) == ESP_OK) {
+        format_bytes_short(free_space, sizeof(free_space), free_bytes);
+        snprintf(buf, size, "%s TO SYNC  •  %s FREE", queued, free_space);
     } else {
-        snprintf(buf, size, "SD READY");
+        snprintf(buf, size, "%s TO SYNC", queued);
     }
 }
 
@@ -95,6 +128,18 @@ static void on_settings(lv_event_t *e)
 {
     (void)e;
     ui_events_on_open_settings();
+}
+
+static void on_system_status(lv_event_t *e)
+{
+    (void)e;
+    ui_events_on_open_hardware_debug();
+}
+
+static void on_data(lv_event_t *e)
+{
+    (void)e;
+    ui_events_on_open_data();
 }
 
 static void on_start(lv_event_t *e)
@@ -161,6 +206,7 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
                   const char *track_name, const char *mount_label, int storage_pct)
 {
     ui_lock(-1);
+    ui_data_deactivate();
     ui_track_view_deactivate();
     const int m = ui_margin();
     const int header_h = UI_HEADER_HEIGHT;
@@ -195,8 +241,9 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     label_style(s_lbl_bat, UI_COLOR_SUCCESS, font_small());
     lv_obj_align(s_lbl_bat, LV_ALIGN_LEFT_MID, m, 0);
     lv_obj_t *title = lv_label_create(header);
-    lv_label_set_text(title, "RACESENSE DASHBOARD");
-    label_style(title, UI_COLOR_TEXT_PRIMARY, font_body());
+    lv_label_set_text(title, "RaceSense");
+    label_style(title, UI_COLOR_TEXT_PRIMARY,
+                UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28 : font_body());
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
     s_lbl_gps = lv_label_create(header);
     char satellites[24]; snprintf(satellites, sizeof(satellites), "%d SATS LOCK", sats);
@@ -206,6 +253,14 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
 
     lv_obj_t *card = make_card(scr, m, content_y, card_w, card_h);
     card_text(card, "SYSTEM STATUS", state, sd_ok && imu_ok ? "SD mounted  |  100Hz IMU online" : "Check hardware before riding", state_color, &s_lbl_status);
+    lv_obj_t *status_hit = lv_btn_create(card);
+    lv_obj_set_size(status_hit, lv_pct(100), lv_pct(100));
+    lv_obj_set_pos(status_hit, 0, 0);
+    lv_obj_set_style_bg_opa(status_hit, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(status_hit, 0, 0);
+    lv_obj_set_style_shadow_width(status_hit, 0, 0);
+    lv_obj_add_event_cb(status_hit, on_system_status, LV_EVENT_CLICKED, NULL);
+    lv_obj_move_foreground(status_hit);
     card = make_card(scr, 2 * m + card_w, content_y, card_w, card_h);
     /* Card coordinates are relative to the padded content box, not the outer
      * card rectangle.  The old preview used card_w/card_h here, which pushed
@@ -242,8 +297,10 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     card_text(card, "IMU PROFILE", mount_label ? mount_label : "TANK MOUNT", "Pitch -10.7 / Roll +5.0", UI_COLOR_TEXT_PRIMARY, NULL);
     card = make_card(scr, 2 * m + card_w, content_y + card_h + gap, card_w, card_h);
     char storage_text[32];
-    storage_free_text(storage_text, sizeof(storage_text), sd_ok);
-    card_text(card, "SD STORAGE", storage_text, "High-speed card", UI_COLOR_TEXT_PRIMARY, &s_lbl_store);
+    char storage_detail[64];
+    storage_queue_text(storage_text, sizeof(storage_text), sd_ok);
+    storage_queue_detail(storage_detail, sizeof(storage_detail), sd_ok);
+    card_text(card, "DATA", storage_text, storage_detail, UI_COLOR_TEXT_PRIMARY, &s_lbl_store);
     s_storage_bar = lv_bar_create(card);
     lv_obj_set_size(s_storage_bar, card_w - 2 * UI_CARD_PADDING, UI_RES_CLASS_COMPACT ? 4 : 7);
     lv_bar_set_range(s_storage_bar, 0, 100);
@@ -251,6 +308,14 @@ void ui_show_home(bool sd_ok, bool imu_ok, bool gps_ok, int sats,
     lv_obj_set_style_bg_color(s_storage_bar, C(UI_COLOR_BORDER), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_set_style_bg_color(s_storage_bar, C(UI_COLOR_PAIRING), LV_PART_INDICATOR | LV_STATE_DEFAULT);
     lv_obj_align(s_storage_bar, LV_ALIGN_BOTTOM_MID, 0, -UI_SCALE_Y(18));
+    lv_obj_t *data_hit = lv_btn_create(card);
+    lv_obj_set_size(data_hit, lv_pct(100), lv_pct(100));
+    lv_obj_set_pos(data_hit, 0, 0);
+    lv_obj_set_style_bg_opa(data_hit, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(data_hit, 0, 0);
+    lv_obj_set_style_shadow_width(data_hit, 0, 0);
+    lv_obj_add_event_cb(data_hit, on_data, LV_EVENT_CLICKED, NULL);
+    lv_obj_move_foreground(data_hit);
 
     const int dock_y = UI_VER_RES - dock_h;
     const int button_gap = UI_RES_CLASS_COMPACT ? 5 : gap;
@@ -289,7 +354,7 @@ void ui_home_update(bool sd_ok, bool imu_ok, bool gps_ok, int sats, int bat_pct,
     lv_label_set_text(s_lbl_status, state);
     label_style(s_lbl_status, color, font_value());
     lv_label_set_text(s_lbl_track, track_name ? track_name : "NO TRACK");
-    storage_free_text(buf, sizeof(buf), sd_ok);
+    storage_queue_text(buf, sizeof(buf), sd_ok);
     lv_label_set_text(s_lbl_store, buf);
     lv_bar_set_value(s_storage_bar, storage_pct, LV_ANIM_OFF);
     ui_unlock();

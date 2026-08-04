@@ -210,7 +210,26 @@ def get_device_active_track():
                                 else 0.0
                                 for s in sorted_sectors
                             ]
-                            track_data['tbl'] = {"sectors": sectors_list}
+                            tbl_payload = {"sectors": sectors_list}
+
+                            # The firmware contract calls this lap_time.  The
+                            # persistent TBL file historically called it
+                            # total_best_time, so normalize that field here.
+                            lap_time = raw_tbl.get('total_best_time')
+                            if not isinstance(lap_time, (int, float)):
+                                lap_time = raw_tbl.get('lap_time')
+                            if not isinstance(lap_time, (int, float)):
+                                existing_tbl = track_data.get('tbl')
+                                if isinstance(existing_tbl, dict):
+                                    lap_time = existing_tbl.get('lap_time')
+                            if not isinstance(lap_time, (int, float)):
+                                known_times = [value for value in sectors_list if value > 0]
+                                if len(known_times) == len(sectors_list) and known_times:
+                                    lap_time = sum(known_times)
+                            if isinstance(lap_time, (int, float)) and lap_time >= 0:
+                                tbl_payload['lap_time'] = float(lap_time)
+
+                            track_data['tbl'] = tbl_payload
                     except Exception as e:
                         print(f"[active_track] TBL extraction error: {e}")
 

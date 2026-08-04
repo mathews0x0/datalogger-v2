@@ -6430,3 +6430,11 @@ network path demonstrated in this milestone.
 **Status: ✅ Major P4 implementation gaps closed; live session/upload,
 reliability qualification, C6 version alignment, and production release
 qualification remain in progress.**
+
+---
+
+## 2026-08-04 — Active Track, Data Management, and Sync UX Refactor
+
+The touchscreen UI was substantially refined around the active-track workflow. The Home screen now shows a cleaner active-track preview without sector markers, with improved cropping/layout behavior and larger title typography; tapping it opens a full-screen track view with a more polished MAP / LIVE LAYOUT and INFO / TBL tab treatment, full track sectors, sector legends, TBL, lap-time, and sector-time information. Home was also simplified to the `RaceSense` title, and System Status was made clickable to open the existing Hardware Debug screen.
+
+File management and cloud sync were brought into the primary rider workflow. The Home storage card became `DATA`, prioritizing the number of pending files while retaining size/free-space context; the Data screen now provides a pending-file list, file sizes/status, and a large Sync Now action. Upload progress was expanded to show files remaining, percentage, total bytes, transfer speed, and ETA. The Data-card crash/freeze path was then hardened by moving screen construction and SD enumeration out of the touch callback and reducing LVGL object usage in the file list. The firmware was built, flashed, and serial-checked with stable SD, storage, network transport, GPS, and BMI323 health; track and network host tests passed. Final Data-card touch acceptance remains pending on a boot where the intermittent GT911 initialization succeeds.

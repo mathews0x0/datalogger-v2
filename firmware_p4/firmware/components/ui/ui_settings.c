@@ -70,6 +70,10 @@ void ui_show_settings(void)
     lv_obj_t *lbl_title = lv_label_create(header);
     lv_label_set_text(lbl_title, "SYSTEM SETTINGS & SETUP");
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(0xFF6B35), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(lbl_title,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28
+                                                       : &lv_font_montserrat_16,
+                               LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
     const int margin = UI_RES_CLASS_WIDESCREEN ? 24 : 8;

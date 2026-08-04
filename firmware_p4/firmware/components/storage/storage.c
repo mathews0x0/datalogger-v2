@@ -702,6 +702,46 @@ void storage_get_pending_summary(storage_pending_summary_t *summary)
     closedir(d);
 }
 
+static int _pending_file_compare(const void *lhs, const void *rhs)
+{
+    const storage_pending_file_t *a = lhs;
+    const storage_pending_file_t *b = rhs;
+    return strcmp(a->filename, b->filename);
+}
+
+size_t storage_list_pending_files(storage_pending_file_t *files, size_t capacity)
+{
+    if (!files || capacity == 0) return 0;
+
+    const char *dir = _active_dir();
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+
+    size_t count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL && count < capacity) {
+        if (strncmp(entry->d_name, "sess_", 5) != 0 ||
+            !strstr(entry->d_name, ".csv")) {
+            continue;
+        }
+
+        char path[320];
+        snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
+        struct stat st;
+        if (stat(path, &st) != 0 || st.st_size <= 0) continue;
+
+        storage_pending_file_t *file = &files[count++];
+        memset(file, 0, sizeof(*file));
+        strncpy(file->filepath, path, sizeof(file->filepath) - 1);
+        strncpy(file->filename, entry->d_name, sizeof(file->filename) - 1);
+        file->size_bytes = (uint64_t)st.st_size;
+    }
+    closedir(d);
+
+    qsort(files, count, sizeof(files[0]), _pending_file_compare);
+    return count;
+}
+
 bool storage_has_flash_sessions(void)
 {
     DIR *d = opendir(STORAGE_FLASH_SESSIONS_DIR);

@@ -18,7 +18,28 @@ static const char *TAG = "ui_sync";
 static lv_obj_t *s_upload_bar;
 static lv_obj_t *s_upload_title;
 static lv_obj_t *s_upload_file;
+static lv_obj_t *s_upload_remaining;
+static lv_obj_t *s_upload_percent;
+static lv_obj_t *s_upload_total;
+static lv_obj_t *s_upload_eta;
 static bool s_upload_active;
+
+static const lv_font_t *_sync_title_font(void)
+{
+    return UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28 : &lv_font_montserrat_16;
+}
+
+static const lv_font_t *_sync_body_font(void)
+{
+    return UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16 : &lv_font_montserrat_12;
+}
+
+static void _sync_label_style(lv_obj_t *label, uint32_t color,
+                              const lv_font_t *font)
+{
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(label, font, 0);
+}
 
 static void _make_title(lv_obj_t *scr, const char *left, const char *right, uint32_t color)
 {
@@ -29,9 +50,11 @@ static void _make_title(lv_obj_t *scr, const char *left, const char *right, uint
     lv_obj_set_style_radius(h, 0, 0);
     lv_obj_clear_flag(h, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_t *a = lv_label_create(h); lv_label_set_text(a, left);
-    lv_obj_set_style_text_color(a, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0); lv_obj_align(a, LV_ALIGN_LEFT_MID, 8, 0);
+    _sync_label_style(a, UI_COLOR_TEXT_PRIMARY, _sync_title_font());
+    lv_obj_align(a, LV_ALIGN_LEFT_MID, UI_SCALE_X(14), 0);
     lv_obj_t *b = lv_label_create(h); lv_label_set_text(b, right);
-    lv_obj_set_style_text_color(b, lv_color_hex(color), 0); lv_obj_align(b, LV_ALIGN_RIGHT_MID, -8, 0);
+    _sync_label_style(b, color, _sync_body_font());
+    lv_obj_align(b, LV_ALIGN_RIGHT_MID, -UI_SCALE_X(14), 0);
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -81,8 +104,9 @@ void ui_show_sync_searching(const char *target_ssid)
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *lbl_title = lv_label_create(header);
-    lv_label_set_text(lbl_title, "● CLOUD SYNC ACTIVE");
+    lv_label_set_text(lbl_title, "CLOUD SYNC ACTIVE");
     lv_obj_set_style_text_color(lbl_title, lv_color_hex(0x007AFF), LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(lbl_title, _sync_title_font(), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_title, LV_ALIGN_CENTER, 0, 0);
 
     /* Center Status Card (304x120 px) */
@@ -143,7 +167,9 @@ void ui_show_sync_heartbeat(void)
     lv_obj_set_size(spinner, 58, 58); lv_obj_align(spinner, LV_ALIGN_CENTER, 0, -34);
     lv_obj_set_style_arc_color(spinner, lv_color_hex(UI_COLOR_DANGER), LV_PART_INDICATOR);
     lv_obj_t *title = lv_label_create(scr); lv_label_set_text(title, "VERIFYING SERVER HEARTBEAT");
-    lv_obj_set_style_text_color(title, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0); lv_obj_align(title, LV_ALIGN_CENTER, 0, 20);
+    _sync_label_style(title, UI_COLOR_TEXT_PRIMARY,
+                      UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_20 : &lv_font_montserrat_14);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 20);
     lv_obj_t *sub = lv_label_create(scr); lv_label_set_text(sub, "TLS heartbeat to racesense.in...");
     lv_obj_set_style_text_color(sub, lv_color_hex(UI_COLOR_TEXT_MUTED), 0); lv_obj_align(sub, LV_ALIGN_CENTER, 0, 43);
     ui_load_screen(scr);
@@ -154,7 +180,9 @@ void ui_show_sync_heartbeat(void)
  * Screen 8: Chunked Batch Telemetry Uploader Progress
  * ────────────────────────────────────────────────────────────────────────*/
 void ui_show_sync_uploading(int file_idx, int total_files, const char *filename,
-                            int progress_pct, const char *speed, const char *eta)
+                            int progress_pct, size_t global_sent_bytes,
+                            size_t global_total_bytes, int files_remaining,
+                            const char *speed, const char *eta)
 {
     ui_home_deactivate();
     if (ui_lock(20)) {
@@ -162,23 +190,94 @@ void ui_show_sync_uploading(int file_idx, int total_files, const char *filename,
             lv_obj_t *scr = lv_obj_create(NULL);
             lv_obj_set_style_bg_color(scr, lv_color_hex(UI_COLOR_BG_DARK), 0);
             _make_title(scr, "SYNC MODE", "CLOUD ONLINE", UI_COLOR_SUCCESS);
+
+            const int margin = UI_RES_CLASS_WIDESCREEN ? 24 : 10;
+            const int card_y = UI_HEADER_HEIGHT + (UI_RES_CLASS_WIDESCREEN ? 18 : 10);
+            const int card_h = UI_RES_CLASS_WIDESCREEN ? 300 : 180;
+            lv_obj_t *card = lv_obj_create(scr);
+            lv_obj_set_size(card, UI_HOR_RES - 2 * margin, card_h);
+            lv_obj_set_pos(card, margin, card_y);
+            lv_obj_set_style_bg_color(card, lv_color_hex(0x11131A), 0);
+            lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_color(card, lv_color_hex(UI_COLOR_BORDER), 0);
+            lv_obj_set_style_border_width(card, 2, 0);
+            lv_obj_set_style_radius(card, UI_CARD_RADIUS, 0);
+            lv_obj_set_style_pad_all(card, 0, 0);
+            lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
             s_upload_title = lv_label_create(scr);
-            lv_obj_set_style_text_color(s_upload_title, lv_color_hex(UI_COLOR_SUCCESS), 0);
-            lv_obj_align(s_upload_title, LV_ALIGN_CENTER, 0, -48);
+            _sync_label_style(s_upload_title, UI_COLOR_SUCCESS,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_20 : &lv_font_montserrat_16);
+            lv_obj_set_pos(s_upload_title, margin + UI_SCALE_X(22), card_y + UI_SCALE_Y(18));
             s_upload_file = lv_label_create(scr);
-            lv_obj_set_style_text_color(s_upload_file, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
-            lv_obj_align(s_upload_file, LV_ALIGN_CENTER, 0, -20);
-            s_upload_bar = lv_bar_create(scr); lv_obj_set_size(s_upload_bar, UI_PCT_X(80), 14);
-            lv_obj_align(s_upload_bar, LV_ALIGN_CENTER, 0, 12);
+            _sync_label_style(s_upload_file, UI_COLOR_TEXT_PRIMARY,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_20 : &lv_font_montserrat_14);
+            lv_obj_set_pos(s_upload_file, margin + UI_SCALE_X(22), card_y + UI_SCALE_Y(54));
+
+            s_upload_remaining = lv_label_create(scr);
+            _sync_label_style(s_upload_remaining, UI_COLOR_WARNING,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
+            lv_obj_align(s_upload_remaining, LV_ALIGN_TOP_RIGHT,
+                         -margin - UI_SCALE_X(22), card_y + UI_SCALE_Y(22));
+
+            s_upload_bar = lv_bar_create(scr);
+            lv_obj_set_size(s_upload_bar, UI_HOR_RES - 2 * margin - UI_SCALE_X(44),
+                            UI_RES_CLASS_WIDESCREEN ? 18 : 12);
+            lv_obj_set_pos(s_upload_bar, margin + UI_SCALE_X(22), card_y + UI_SCALE_Y(104));
+            lv_bar_set_range(s_upload_bar, 0, 100);
             lv_obj_set_style_bg_color(s_upload_bar, lv_color_hex(UI_COLOR_BORDER), LV_PART_MAIN);
             lv_obj_set_style_bg_color(s_upload_bar, lv_color_hex(UI_COLOR_PRIMARY), LV_PART_INDICATOR);
-            lv_obj_t *cancel = lv_btn_create(scr); lv_obj_set_size(cancel, UI_PCT_X(80), UI_SCALE_Y(44)); lv_obj_align(cancel, LV_ALIGN_BOTTOM_MID, 0, -8);
+            lv_obj_set_style_radius(s_upload_bar, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+            lv_obj_set_style_radius(s_upload_bar, LV_RADIUS_CIRCLE, LV_PART_INDICATOR);
+
+            s_upload_percent = lv_label_create(scr);
+            _sync_label_style(s_upload_percent, UI_COLOR_TEXT_PRIMARY,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_36 : &lv_font_montserrat_28);
+            lv_obj_align(s_upload_percent, LV_ALIGN_TOP_RIGHT,
+                         -margin - UI_SCALE_X(22), card_y + UI_SCALE_Y(128));
+
+            s_upload_total = lv_label_create(scr);
+            _sync_label_style(s_upload_total, UI_COLOR_TEXT_MUTED,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
+            lv_obj_set_pos(s_upload_total, margin + UI_SCALE_X(22), card_y + UI_SCALE_Y(136));
+
+            s_upload_eta = lv_label_create(scr);
+            _sync_label_style(s_upload_eta, UI_COLOR_TEXT_MUTED,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
+            lv_obj_set_pos(s_upload_eta, margin + UI_SCALE_X(22), card_y + UI_SCALE_Y(170));
+
+            lv_obj_t *cancel = lv_btn_create(scr);
+            lv_obj_set_size(cancel, UI_HOR_RES - 2 * margin,
+                            UI_RES_CLASS_WIDESCREEN ? 62 : 48);
+            lv_obj_align(cancel, LV_ALIGN_BOTTOM_MID, 0, -UI_SCALE_Y(14));
+            lv_obj_set_style_bg_color(cancel, lv_color_hex(UI_COLOR_DANGER), 0);
+            lv_obj_set_style_radius(cancel, UI_BTN_RADIUS, 0);
             lv_obj_add_event_cb(cancel, _on_btn_sync_cancel_cb, LV_EVENT_CLICKED, NULL);
-            lv_obj_t *cl = lv_label_create(cancel); lv_label_set_text(cl, "CANCEL & EXIT"); lv_obj_align(cl, LV_ALIGN_CENTER, 0, 0);
+            lv_obj_t *cl = lv_label_create(cancel);
+            lv_label_set_text(cl, "CANCEL & EXIT");
+            _sync_label_style(cl, UI_COLOR_TEXT_PRIMARY,
+                              UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
+            lv_obj_center(cl);
             ui_load_screen(scr); s_upload_active = true;
         }
-        char buf[80]; snprintf(buf, sizeof(buf), "UPLOADING FILE %d OF %d", file_idx, total_files);
-        lv_label_set_text(s_upload_title, buf); lv_label_set_text(s_upload_file, filename ? filename : "session.csv");
+        char buf[80];
+        snprintf(buf, sizeof(buf), "FILE %d OF %d", file_idx, total_files);
+        lv_label_set_text(s_upload_title, buf);
+        lv_label_set_text(s_upload_file, filename ? filename : "session.csv");
+        snprintf(buf, sizeof(buf), "%d FILE%s REMAINING", files_remaining,
+                 files_remaining == 1 ? "" : "S");
+        lv_label_set_text(s_upload_remaining, buf);
+        snprintf(buf, sizeof(buf), "%d%%", progress_pct);
+        lv_label_set_text(s_upload_percent, buf);
+        char total_text[96];
+        snprintf(total_text, sizeof(total_text), "TOTAL  %.1f / %.1f MB",
+                 (double)global_sent_bytes / (1024.0 * 1024.0),
+                 (double)global_total_bytes / (1024.0 * 1024.0));
+        lv_label_set_text(s_upload_total, total_text);
+        char eta_text[128];
+        snprintf(eta_text, sizeof(eta_text), "ETA  %s    •    %s",
+                 eta && eta[0] ? eta : "calculating", speed && speed[0] ? speed : "measuring speed");
+        lv_label_set_text(s_upload_eta, eta_text);
         lv_bar_set_value(s_upload_bar, progress_pct, LV_ANIM_ON);
         ui_unlock();
     }

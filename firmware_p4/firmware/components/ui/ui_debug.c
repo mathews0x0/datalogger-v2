@@ -103,7 +103,8 @@ void ui_show_hardware_debug(void)
     lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *title = _make_label(header, "HARDWARE DEBUG", UI_SCALE_X(18), 0,
-                                  UI_COLOR_TEXT_PRIMARY, debug_font_body());
+                                  UI_COLOR_TEXT_PRIMARY,
+                                  UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28 : debug_font_body());
     lv_obj_align(title, LV_ALIGN_LEFT_MID, UI_SCALE_X(18), 0);
 
     lv_obj_t *back = lv_btn_create(header);

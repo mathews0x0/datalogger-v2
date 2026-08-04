@@ -63,6 +63,12 @@ void ui_events_on_open_hardware_debug(void)
     ui_events_dispatch(UI_EVENT_HARDWARE_DEBUG_CLICKED, NULL);
 }
 
+void ui_events_on_open_data(void)
+{
+    ESP_LOGI(TAG, "Touch Action: DATA / pending files screen requested");
+    ui_events_dispatch(UI_EVENT_DATA_CLICKED, NULL);
+}
+
 void ui_events_on_navigate_home(void)
 {
     ESP_LOGI(TAG, "Touch Action: NAVIGATE HOME / CANCEL requested");
