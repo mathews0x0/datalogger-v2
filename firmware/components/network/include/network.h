@@ -10,6 +10,8 @@
  * Device/server API contract:
  *   POST /api/device/ping          — authenticated heartbeat JSON
  *   GET  /api/device/active_track — authenticated active-track wrapper
+ *   GET  /api/device/track_catalog — authenticated track manifest
+ *   GET  /api/device/track_catalog/<id> — one complete track payload
  *   POST /api/upload/batch         — chunked binary body
  *   GET  /api/upload/status        — resume query
  *   POST /api/upload/complete      — finalize, moves file server-side
@@ -47,6 +49,7 @@ extern "C" {
 #define NETWORK_RETRY_DELAY_MS      2000
 #define NETWORK_CONNECT_TIMEOUT_MS  30000         /**< STA connect timeout   */
 #define NETWORK_UPLOAD_TIMEOUT_MS   45000         /**< Per-batch HTTP timeout */
+#define NETWORK_TRACK_CATALOG_MAX_TRACKS 32
 
 /* ──────────────────────────────────────────────────────────────────────────
  * Device configuration (stored in /data/metadata/device.json)
@@ -57,6 +60,13 @@ typedef struct {
     char token[128];
     char api_url[192];
 } network_device_config_t;
+
+/** One track available for offline selection on the device. */
+typedef struct {
+    int32_t track_id;
+    char    track_name[64];
+    bool    is_server_default;
+} network_cached_track_t;
 
 /** Optional telemetry fields sent by network_heartbeat_with_telemetry().
  * Storage values use the server contract units: MB for SD and KB for flash.
@@ -301,6 +311,16 @@ esp_err_t network_stop_captive_portal(void);
  * @return ESP_OK on success.
  */
 esp_err_t network_fetch_active_track(const char *token, const char *api_url);
+
+/** Reconcile the local offline track catalog with the server profile. */
+esp_err_t network_sync_track_catalog(const char *token, const char *api_url);
+
+/** Copy one cached catalog track into the active track slot. */
+esp_err_t network_select_cached_track(int32_t track_id);
+
+/** Read cached tracks for the device track selector UI. */
+esp_err_t network_list_cached_tracks(network_cached_track_t *tracks, int max_tracks,
+                                     int *out_count, int32_t *out_active_id);
 
 #ifdef __cplusplus
 }

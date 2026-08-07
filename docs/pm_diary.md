@@ -6438,3 +6438,52 @@ qualification remain in progress.**
 The touchscreen UI was substantially refined around the active-track workflow. The Home screen now shows a cleaner active-track preview without sector markers, with improved cropping/layout behavior and larger title typography; tapping it opens a full-screen track view with a more polished MAP / LIVE LAYOUT and INFO / TBL tab treatment, full track sectors, sector legends, TBL, lap-time, and sector-time information. Home was also simplified to the `RaceSense` title, and System Status was made clickable to open the existing Hardware Debug screen.
 
 File management and cloud sync were brought into the primary rider workflow. The Home storage card became `DATA`, prioritizing the number of pending files while retaining size/free-space context; the Data screen now provides a pending-file list, file sizes/status, and a large Sync Now action. Upload progress was expanded to show files remaining, percentage, total bytes, transfer speed, and ETA. The Data-card crash/freeze path was then hardened by moving screen construction and SD enumeration out of the touch callback and reducing LVGL object usage in the file list. The firmware was built, flashed, and serial-checked with stable SD, storage, network transport, GPS, and BMI323 health; track and network host tests passed. Final Data-card touch acceptance remains pending on a boot where the intermittent GT911 initialization succeeds.
+
+---
+
+## 2026-08-08 — Native Firmware Refactor and Active-Track Sync Recovery
+
+The firmware architecture was decisively moved away from the obsolete
+MicroPython implementation. The native ESP32-P4 firmware is now the active,
+board-agnostic `firmware` path for the Waveshare 4.3-inch board and future
+custom 2.8-inch boards. The refactor consolidated storage, sensors, UI,
+track timing, feedback, provisioning, HTTPS, cloud upload, release identity,
+and flashing/monitoring into the native build and flashtool workflow. The old
+MicroPython architecture is no longer part of the runtime path.
+
+Active-track handling was redesigned around the user's complete profile:
+
+- The server exposes a compact track manifest plus complete per-track
+  payloads containing geometry, sectors, layout, and TBL data.
+- Cloud sync repairs missing or incomplete per-track caches and applies the
+  server-selected track as the device default.
+- The device stores all available tracks locally and supports offline track
+  switching without requiring a fresh server sync.
+- Switching tracks now atomically updates the active payload, reloads the
+  track engine, refreshes the map layout, and updates Home plus the INFO/TBL
+  view.
+- Server payload generation normalizes center-only start-line data into the
+  direct `lat`/`lon` fields required by the device contract.
+
+The field failure was traced to the SD card's FAT/VFS implementation: unlike
+POSIX, it returned `EEXIST` when `rename()` targeted an existing metadata file.
+That made catalog downloads appear complete while the old `track.json` and
+per-track files remained active. The firmware now detects this behavior and
+falls back to replacing the completed temporary file safely. Diagnostic logs
+were added so catalog fetch, payload validation, cache writes, selection, and
+engine reload failures are visible instead of being masked by an immediate
+return to Home.
+
+Connected-device verification passed on RaceSense Mark 203:
+
+- Cloud sync returned `Track catalog reconciliation: ESP_OK`.
+- Server default track `1000077` downloaded and loaded with 5 sectors and TBL
+  `108.995s`.
+- Offline selection of track `1000000` loaded `Kari motor speedway` with 5
+  sectors and TBL `87.839s`.
+- Home map/name and the track viewer were refreshed after both selections.
+- Build, flash hash verification, SD validation, GPS, BMI323, Wi-Fi, TLS,
+  heartbeat, and sync completed successfully.
+
+**Status: ✅ Native firmware path and active-track workflow verified on-device;
+remaining work is broader field qualification and production release hygiene.**

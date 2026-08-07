@@ -61,7 +61,9 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 
 ## 🧠 Firmware Architecture (Native C/C++ ESP-IDF 5.x)
 
-The RaceSense firmware has transitioned from legacy MicroPython to **Native C/C++ under ESP-IDF 5.x with FreeRTOS SMP**. This architectural upgrade resolves historical cadence limitations and introduces dual-target support across hardware platforms.
+The RaceSense firmware is implemented as **native C/C++ under ESP-IDF 5.x with
+FreeRTOS SMP**. The unified project provides target-aware support across the
+Waveshare P4 and compact custom-board hardware profiles.
 
 ### **Dual-Target Hardware Abstraction (`bsp.h` / `bsp_display_target.h`)**
 The codebase compiled under `firmware/` operates as a unified target-agnostic repository:
@@ -115,9 +117,8 @@ traceability.
 *   **Core 1 (Application, UI & Storage Flush)**: Houses the top-level application state machine (`main.c`), the SDMMC storage flush task (`storage.c`), networking, and the LVGL UI. The sensor-owned queue is consumed by the storage flush task through an explicit drain barrier; live CSV-session validation remains open, and P4 networking still selects `network_stub.c`.
 
 ### **Firmware Status**
-The legacy ESP32-S3 MicroPython tree and bundled MicroPython binaries have been
-removed. All supported boards now use the native ESP-IDF project in
-`firmware/`; choose the board-specific ESP-IDF target with `idf.py set-target`.
+All supported boards use the native ESP-IDF project in `firmware/`; choose the
+board-specific ESP-IDF target with `idf.py set-target`.
 
 ### **Boot Sequence**
 1.  **Power-hold assertion**: native startup drives **IO41** so the soft-latched V4.2 board stays on after the momentary power button is released.
@@ -193,7 +194,7 @@ removed. All supported boards now use the native ESP-IDF project in
     *   Uses five points: top-left, top-right, bottom-right, bottom-left, center.
     *   Calibration is per-device and should be preserved with other metadata.
     *   Display preset selection is also per-device and is stored in `/data/metadata/display.json`.
-    *   Touch and calibration are initialized by the selected native BSP target; there is no partial Python-file sync state to repair.
+    *   Touch and calibration are initialized by the selected native BSP target; there is no partial firmware-sync state to repair.
 *   **IMU mount profile calibration**:
     *   Stored under device metadata and intended to persist across normal firmware sync.
     *   Current flow captures `STATIC`, `ENGINE`, `LEAN LEFT`, `LEAN RIGHT`, and `PUSH`.
@@ -289,9 +290,9 @@ Use `idf.py set-target esp32s3` when working with a compact custom board. See
 flash procedure and target-specific notes.
 
 ### **2. OTA status**
-The former Python-file OTA path has been removed with the MicroPython runtime.
-Native binary OTA can be added independently once the ESP-IDF device-side OTA
-contract is finalized.
+Native binary OTA can be added once the ESP-IDF device-side OTA contract is
+finalized. Current firmware updates use the build-and-flash workflow in
+[`firmware/FLASHING_GUIDE.md`](../firmware/FLASHING_GUIDE.md).
 
 ---
 

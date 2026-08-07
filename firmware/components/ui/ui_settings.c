@@ -10,6 +10,7 @@
 #include "ui_events.h"
 #include <stdio.h>
 #include "esp_log.h"
+#include "esp_app_desc.h"
 #include "lvgl.h"
 
 static const char *TAG = "ui_settings";
@@ -126,11 +127,34 @@ void ui_show_settings(void)
     lv_obj_set_style_text_color(lbl_btn_debug, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(lbl_btn_debug, LV_ALIGN_CENTER, 0, 0);
 
-    /* Button 4: Return Home Footer */
+    /* Firmware identity is sourced from the same PROJECT_VER embedded in the
+     * application image and shown in boot logs. */
+    const esp_app_desc_t *app_desc = esp_app_get_description();
+    char firmware_text[48];
+    snprintf(firmware_text, sizeof(firmware_text), "FIRMWARE • %s",
+             app_desc && app_desc->version[0] ? app_desc->version : "Mark ?");
+    const int version_h = UI_RES_CLASS_WIDESCREEN ? 22 : 20;
     const int back_h = UI_RES_CLASS_WIDESCREEN ? 72 : (UI_RES_CLASS_MEDIUM ? 56 : 32);
     const int back_y = UI_RES_CLASS_WIDESCREEN
                      ? UI_VER_RES - 24 - back_h
-                     : debug_y + debug_h + gap;
+                     : debug_y + debug_h + gap + version_h + 6;
+    const int version_y = UI_RES_CLASS_WIDESCREEN
+                        ? back_y - version_h - 6
+                        : debug_y + debug_h + gap;
+    lv_obj_t *lbl_firmware = lv_label_create(scr);
+    lv_label_set_text(lbl_firmware, firmware_text);
+    lv_obj_set_style_text_color(lbl_firmware, lv_color_hex(0x8E8E98),
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_font(lbl_firmware,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_14
+                                                       : &lv_font_montserrat_12,
+                               LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_size(lbl_firmware, UI_HOR_RES - 2 * margin, version_h);
+    lv_obj_set_pos(lbl_firmware, margin, version_y);
+    lv_obj_set_style_text_align(lbl_firmware, LV_TEXT_ALIGN_CENTER,
+                                LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    /* Button 4: Return Home Footer */
     lv_obj_t *btn_back = lv_btn_create(scr);
     lv_obj_set_size(btn_back, UI_RES_CLASS_WIDESCREEN ? UI_HOR_RES - 2 * margin : button_w, back_h);
     lv_obj_set_pos(btn_back, margin, back_y);

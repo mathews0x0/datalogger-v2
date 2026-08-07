@@ -316,9 +316,42 @@ def test_batch_upload_multi_and_finalize(upload_client, app):
         assert result['success'] is True
 
         # Verify assembled file
-        final_path = config.get_user_learning_dir(upload_client._user_id) / 'sess_multi.csv'
+        final_path = config.get_user_learning_dir(upload_client._user_id) / result['filename']
         assert final_path.exists()
         assert final_path.read_bytes() == part1 + part2
+
+        # A lost completion response must be safe to retry and must not create
+        # an empty duplicate or reassemble the upload from missing chunks.
+        retry_headers = _auth_headers(upload_client, content_type='application/json')
+        retry = upload_client.post('/api/upload/complete',
+                                   data=json.dumps({'filename': 'sess_multi.csv',
+                                                    'total_size': total}),
+                                   headers=retry_headers)
+        assert retry.status_code == 200
+        assert retry.get_json()['success'] is True
+        assert final_path.read_bytes() == part1 + part2
+
+
+def test_batch_complete_rejects_truncated_partial(upload_client, app):
+    """Completion must reject a partial file whose size is below total_size."""
+    with app.app_context():
+        data = b'partial-data'
+        total = len(data) + 10
+        headers = _auth_headers(upload_client)
+        headers['X-Filename'] = 'sess_truncated.csv'
+        headers['X-Offset'] = '0'
+        headers['X-Total-Size'] = str(total)
+        resp = upload_client.post('/api/upload/batch', data=data, headers=headers)
+        assert resp.status_code == 200
+
+        complete_headers = _auth_headers(upload_client, content_type='application/json')
+        resp = upload_client.post('/api/upload/complete',
+                                  data=json.dumps({'filename': 'sess_truncated.csv',
+                                                   'total_size': total}),
+                                  headers=complete_headers)
+        assert resp.status_code == 409
+        assert not (config.get_user_learning_dir(upload_client._user_id) /
+                    'sess_truncated.csv').exists()
 
 
 def test_batch_upload_resume(upload_client, app):

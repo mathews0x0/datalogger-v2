@@ -40,7 +40,7 @@ static lv_obj_t *lbl_status = NULL;
 static lv_obj_t *lbl_coords = NULL;
 static lv_obj_t *cursor_marker = NULL;
 
-/* Proven MicroPython Vendor Init Sequence */
+/* Proven vendor initialization sequence */
 static const ili9341_lcd_init_cmd_t mpy_init_cmds[] = {
     {0xCF, (uint8_t []){0x00, 0xC1, 0x30}, 3, 0},
     {0xED, (uint8_t []){0x64, 0x03, 0x12, 0x81}, 4, 0},

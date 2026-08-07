@@ -890,6 +890,41 @@ esp_err_t storage_archive_session(const char *filepath)
     char dst[96];
     snprintf(dst, sizeof(dst), "%s/%s", arch_dir, fname);
 
+    /* FAT rename does not reliably replace an existing destination.  Keep
+     * the uploaded copy and choose a collision-safe archive name instead of
+     * leaving the source file pending after a successful server upload. */
+    if (_file_exists(dst)) {
+        char base[64] = {0};
+        char ext[16] = {0};
+        const char *dot = strrchr(fname, '.');
+        if (dot && dot != fname) {
+            size_t base_len = (size_t)(dot - fname);
+            if (base_len >= sizeof(base)) base_len = sizeof(base) - 1;
+            memcpy(base, fname, base_len);
+            snprintf(ext, sizeof(ext), "%s", dot);
+        } else {
+            snprintf(base, sizeof(base), "%s", fname);
+        }
+
+        bool found = false;
+        for (int counter = 1; counter < 1000; counter++) {
+            int written = snprintf(dst, sizeof(dst), "%s/%s_%d%s",
+                                   arch_dir, base, counter, ext);
+            if (written < 0 || (size_t)written >= sizeof(dst)) {
+                return ESP_ERR_INVALID_SIZE;
+            }
+            if (!_file_exists(dst)) {
+                found = true;
+                ESP_LOGW(TAG, "Archive collision: using %s", dst);
+                break;
+            }
+        }
+        if (!found) {
+            ESP_LOGE(TAG, "Archive directory has too many collisions: %s", fname);
+            return ESP_ERR_INVALID_STATE;
+        }
+    }
+
     if (rename(filepath, dst) != 0) {
         ESP_LOGE(TAG, "Archive rename failed: %s → %s", filepath, dst);
         return ESP_FAIL;

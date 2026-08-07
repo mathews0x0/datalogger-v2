@@ -9895,7 +9895,7 @@ async function pollCloudHeartbeat() {
                     let fFree = headerDevice.storage_flash_free || 0; // KB
                     let fTotal = headerDevice.storage_flash_total || 0; // KB
                     
-                    // Legacy firmware fix: older devices send flash size in bytes, not KB.
+                    // Compatibility fix: some devices report flash size in bytes, not KB.
                     // If free is larger than 100MB (100,000 KB), it's definitely bytes.
                     if (fFree > 100000) {
                         fFree = Math.round(fFree / 1024);

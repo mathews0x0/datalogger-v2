@@ -1,126 +1,125 @@
-# ⚡ RaceSense Native Firmware Flashing Guide
+# RaceSense Firmware Build, Flash, and Monitor Guide
 
-This document provides definitive instructions for compiling, building, and deploying the RaceSense multi-platform datalogger firmware onto target hardware devices.
+The supported firmware is the native ESP-IDF project in this `firmware/`
+directory. The default target is the Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3;
+the same project can be built for a supported compact-board target by selecting
+its ESP-IDF target explicitly.
 
----
+## Quick workflow
 
-## 🖥️ Supported Target Architecture & Hardware Profiles
-
-The codebase leverages an adaptive **Board Support Package (BSP)** that dynamically configures GPIO mapping, memory boundaries, and LVGL display drivers based on the selected build target:
-
-1. **Target 1: Production ESP32-P4 Platform**
-   * **Hardware:** Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3
-   * **Display & Input:** 4.3" 800×480 Widescreen TFT via ST7701 (MIPI-DSI / Parallel RGB) with GT911 Capacitive Touch.
-   * **Memory:** High-speed external DDR/PSRAM allocation for double-buffered LVGL canvas.
-
-2. **Target 2: Development & Test Harness ESP32-S3 Platform**
-   * **Hardware:** ESP32-S3 Custom Test Rig / Dev Module
-   * **Display & Input:** 320×240 TFT via ILI9341 (High-speed SPI, 20MHz DMA) with XPT2046 Resistive Touch (with Affine Transformation matrix).
-   * **Color Profile:** 16-bit RGB565 with hardware byte-swap enabled (`CONFIG_LV_COLOR_16_SWAP=y`).
-
----
-
-## 🛠️ Environment Initialization & Build Workflow
-
-### Quick Build / Flash / Monitor
-
-From the repository root, the native helper will select the target, build the
-firmware, ask for confirmation, flash the selected USB device, and attach the
-serial monitor:
+Run this from an interactive terminal so the serial monitor can attach:
 
 ```bash
-cd firmware
+cd /Users/mj/Documents/datalogger-v2/firmware
 ./flashtool.sh
 ```
 
-Useful variants:
+The helper will source ESP-IDF when needed, build the selected target, detect a
+single USB modem, ask for confirmation, flash the board, and attach the
+monitor.
+
+Useful commands:
 
 ```bash
 ./flashtool.sh --list
-./flashtool.sh --port /dev/cu.usbmodemXXXX
-./flashtool.sh --target esp32s3
 ./flashtool.sh --build-only
 ./flashtool.sh --flash-only --port /dev/cu.usbmodemXXXX
 ./flashtool.sh --monitor-only --port /dev/cu.usbmodemXXXX
+./flashtool.sh --no-monitor --port /dev/cu.usbmodemXXXX
+./flashtool.sh --target esp32s3 --build-only
 ```
 
-Use `--yes` only when the serial port has already been verified.
-
-### 1. Initialize ESP-IDF Toolchain
-Before building or flashing, ensure your terminal session has sourced the official Espressif ESP-IDF v5.x environment variables:
+Use `--yes` only after verifying the selected port:
 
 ```bash
-source $HOME/esp/esp-idf/export.sh
+./flashtool.sh --port /dev/cu.usbmodemXXXX --yes
 ```
-*(On standard typical installations, this is located at `/Users/<username>/esp/esp-idf/export.sh` or `~/esp/esp-idf/export.sh`)*
 
-### 2. Build the Firmware Project
-Navigate into the target firmware directory and invoke the build engine:
+`--flash-only` flashes the existing image and exits. `--monitor-only` and the
+default workflow require an interactive TTY; use `--no-monitor` for scripts or
+non-interactive build agents.
+
+## ESP-IDF environment
+
+The helper automatically loads the default ESP-IDF installation at
+`/Users/mj/esp/esp-idf/export.sh`. To load it manually instead:
 
 ```bash
-cd firmware
+source /Users/mj/esp/esp-idf/export.sh
+```
+
+Override the installation path when necessary:
+
+```bash
+IDF_EXPORT=/path/to/esp-idf/export.sh ./flashtool.sh --build-only
+```
+
+## Direct build commands
+
+```bash
+cd /Users/mj/Documents/datalogger-v2/firmware
 idf.py build
 ```
 
-> [!NOTE]
-> **Managed Components & Build Artifacts:**
-> When running `idf.py build` for the first time, the **ESP Component Registry (IDF Component Manager)** will automatically download required external dependencies (LVGL core, ESP-IDF port abstractions, touchscreen drivers) into `managed_components/`. Both `managed_components/` and `build/` are explicitly excluded in `.gitignore` and should **not** be committed to source control.
-
----
-
-## ⚡ Flashing Instructions
-
-Due to project safety governance (**Rule 2: No Firmware Flashing by Automated Agents**), all firmware deployments must be manually executed by the user via terminal terminal command to prevent accidental overwrites or hardware bricking.
-
-Ensure your device is plugged in via USB-C to your data transmission port.
-
-### Method 1: Automated Deployment via `@flash_args` (Recommended)
-The ESP-IDF build process generates a consolidated arguments profile inside the `build/` folder. This ensures memory offset accuracy:
+For another supported target, select it before building:
 
 ```bash
-cd build
-python -m esptool --chip esp32s3 -b 460800 --before default_reset --after hard_reset write_flash "@flash_args"
-cd ..
+idf.py set-target esp32s3
+idf.py build
 ```
-*(Note: Replace `--chip esp32s3` with `--chip esp32p4` when compiling for production P4 hardware).*
 
-### Method 2: Explicit Binary Offset Mapping
-To deploy binaries using manual file path addressing from the root `firmware/` folder:
+Build artifacts are generated under `build/` and are not source files.
+
+## Direct flashing
+
+The helper is the preferred workflow because it checks the target, image, port,
+and serial-port ownership before flashing. The equivalent direct command is:
 
 ```bash
-python -m esptool --chip esp32s3 -b 460800 \
-  --before default_reset --after hard_reset \
-  write_flash --flash_mode dio --flash_freq 80m --flash_size 16MB \
-  0x0     build/bootloader/bootloader.bin \
-  0x8000  build/partition_table/partition-table.bin \
-  0x10000 build/racesense.bin
+idf.py -p /dev/cu.usbmodemXXXX -b 460800 flash
 ```
 
----
+The current P4 image uses these ESP-IDF flash offsets if esptool must be used
+directly:
 
-## 📡 Serial Console & Live Telemetry Monitoring
-
-To verify successful boot execution and inspect real-time Core 0 telemetry pipelines / UI events:
-
-```bash
-idf.py monitor
-```
-*To exit the serial monitor, press `Ctrl + ]`.*
-
-### Expected Boot Verification Output
-When booted successfully, your console will output:
 ```text
-I (xxx) racesense: ╔══════════════════════════════════════════╗
-I (xxx) racesense: ║   RaceSense ESP32-P4 Firmware Mark 199   ║
-I (xxx) racesense: ║   Waveshare ESP32-P4-WIFI6-LCD-4.3     ║
-I (xxx) racesense: ╚══════════════════════════════════════════╝
-I (xxx) ui_engine: Hardware driver abstraction ready: ILI9341 SPI + XPT2046 Touch
-I (xxx) racesense: [BOOT] Registering UI event listener and launching Home Dashboard on Core 1
+0x2000  build/bootloader/bootloader.bin
+0x10000 build/partition_table/partition-table.bin
+0x20000 build/racesense.bin
 ```
 
----
+Always use the generated `build/flash_args` file or `idf.py flash` when working
+with another target, since partition layouts can differ.
 
-## 🔒 Governance & Operational Policy
-* **Rule 1 (No Autonomous Changes):** All code changes and features must be approved prior to implementation.
-* **Rule 2 (No Firmware Flashing):** Automated coding assistants are prohibited from initiating serial write operations (`idf.py flash` or `esptool write_flash`).
-* **Rule 5 (Separate Concerns):** UI design iterations and core real-time telemetry processing logic are developed and verified independently.
+## Serial monitoring
+
+Attach the decoded ESP-IDF monitor from an interactive terminal:
+
+```bash
+idf.py -p /dev/cu.usbmodemXXXX -b 115200 monitor
+```
+
+Exit with `Ctrl + ]`. The helper uses 460800 baud for flashing and 115200 baud
+for monitoring by default; override them with `FLASH_BAUD` and `MONITOR_BAUD`.
+
+## Boot verification
+
+A healthy Waveshare P4 boot includes messages for:
+
+```text
+racesense: RaceSense ESP32-P4 Firmware Mark <current>
+racesense: Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3
+bsp_display: Display registered: 480x800 panel, 800x480 landscape UI
+ui_engine: Hardware driver abstraction ready: ST7701 MIPI-DSI (800x480) + GT911 Touch
+bsp: SD mounted at /sd
+bmi323: BMI323 initialized
+gps: Neo-M8N GPS ready
+racesense: Entering HOME_IDLE
+```
+
+The display driver may report that `swap_xy` is unsupported; the firmware
+already configures the panel and UI in the verified 800x480 landscape layout.
+
+For repeatable bring-up, confirm that SD storage is mounted, the BMI323 reports
+chip ID `0x43`, GPS telemetry is approximately 10 Hz, and periodic health lines
+show zero dropped sensor rows.

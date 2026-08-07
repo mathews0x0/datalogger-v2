@@ -8,8 +8,15 @@ from api.models import db, User, DeviceToken
 import api.config as config
 import json
 from api.auth_utils import get_current_user_id
-from api.track_catalog import get_user_track_stats_dir, load_json_file, resolve_track, track_file_path, load_track_json
-from api.track_catalog import build_device_track_payload
+from api.track_catalog import (
+    device_track_catalog,
+    device_track_payload,
+    get_user_track_stats_dir,
+    load_json_file,
+    resolve_track,
+    track_file_path,
+    load_track_json,
+)
 
 devices_bp = Blueprint('devices', __name__)
 
@@ -175,70 +182,46 @@ def get_device_active_track():
         device_token.last_sync = datetime.utcnow()
         db.session.commit()
         
-        response_data = {"active_track": None}
-        
         user = User.query.get(user_id)
+        payload = None
         if user and user.active_track_id:
-            resolved = resolve_track(user.active_track_id, user_id=user_id)
-            if resolved:
-                track_json_path = track_file_path(resolved, "track.json")
-                track_data = {}
-                if track_json_path.exists():
-                    try:
-                        track_data = load_track_json(resolved) or {}
-                    except Exception:
-                        track_data = {}
-
-                if resolved["track_scope"] == "global":
-                    tbl_json_path = get_user_track_stats_dir(user_id, user.active_track_id, resolved["track_name"]) / "tbl.json"
-                else:
-                    tbl_json_path = track_file_path(resolved, "tbl.json")
-
-                if tbl_json_path.exists():
-                    try:
-                        raw_tbl = load_json_file(tbl_json_path)
-                        sectors_data = raw_tbl.get('sectors', [])
-                        if isinstance(sectors_data, list):
-                            sorted_sectors = sorted(sectors_data, key=lambda x: x.get('sector_index', 0))
-                            # The device contract uses zero for an unknown
-                            # benchmark so the firmware can distinguish it
-                            # from malformed/non-numeric TBL data.
-                            sectors_list = [
-                                s.get('best_time')
-                                if isinstance(s.get('best_time'), (int, float)) and s.get('best_time') >= 0
-                                else 0.0
-                                for s in sorted_sectors
-                            ]
-                            tbl_payload = {"sectors": sectors_list}
-
-                            # The firmware contract calls this lap_time.  The
-                            # persistent TBL file historically called it
-                            # total_best_time, so normalize that field here.
-                            lap_time = raw_tbl.get('total_best_time')
-                            if not isinstance(lap_time, (int, float)):
-                                lap_time = raw_tbl.get('lap_time')
-                            if not isinstance(lap_time, (int, float)):
-                                existing_tbl = track_data.get('tbl')
-                                if isinstance(existing_tbl, dict):
-                                    lap_time = existing_tbl.get('lap_time')
-                            if not isinstance(lap_time, (int, float)):
-                                known_times = [value for value in sectors_list if value > 0]
-                                if len(known_times) == len(sectors_list) and known_times:
-                                    lap_time = sum(known_times)
-                            if isinstance(lap_time, (int, float)) and lap_time >= 0:
-                                tbl_payload['lap_time'] = float(lap_time)
-
-                            track_data['tbl'] = tbl_payload
-                    except Exception as e:
-                        print(f"[active_track] TBL extraction error: {e}")
-
-                if track_data:
-                    track_data = build_device_track_payload(track_data)
-                    response_data["active_track"] = track_data
-                    
-        return jsonify(response_data)
+            payload = device_track_payload(user_id, user.active_track_id)
+        return jsonify({"active_track": payload.get("track") if payload else None})
         
     return jsonify({"error": "Device token required"}), 400
+
+
+@devices_bp.route('/api/device/track_catalog', methods=['GET'])
+def get_device_track_catalog():
+    """Return the authenticated user's small track manifest.
+
+    Track geometry is fetched separately, so normal cloud sync only performs
+    a lightweight revision check when the device already has the catalog.
+    """
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+    if not device_token:
+        return jsonify({"error": "Device token required"}), 400
+    device_token.last_sync = datetime.utcnow()
+    db.session.commit()
+    return jsonify(device_track_catalog(user_id))
+
+
+@devices_bp.route('/api/device/track_catalog/<int:track_id>', methods=['GET'])
+def get_device_track_catalog_item(track_id):
+    """Return one complete cached-track payload for catalog reconciliation."""
+    user_id, error, device_token = _resolve_upload_user()
+    if error:
+        return jsonify({"error": error}), 401
+    if not device_token:
+        return jsonify({"error": "Device token required"}), 400
+    payload = device_track_payload(user_id, track_id)
+    if not payload:
+        return jsonify({"error": "Track not found or unavailable"}), 404
+    device_token.last_sync = datetime.utcnow()
+    db.session.commit()
+    return jsonify(payload)
 
 # --- LOCAL DEVICE ENDPOINTS ---
 from api.helpers import get_local_firmware_version, is_compatible, MIN_ESP_VERSION

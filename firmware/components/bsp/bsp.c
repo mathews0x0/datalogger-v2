@@ -10,7 +10,7 @@
  *
  * Battery algorithm ported from the legacy get_battery_state() implementation.
  * Business logic is identical; implementation uses esp_adc_cal instead of
- * MicroPython's ADC.read_uv().
+ * The native ADC calibration path.
  */
 
 #include "bsp.h"

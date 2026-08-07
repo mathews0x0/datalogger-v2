@@ -38,9 +38,13 @@ def protect_api():
             '/api/upload/complete',
             '/api/device/ping',
             '/api/device/active_track',
+            '/api/device/track_catalog',
             '/api/devices/token'
         ]
         if request.path in public_paths:
+            return
+
+        if request.path.startswith('/api/device/track_catalog/'):
             return
             
         # Also allow shared and public session data

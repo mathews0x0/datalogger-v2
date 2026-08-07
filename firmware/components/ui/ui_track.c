@@ -5,10 +5,12 @@
 
 #include "ui.h"
 #include "ui_events.h"
+#include "network.h"
 #include "track_engine.h"
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 static track_display_layout_t s_layout;
 static lv_obj_t *s_content;
@@ -155,11 +157,17 @@ static void _on_preview_clicked(lv_event_t *event)
     ui_events_on_open_track_view();
 }
 
+static void _on_change_track_clicked(lv_event_t *event)
+{
+    (void)event;
+    ui_events_on_open_track_selector();
+}
+
 void ui_track_preview_render(lv_obj_t *parent, int x, int y, int width, int height)
 {
     if (!parent || width <= 0 || height <= 0) return;
 
-    track_engine_get_display_layout(&s_layout);
+    ui_track_refresh_layout();
     lv_obj_t *panel = lv_obj_create(parent);
     lv_obj_set_size(panel, width, height);
     lv_obj_set_pos(panel, x, y);
@@ -179,6 +187,12 @@ void ui_track_preview_render(lv_obj_t *parent, int x, int y, int width, int heig
     lv_obj_clear_flag(hit, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_CHAIN);
     lv_obj_move_foreground(hit);
     lv_obj_add_event_cb(hit, _on_preview_clicked, LV_EVENT_CLICKED, NULL);
+}
+
+void ui_track_refresh_layout(void)
+{
+    memset(&s_layout, 0, sizeof(s_layout));
+    track_engine_get_display_layout(&s_layout);
 }
 
 static void _set_tab_style(lv_obj_t *button, bool active)
@@ -423,7 +437,7 @@ void ui_show_track_view(void)
 {
     ui_home_deactivate();
     ui_lock(-1);
-    track_engine_get_display_layout(&s_layout);
+    ui_track_refresh_layout();
     s_track_view_active = true;
     s_info_tab = false;
 
@@ -456,10 +470,23 @@ void ui_show_track_view(void)
                                0);
     lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
 
-    lv_obj_t *track = lv_label_create(header);
-    lv_label_set_text(track, track_engine_get_track_name());
-    lv_obj_set_style_text_color(track, lv_color_hex(UI_COLOR_PRIMARY), 0);
-    lv_obj_align(track, LV_ALIGN_RIGHT_MID, -UI_SCALE_X(14), 0);
+    lv_obj_t *change = lv_btn_create(header);
+    const int change_w = UI_RES_CLASS_WIDESCREEN ? UI_SCALE_X(122) : UI_SCALE_X(92);
+    lv_obj_set_size(change, change_w, UI_HEADER_HEIGHT - UI_SCALE_Y(10));
+    lv_obj_align(change, LV_ALIGN_RIGHT_MID, -UI_SCALE_X(8), 0);
+    lv_obj_set_style_bg_color(change, lv_color_hex(0x242430), 0);
+    lv_obj_set_style_border_color(change, lv_color_hex(UI_COLOR_PRIMARY), 0);
+    lv_obj_set_style_border_width(change, 1, 0);
+    lv_obj_set_style_radius(change, UI_BTN_RADIUS, 0);
+    lv_obj_add_event_cb(change, _on_change_track_clicked, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *change_label = lv_label_create(change);
+    lv_label_set_text(change_label, "CHANGE TRACK");
+    lv_obj_set_style_text_color(change_label, lv_color_hex(UI_COLOR_PRIMARY), 0);
+    lv_obj_set_style_text_font(change_label,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_12
+                                                       : &lv_font_montserrat_12,
+                               0);
+    lv_obj_center(change_label);
 
     lv_obj_t *tabs = lv_obj_create(scr);
     lv_obj_set_size(tabs, UI_HOR_RES, UI_RES_CLASS_WIDESCREEN ? 48 : 38);
@@ -486,6 +513,100 @@ void ui_show_track_view(void)
     lv_obj_clear_flag(s_content, LV_OBJ_FLAG_SCROLLABLE);
     _render_tab();
 
+    ui_unlock();
+}
+
+static void _on_cached_track_selected(lv_event_t *event)
+{
+    if (!event || !event->target) return;
+    int32_t track_id = (int32_t)(intptr_t)lv_event_get_user_data(event);
+    ui_events_on_select_track(track_id);
+}
+
+void ui_show_track_selector(void)
+{
+    ui_home_deactivate();
+    ui_track_view_deactivate();
+    ui_lock(-1);
+
+    lv_obj_t *scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(UI_COLOR_BG_DARK), 0);
+    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+    lv_obj_set_scroll_dir(scr, LV_DIR_VER);
+
+    lv_obj_t *header = lv_obj_create(scr);
+    lv_obj_set_size(header, UI_HOR_RES, UI_HEADER_HEIGHT);
+    _style_surface(header, UI_COLOR_SURFACE, UI_COLOR_BORDER, 0);
+    lv_obj_t *back = lv_btn_create(header);
+    lv_obj_set_size(back, UI_SCALE_X(92), UI_HEADER_HEIGHT - 8);
+    lv_obj_set_pos(back, UI_SCALE_X(8), 4);
+    lv_obj_set_style_bg_color(back, lv_color_hex(0x242430), 0);
+    lv_obj_set_style_radius(back, UI_BTN_RADIUS, 0);
+    lv_obj_add_event_cb(back, _on_back_home, LV_EVENT_CLICKED, NULL);
+    lv_obj_t *back_label = lv_label_create(back);
+    lv_label_set_text(back_label, "‹ BACK");
+    lv_obj_set_style_text_color(back_label, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_center(back_label);
+
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, "CACHED TRACKS");
+    lv_obj_set_style_text_color(title, lv_color_hex(UI_COLOR_TEXT_PRIMARY), 0);
+    lv_obj_set_style_text_font(title,
+                               UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_28
+                                                       : &lv_font_montserrat_16,
+                               0);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+
+    network_cached_track_t cached[NETWORK_TRACK_CATALOG_MAX_TRACKS] = {0};
+    int count = 0;
+    int32_t active_id = 0;
+    esp_err_t list_ret = network_list_cached_tracks(cached,
+                                                    NETWORK_TRACK_CATALOG_MAX_TRACKS,
+                                                    &count, &active_id);
+    const int margin = UI_RES_CLASS_WIDESCREEN ? 24 : 10;
+    const int gap = UI_RES_CLASS_WIDESCREEN ? 10 : 6;
+    const int button_h = UI_RES_CLASS_WIDESCREEN ? 58 : 38;
+    int y = UI_HEADER_HEIGHT + margin;
+    if (list_ret != ESP_OK || count == 0) {
+        lv_obj_t *empty = lv_label_create(scr);
+        lv_label_set_text(empty, "NO CACHED TRACKS\nRUN CLOUD SYNC TO LOAD YOUR TRACKS");
+        lv_obj_set_style_text_color(empty, lv_color_hex(UI_COLOR_TEXT_MUTED), 0);
+        lv_obj_set_style_text_align(empty, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(empty, UI_HOR_RES - 2 * margin);
+        lv_obj_set_pos(empty, margin, y + UI_SCALE_Y(50));
+    } else {
+        for (int i = 0; i < count; ++i) {
+            lv_obj_t *button = lv_btn_create(scr);
+            lv_obj_set_size(button, UI_HOR_RES - 2 * margin, button_h);
+            lv_obj_set_pos(button, margin, y);
+            bool active = cached[i].track_id == active_id;
+            lv_obj_set_style_bg_color(button,
+                                      lv_color_hex(active ? 0x173D2A : 0x242430), 0);
+            lv_obj_set_style_border_color(button,
+                                          lv_color_hex(active ? UI_COLOR_SUCCESS : UI_COLOR_BORDER), 0);
+            lv_obj_set_style_border_width(button, active ? 2 : 1, 0);
+            lv_obj_set_style_radius(button, UI_BTN_RADIUS, 0);
+            lv_obj_add_event_cb(button, _on_cached_track_selected, LV_EVENT_CLICKED,
+                                (void *)(intptr_t)cached[i].track_id);
+            char label_text[96];
+            snprintf(label_text, sizeof(label_text), "%s%s",
+                     active ? "ACTIVE  •  " : "", cached[i].track_name);
+            lv_obj_t *label = lv_label_create(button);
+            lv_label_set_text(label, label_text);
+            lv_obj_set_style_text_color(label,
+                                        lv_color_hex(active ? UI_COLOR_SUCCESS : UI_COLOR_TEXT_PRIMARY), 0);
+            lv_obj_set_style_text_font(label,
+                                       UI_RES_CLASS_WIDESCREEN ? &lv_font_montserrat_16
+                                                               : &lv_font_montserrat_14,
+                                       0);
+            lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+            lv_obj_set_width(label, UI_HOR_RES - 2 * margin - UI_SCALE_X(24));
+            lv_obj_center(label);
+            y += button_h + gap;
+        }
+    }
+
+    ui_load_screen(scr);
     ui_unlock();
 }
 

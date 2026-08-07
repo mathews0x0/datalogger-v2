@@ -2,7 +2,7 @@
  * @file bmi323.c
  * @brief BMI323 6-axis IMU driver — ESP-IDF native C implementation
  *
- * Ported from the legacy MicroPython driver.
+ * Native BMI323 sensor driver.
  * Key fix: correct gyro sensitivity (16.4 LSB/dps), eliminating the
  * ~16x scale mismatch present in the S3 field logs (May 2026).
  *

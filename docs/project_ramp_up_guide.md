@@ -62,7 +62,7 @@ Below is a detailed breakdown of every feature in the project, mapped to its imp
 | **Network Scan / Local Device Ops** | LAN device scan, reachability checks, WiFi configure proxy, and OTA endpoints still exist but are restricted to local mode with `@local_only`. | `server/ui/app.js` | `server/api/blueprints/devices.py` | N/A |
 | **Device Token** | Unique `rsk_` token for hardware auth. Dual-auth supported on uploads. | `server/ui/app.js` (generateDeviceToken)| `server/api/blueprints/devices.py` | `DeviceToken` |
 | **WiFi Config** | Web-proxy to push SSID/Password to device in AP mode (`192.168.4.1`). | `server/ui/app.js` (configureDevice) | `server/api/blueprints/devices.py` | N/A |
-| **Firmware updates** | Native ESP-IDF builds are flashed through the documented manual workflow; the former MicroPython-file OTA path is retired. | `firmware/FLASHING_GUIDE.md` | N/A | N/A |
+| **Firmware updates** | Native ESP-IDF builds are flashed and monitored through the unified firmware tool. | `firmware/FLASHING_GUIDE.md` | N/A | N/A |
 | **Status Bar** | Real-time polling of device Flash/SD usage, battery, GPS fix, and sync progress/health. | `server/ui/app.js` (pollStatus) | `server/api/blueprints/core.py` (status)| N/A |
 | **Resumable Upload** | Chunked session upload can resume from previously received chunks after sync interruption. | N/A | `server/api/blueprints/core.py` (`/api/upload/status`, `/api/upload/chunk`, `/api/upload/complete`) | `DeviceToken` |
 
@@ -210,7 +210,7 @@ Track-resolution layering as of the canonical package rollout:
 - The heartbeat screen is rider-facing: a red heart while contacting cloud, green after ACK. Technical cloud/auth details stay in serial logs.
 - Per-file archive messages are not shown to the rider during sync. Archive happens in the background while the TFT remains on the sync progress screen.
 - Firmware deployment is a native ESP-IDF build/flash operation from `firmware/`; use `idf.py set-target`, `idf.py build`, and the manual flash workflow in `firmware/FLASHING_GUIDE.md`.
-- If a partial sync omits `drivers/xpt2046.py`, the TFT display should still boot, but touch remains disabled until the driver is restored.
+- If the selected native BSP cannot initialize the touch controller, the TFT display should still boot while touch remains disabled until the hardware or target configuration is corrected.
 
 ### 7. Current IMU Processing Contract
 - The previous backend-first assumption that the device is always mounted forward and mostly flat is no longer the only intended path.

@@ -43,6 +43,51 @@ def _pick_session_name(content, learning_dir):
         counter += 1
     return candidate
 
+
+def _completion_marker_path(learning_dir, safe_name):
+    return learning_dir / '.chunks' / f'{safe_name}.complete.json'
+
+
+def _read_completion_marker(learning_dir, safe_name):
+    marker_path = _completion_marker_path(learning_dir, safe_name)
+    try:
+        with open(marker_path, 'r') as marker_file:
+            marker = json.load(marker_file)
+        if not isinstance(marker, dict):
+            return None
+        return marker
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _write_completion_marker(learning_dir, safe_name, final_name, total_size):
+    marker_path = _completion_marker_path(learning_dir, safe_name)
+    marker_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = marker_path.with_suffix(marker_path.suffix + '.tmp')
+    payload = {
+        'filename': safe_name,
+        'final_filename': final_name,
+        'total_size': int(total_size),
+    }
+    with open(temp_path, 'w') as marker_file:
+        json.dump(payload, marker_file)
+        marker_file.flush()
+        os.fsync(marker_file.fileno())
+    os.replace(temp_path, marker_path)
+
+
+def _mark_device_sync_complete(device_token):
+    if not device_token:
+        return
+    device_token.last_sync = datetime.utcnow()
+    if device_token.sync_current_file_index is not None and device_token.sync_total_files:
+        if device_token.sync_current_file_index >= device_token.sync_total_files - 1:
+            device_token.is_syncing = False
+            device_token.sync_global_current = 0
+            device_token.sync_global_total = 0
+    else:
+        device_token.is_syncing = False
+
 @core_bp.route('/')
 @core_bp.route('/shared/<token>')
 @core_bp.route('/community')
@@ -365,7 +410,26 @@ def upload_status():
         return jsonify({"error": "filename required"}), 400
 
     safe_name = os.path.basename(filename)
+    if not safe_name.lower().endswith('.csv'):
+        safe_name += '.csv'
     learning_dir = config.get_user_learning_dir(user_id)
+    completion_marker = _read_completion_marker(learning_dir, safe_name)
+    if completion_marker:
+        final_name = os.path.basename(completion_marker.get('final_filename', ''))
+        final_path = learning_dir / final_name if final_name else None
+        try:
+            expected_size = int(completion_marker.get('total_size', 0))
+        except (TypeError, ValueError):
+            expected_size = 0
+        if final_path and final_path.exists() and expected_size >= 0 and \
+                final_path.stat().st_size == expected_size:
+            return jsonify({
+                "filename": safe_name,
+                "final_filename": final_name,
+                "received_bytes": expected_size,
+                "completed": True,
+            })
+
     chunk_dir = learning_dir / '.chunks' / safe_name
 
     # Check for batch-mode partial file (byte-offset resume)
@@ -432,15 +496,36 @@ def upload_complete():
             return jsonify({"error": "filename and total_chunks (or total_size) required"}), 400
 
         safe_name = os.path.basename(filename)
+        if not safe_name.lower().endswith('.csv'):
+            safe_name += '.csv'
+
         learning_dir = config.get_user_learning_dir(user_id)
         partial_path = learning_dir / '.chunks' / (safe_name + '.partial')
         tracker_path = learning_dir / '.chunks' / (safe_name + '.next')
         chunk_dir = learning_dir / '.chunks' / safe_name
 
-        if not safe_name.lower().endswith('.csv'):
-            safe_name += '.csv'
-
         save_path = learning_dir / safe_name
+
+        # A lost response can cause the device to retry /complete after the
+        # server has already renamed the file.  Return the original success
+        # instead of assembling an empty duplicate.
+        completion_marker = _read_completion_marker(learning_dir, safe_name)
+        if completion_marker:
+            final_name = os.path.basename(completion_marker.get('final_filename', ''))
+            final_path = learning_dir / final_name if final_name else None
+            try:
+                expected_size = int(completion_marker.get('total_size', 0))
+            except (TypeError, ValueError):
+                expected_size = 0
+            if total_size > 0 and expected_size != total_size:
+                return jsonify({"error": "Completion size does not match prior upload"}), 409
+            if final_path and final_path.exists() and final_path.stat().st_size == expected_size:
+                if device_token:
+                    _mark_device_sync_complete(device_token)
+                    db.session.commit()
+                return jsonify({"success": True, "filename": final_name,
+                                "idempotent": True})
+            return jsonify({"error": "Completion marker points to missing or invalid file"}), 409
 
         # --- Check for fast-path: .partial file has all chunks ---
         partial_complete = False
@@ -513,6 +598,21 @@ def upload_complete():
 
             print(f"[Upload] Assembled {safe_name} from {total_chunks} chunks (hybrid mode) for user {user_id}")
 
+        # Never report success for a partial or truncated final file.
+        if not save_path.exists():
+            return jsonify({"error": "Final upload file was not created"}), 500
+        actual_size = save_path.stat().st_size
+        if total_size > 0 and actual_size != total_size:
+            try:
+                save_path.unlink()
+            except OSError:
+                pass
+            return jsonify({
+                "error": "Final file size does not match upload",
+                "expected": total_size,
+                "actual": actual_size,
+            }), 409
+
         # Rename to session timestamp
         final_name = safe_name
         try:
@@ -527,18 +627,15 @@ def upload_complete():
         except Exception as rename_err:
             print(f"[Upload] Rename skipped: {rename_err}")
 
+        try:
+            _write_completion_marker(learning_dir, safe_name, final_name, actual_size)
+        except (OSError, ValueError) as marker_err:
+            print(f"[Upload] Completion marker failed: {marker_err}")
+            return jsonify({"error": "Could not persist upload completion state"}), 500
+
         # Update last_sync on device token
         if device_token:
-            device_token.last_sync = datetime.utcnow()
-
-            # Reset global progress if this is the last file (or if we lost track)
-            if device_token.sync_current_file_index is not None and device_token.sync_total_files:
-                if device_token.sync_current_file_index >= device_token.sync_total_files - 1:
-                    device_token.is_syncing = False
-                    device_token.sync_global_current = 0
-                    device_token.sync_global_total = 0
-            else:
-                 device_token.is_syncing = False
+            _mark_device_sync_complete(device_token)
 
             # Auto-queue analysis if enabled (treating None as True for migrated tokens)
             auto_enabled = getattr(device_token, 'auto_analyse', True)

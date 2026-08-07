@@ -104,6 +104,12 @@ check_port_available() {
     fi
 }
 
+check_monitor_tty() {
+    if [ ! -t 0 ] || [ ! -t 1 ]; then
+        die "Serial monitor requires an interactive terminal. Run from a TTY or use --no-monitor."
+    fi
+}
+
 target_from_sdkconfig() {
     if [ -f "$SCRIPT_DIR/sdkconfig" ]; then
         sed -n 's/^CONFIG_IDF_TARGET="\([^"]*\)".*$/\1/p' "$SCRIPT_DIR/sdkconfig" | head -n 1
@@ -151,7 +157,7 @@ while [ "$#" -gt 0 ]; do
         --flash-only)
             DO_BUILD=0
             DO_FLASH=1
-            DO_MONITOR=1
+            DO_MONITOR=0
             shift
             ;;
         --monitor-only)
@@ -215,6 +221,7 @@ if [ "$DO_FLASH" -eq 0 ]; then
     if [ "$DO_MONITOR" -eq 1 ]; then
         [ -n "$PORT" ] || detect_port
         check_port_available
+        check_monitor_tty
         exec idf.py -p "$PORT" -b "$MONITOR_BAUD" monitor
     fi
     echo "Build complete."
@@ -224,12 +231,18 @@ fi
 [ -f "$SCRIPT_DIR/build/racesense.bin" ] || die "Missing build/racesense.bin. Run without --no-build first."
 [ -n "$PORT" ] || detect_port
 check_port_available
+
+if [ "$DO_MONITOR" -eq 1 ]; then
+    check_monitor_tty
+fi
+
 confirm_flash
 
 echo "[3/3] Flashing $PORT"
 if [ "$DO_MONITOR" -eq 1 ]; then
-    exec idf.py -p "$PORT" -b "$MONITOR_BAUD" flash monitor
+    idf.py -p "$PORT" -b "$FLASH_BAUD" flash
+    exec idf.py -p "$PORT" -b "$MONITOR_BAUD" monitor
 else
-    idf.py -p "$PORT" flash
+    idf.py -p "$PORT" -b "$FLASH_BAUD" flash
     echo "Flash complete."
 fi

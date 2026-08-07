@@ -13,5 +13,5 @@ idf_component_register(
          "ui_storage_fault.c"
     INCLUDE_DIRS "include"
     EMBED_FILES "assets/racesense_splash_rgb565.bin"
-    REQUIRES esp_timer driver nvs_flash storage network sensors track_engine lvgl esp_lvgl_port
+    REQUIRES esp_timer driver nvs_flash esp_app_format storage network sensors track_engine lvgl esp_lvgl_port
 )

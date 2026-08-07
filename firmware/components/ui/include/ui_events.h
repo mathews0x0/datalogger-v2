@@ -29,6 +29,7 @@ typedef enum {
     UI_EVENT_BACK_CLICKED,            /**< User clicked 'BACK' / 'CANCEL' to return */
     UI_EVENT_WIFI_SETUP_CLICKED,      /**< User triggered Captive Portal from Setup */
     UI_EVENT_TRACK_SELECT_CLICKED,    /**< User opened track selection menu         */
+    UI_EVENT_TRACK_SELECTED,          /**< User selected a cached offline track    */
     UI_EVENT_TRACK_VIEW_CLICKED,      /**< User opened active-track viewer         */
     UI_EVENT_IMU_CALIB_CLICKED,       /**< User started IMU Calibration Wizard      */
     UI_EVENT_CALIB_NEXT_STAGE_CLICKED,/**< User advanced calibration stage in wizard*/
@@ -94,6 +95,12 @@ void ui_events_on_navigate_home(void);
 
 /** @brief Open the active-track viewer from the Home preview. */
 void ui_events_on_open_track_view(void);
+
+/** Open the cached offline track selector. */
+void ui_events_on_open_track_selector(void);
+
+/** Select a cached track by server-assigned track ID. */
+void ui_events_on_select_track(int32_t track_id);
 
 /** @brief Helper: Captive portal provisioning started */
 void ui_events_on_start_captive_portal(void);

@@ -251,6 +251,50 @@ def test_device_active_track_builds_layout_from_fallback_geometry(client, app):
     assert len(active_track['device_layout']['sector_markers']) == 3
 
 
+def test_device_track_catalog_returns_manifest_and_track_payload(client, app):
+    with app.app_context():
+        user = User.query.filter_by(email='track@racesense.in').first()
+        user.active_track_id = 101
+        device_token = DeviceToken(token='rsk_catalogtoken', user_id=user.id, device_name='Catalog Device')
+        db.session.add(device_token)
+        db.session.commit()
+
+        track_dir = config.get_user_tracks_dir(user.id) / 'silverstone_101'
+        with open(track_dir / 'track.json', 'w') as f:
+            json.dump({
+                'track_id': 101,
+                'track_name': 'Silverstone',
+                'name': 'Silverstone',
+                'start_line': {'lat': 52.0, 'lon': -1.0, 'radius_m': 20},
+                'centerline': [
+                    {'lat': 52.0, 'lon': -1.0},
+                    {'lat': 52.0002, 'lon': -0.9996},
+                    {'lat': 51.9998, 'lon': -0.9992},
+                ],
+                'sectors': [
+                    {'id': 'S1', 'end_lat': 52.0002, 'end_lon': -0.9996, 'radius_m': 15},
+                ],
+            }, f)
+
+    manifest = client.get(
+        '/api/device/track_catalog',
+        headers={'Authorization': 'Bearer rsk_catalogtoken'},
+    )
+    assert manifest.status_code == 200
+    assert manifest.json['default_track_id'] == 101
+    assert manifest.json['tracks'][0]['track_id'] == 101
+    assert manifest.json['revision']
+
+    item = client.get(
+        '/api/device/track_catalog/101',
+        headers={'Authorization': 'Bearer rsk_catalogtoken'},
+    )
+    assert item.status_code == 200
+    assert item.json['track']['track_id'] == 101
+    assert item.json['track']['sectors'][0]['id'] == 'S1'
+    assert item.json['fingerprint'] == manifest.json['tracks'][0]['fingerprint']
+
+
 def test_centerline_from_package_uses_original_sample_order():
     centerline = _centerline_from_package({
         'telemetry': {

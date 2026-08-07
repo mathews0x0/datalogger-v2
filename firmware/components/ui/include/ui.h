@@ -92,8 +92,14 @@ void ui_home_update(bool sd_ok, bool imu_ok, bool gps_ok, int sats, int bat_pct,
 /** Render the compact active-track preview inside a Home card. */
 void ui_track_preview_render(lv_obj_t *parent, int x, int y, int width, int height);
 
+/** Refresh the cached map/TBL view state from the currently loaded engine track. */
+void ui_track_refresh_layout(void);
+
 /** Screen 15: Full-screen active-track map and TBL information viewer. */
 void ui_show_track_view(void);
+
+/** Show the locally cached track list for offline track selection. */
+void ui_show_track_selector(void);
 
 /** Update the rider marker while the full-screen map is visible. */
 void ui_track_update_position(double lat, double lon, bool valid);

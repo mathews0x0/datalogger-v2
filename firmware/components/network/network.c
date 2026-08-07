@@ -63,6 +63,12 @@
 
 static const char *TAG = "network";
 
+#define TRACK_CATALOG_PATH       "/data/metadata/track_catalog.json"
+#define TRACK_CATALOG_DIR        "/data/metadata/tracks"
+#define TRACK_STATE_PATH         "/data/metadata/track_state.json"
+#define TRACK_MANIFEST_CAPACITY  (16 * 1024)
+#define TRACK_PAYLOAD_CAPACITY   (64 * 1024)
+
 /* ──────────────────────────────────────────────────────────────────────────
  * Event group bits
  * ────────────────────────────────────────────────────────────────────────*/
@@ -808,17 +814,8 @@ esp_err_t network_upload_file(const char *filepath,
 
         if (ret == ESP_OK && status == 200 && _response_success(&ctx)) {
             ESP_LOGI(TAG, "Upload finalized: %s (%d batches, %zu bytes)", fname, batch_count, total_size);
-            if (cb) {
-                upload_progress_t prog = {
-                    .event = UPLOAD_EVT_DONE, .filename = fname,
-                    .file_index = file_index, .total_files = total_files,
-                    .sent_bytes = total_size, .total_bytes = total_size,
-                    .global_sent = global_offset + total_size, .global_total = global_total,
-                    .batch_count = batch_count, .total_batches = total_batches,
-                    .detail = "Done",
-                };
-                cb(&prog, cb_ctx);
-            }
+            /* The per-file DONE callback is emitted only after the caller
+             * archives the local source successfully. */
             return ESP_OK;
         }
         ESP_LOGW(TAG, "Finalize attempt %d failed (status %d)", attempt + 1, status);
@@ -874,15 +871,11 @@ bool network_sync_all_with_heartbeat(upload_progress_cb_t cb, void *cb_ctx,
         heartbeat_cb(NETWORK_HEARTBEAT_ACKNOWLEDGED, heartbeat_ctx);
     }
 
-    ESP_LOGI(TAG, "Sync phase: active-track fetch");
-    esp_err_t track_ret = network_fetch_active_track(cfg.token, cfg.api_url);
-    if (track_ret == ESP_OK) {
-        ESP_LOGI(TAG, "Active track metadata refreshed");
-    } else if (track_ret == ESP_ERR_NOT_FOUND) {
-        ESP_LOGI(TAG, "No active track configured");
-    } else {
+    ESP_LOGI(TAG, "Sync phase: checking offline track catalog");
+    esp_err_t track_ret = network_sync_track_catalog(cfg.token, cfg.api_url);
+    if (track_ret != ESP_OK) {
         /* Track refresh must not strand already-recorded sessions. */
-        ESP_LOGW(TAG, "Active track refresh failed: %s", esp_err_to_name(track_ret));
+        ESP_LOGW(TAG, "Track catalog reconciliation failed: %s", esp_err_to_name(track_ret));
     }
 
     /* Scan session directory for pending CSVs */
@@ -891,14 +884,17 @@ bool network_sync_all_with_heartbeat(upload_progress_cb_t cb, void *cb_ctx,
     if (!d) { dir = "/data/learning"; d = opendir(dir); }
     if (!d) return true; /* Nothing to sync */
 
-    /* Build list of valid session files */
+    /* Build a dynamically sized list so sync is not silently capped at 64
+     * files.  The old fixed array caused the UI to report completion while
+     * later pending files were never considered. */
     typedef struct { char path[96]; size_t size; } entry_t;
-    entry_t entries[64];
-    int     entry_count   = 0;
-    size_t  global_total  = 0;
+    entry_t *entries      = NULL;
+    size_t   entry_count  = 0;
+    size_t   entry_cap    = 0;
+    size_t   global_total = 0;
 
     struct dirent *de;
-    while ((de = readdir(d)) != NULL && entry_count < 64) {
+    while ((de = readdir(d)) != NULL) {
         if (strncmp(de->d_name, "sess_", 5) != 0) continue;
         if (!strstr(de->d_name, ".csv"))          continue;
 
@@ -912,26 +908,40 @@ bool network_sync_all_with_heartbeat(upload_progress_cb_t cb, void *cb_ctx,
         struct stat st;
         if (stat(path, &st) != 0 || st.st_size == 0) continue;
 
-        strncpy(entries[entry_count].path, path, sizeof(entries[0].path) - 1);
+        if (entry_count == entry_cap) {
+            size_t new_cap = entry_cap == 0 ? 16 : entry_cap * 2;
+            entry_t *grown = realloc(entries, new_cap * sizeof(*entries));
+            if (!grown) {
+                ESP_LOGE(TAG, "Unable to allocate sync list for %zu files", entry_count + 1);
+                free(entries);
+                closedir(d);
+                return false;
+            }
+            entries = grown;
+            entry_cap = new_cap;
+        }
+
+        strncpy(entries[entry_count].path, path, sizeof(entries[entry_count].path) - 1);
+        entries[entry_count].path[sizeof(entries[entry_count].path) - 1] = '\0';
         entries[entry_count].size = (size_t)st.st_size;
         global_total += entries[entry_count].size;
         entry_count++;
     }
     closedir(d);
 
-    ESP_LOGI(TAG, "Sync: %d files / %.2f MB total", entry_count,
+    ESP_LOGI(TAG, "Sync: %zu files / %.2f MB total", entry_count,
              (float)global_total / (1024.0f * 1024.0f));
 
     int      success_count = 0;
     size_t   global_offset = 0;
 
-    for (int i = 0; i < entry_count; i++) {
+    for (size_t i = 0; i < entry_count; i++) {
         bool ok = false;
         for (int attempt = 0; attempt < NETWORK_MAX_RETRIES; attempt++) {
             esp_err_t ret = network_upload_file(
                 entries[i].path, cfg.token, cfg.api_url,
                 cb, cb_ctx,
-                i, entry_count,
+                (int)i, (int)entry_count,
                 global_offset, global_total);
             if (ret == ESP_OK) { ok = true; break; }
             ESP_LOGW(TAG, "Retry %d/%d for %s", attempt + 1, NETWORK_MAX_RETRIES,
@@ -940,14 +950,51 @@ bool network_sync_all_with_heartbeat(upload_progress_cb_t cb, void *cb_ctx,
         }
 
         if (ok) {
-            storage_archive_session(entries[i].path);
-            success_count++;
+            esp_err_t archive_ret = ESP_FAIL;
+            for (int attempt = 0; attempt < NETWORK_MAX_RETRIES; attempt++) {
+                archive_ret = storage_archive_session(entries[i].path);
+                if (archive_ret == ESP_OK) break;
+                ESP_LOGW(TAG, "Archive retry %d/%d for %s: %s",
+                         attempt + 1, NETWORK_MAX_RETRIES,
+                         entries[i].path, esp_err_to_name(archive_ret));
+                vTaskDelay(pdMS_TO_TICKS(NETWORK_RETRY_DELAY_MS));
+            }
+
+            if (archive_ret == ESP_OK) {
+                success_count++;
+                if (cb) {
+                    const char *fname = strrchr(entries[i].path, '/');
+                    upload_progress_t prog = {
+                        .event = UPLOAD_EVT_DONE,
+                        .filename = fname ? fname + 1 : entries[i].path,
+                        .file_index = (int)i,
+                        .total_files = (int)entry_count,
+                        .sent_bytes = entries[i].size,
+                        .total_bytes = entries[i].size,
+                        .global_sent = global_offset + entries[i].size,
+                        .global_total = global_total,
+                        .detail = "Uploaded and archived",
+                    };
+                    cb(&prog, cb_ctx);
+                }
+            } else if (cb) {
+                const char *fname = strrchr(entries[i].path, '/');
+                upload_progress_t prog = {
+                    .event = UPLOAD_EVT_FAILED,
+                    .filename = fname ? fname + 1 : entries[i].path,
+                    .file_index = (int)i,
+                    .total_files = (int)entry_count,
+                    .total_bytes = entries[i].size,
+                    .detail = "Server accepted file but local archive failed",
+                };
+                cb(&prog, cb_ctx);
+            }
         } else if (cb) {
             const char *fname = strrchr(entries[i].path, '/');
             upload_progress_t prog = {
                 .event = UPLOAD_EVT_FAILED,
                 .filename = fname ? fname + 1 : entries[i].path,
-                .file_index = i, .total_files = entry_count,
+                .file_index = (int)i, .total_files = (int)entry_count,
                 .total_bytes = entries[i].size, .detail = "Upload failed",
             };
             cb(&prog, cb_ctx);
@@ -955,13 +1002,17 @@ bool network_sync_all_with_heartbeat(upload_progress_cb_t cb, void *cb_ctx,
         global_offset += entries[i].size;
     }
 
+    free(entries);
+
     if (cb) {
         upload_progress_t prog = { .event = UPLOAD_EVT_ALL_DONE,
-            .total_files = entry_count, .detail = "Sync complete" };
+            .total_files = (int)entry_count,
+            .detail = success_count == (int)entry_count
+                          ? "Sync complete" : "Sync incomplete" };
         cb(&prog, cb_ctx);
     }
 
-    ESP_LOGI(TAG, "Sync complete: %d/%d files", success_count, entry_count);
+    ESP_LOGI(TAG, "Sync complete: %d/%zu files", success_count, entry_count);
     return success_count == entry_count;
 }
 
@@ -988,8 +1039,8 @@ bool network_sync_probe(void)
         return false;
     }
 
-    ESP_LOGI(TAG, "Probe phase: active-track fetch");
-    esp_err_t track_ret = network_fetch_active_track(cfg.token, cfg.api_url);
+    ESP_LOGI(TAG, "Probe phase: track catalog check");
+    esp_err_t track_ret = network_sync_track_catalog(cfg.token, cfg.api_url);
     if (track_ret != ESP_OK && track_ret != ESP_ERR_NOT_FOUND) {
         ESP_LOGE(TAG, "Probe active-track fetch failed: %s", esp_err_to_name(track_ret));
         network_wifi_disconnect();
@@ -1461,5 +1512,487 @@ esp_err_t network_fetch_active_track(const char *token, const char *api_url)
 
     ESP_LOGI(TAG, "Track JSON saved atomically (%zu bytes)", payload_len);
     free(track_payload);
+    return ESP_OK;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Offline track catalog
+ * ────────────────────────────────────────────────────────────────────────*/
+
+static esp_err_t _http_get_json(const char *url, const char *token,
+                                size_t capacity, char **out_body, size_t *out_len)
+{
+    if (!url || !token || !out_body || !out_len) return ESP_ERR_INVALID_ARG;
+    *out_body = NULL;
+    *out_len = 0;
+
+    char *body = calloc(1, capacity);
+    if (!body) return ESP_ERR_NO_MEM;
+    http_ctx_t ctx = {
+        .external_body = body,
+        .external_capacity = capacity,
+    };
+    esp_http_client_config_t hcfg = {
+        .url = url,
+        .method = HTTP_METHOD_GET,
+        .timeout_ms = 15000,
+        .event_handler = _http_event_handler,
+        .user_data = &ctx,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&hcfg);
+    if (!client) {
+        free(body);
+        return ESP_ERR_NO_MEM;
+    }
+    char auth_hdr[160];
+    snprintf(auth_hdr, sizeof(auth_hdr), "Bearer %s", token);
+    esp_http_client_set_header(client, "Authorization", auth_hdr);
+    esp_http_client_set_header(client, "Cache-Control", "no-cache, no-store");
+    esp_http_client_set_header(client, "Pragma", "no-cache");
+    esp_err_t ret = esp_http_client_perform(client);
+    int status = esp_http_client_get_status_code(client);
+    esp_http_client_cleanup(client);
+    if (ret != ESP_OK || status != 200 || ctx.truncated || ctx.body_len == 0) {
+        ESP_LOGW(TAG, "Track catalog request failed: %s / status %d",
+                 esp_err_to_name(ret), status);
+        free(body);
+        return ret != ESP_OK ? ret : ESP_FAIL;
+    }
+    *out_body = body;
+    *out_len = ctx.body_len;
+    return ESP_OK;
+}
+
+static bool _copy_temp_over_target(const char *temp, const char *target)
+{
+    FILE *in = fopen(temp, "r");
+    if (!in) return false;
+    FILE *out = fopen(target, "w");
+    if (!out) {
+        fclose(in);
+        return false;
+    }
+    char buffer[4096];
+    size_t n;
+    bool ok = true;
+    while ((n = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+        if (fwrite(buffer, 1, n, out) != n) {
+            ok = false;
+            break;
+        }
+    }
+    if (ferror(in) || fflush(out) != 0) ok = false;
+    fclose(in);
+    if (fclose(out) != 0) ok = false;
+    if (ok) unlink(temp);
+    return ok;
+}
+
+/* FATFS/VFS on the device returns EEXIST when rename() targets an existing
+ * file, unlike POSIX rename().  Remove the old destination and retry.  Some
+ * card/VFS combinations still reject that second rename, so fall back to
+ * copying the fully-written temp file over the destination. */
+static bool _rename_replace(const char *temp, const char *target)
+{
+    if (rename(temp, target) == 0) return true;
+    if (errno != EEXIST) return false;
+    if (unlink(target) == 0 || errno == ENOENT) {
+        if (rename(temp, target) == 0) return true;
+    }
+    ESP_LOGW(TAG, "FAT rename replacement fallback: %s -> %s", temp, target);
+    return _copy_temp_over_target(temp, target);
+}
+
+static esp_err_t _atomic_write_text(const char *path, const char *text, size_t len)
+{
+    if (!path || !text) return ESP_ERR_INVALID_ARG;
+    char temp[192];
+    snprintf(temp, sizeof(temp), "%s.tmp", path);
+    FILE *f = fopen(temp, "w");
+    if (!f) {
+        ESP_LOGW(TAG, "Metadata write open failed: %s errno=%d", temp, errno);
+        return ESP_FAIL;
+    }
+    bool ok = fwrite(text, 1, len, f) == len && fflush(f) == 0;
+    int fd = fileno(f);
+    /* FATFS/VFS builds used by some board images report fsync as unsupported
+     * even after fflush has committed the file.  Treat that as a durability
+     * warning, not as a failed catalog update; rename is still atomic. */
+    if (ok && fd >= 0 && fsync(fd) != 0) {
+        ESP_LOGW(TAG, "Metadata fsync unavailable: %s errno=%d", temp, errno);
+    }
+    if (fclose(f) != 0) ok = false;
+    if (!ok || !_rename_replace(temp, path)) {
+        ESP_LOGW(TAG, "Metadata write failed: %s -> %s errno=%d", temp, path, errno);
+        unlink(temp);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static esp_err_t _copy_file_atomic(const char *source, const char *target)
+{
+    FILE *in = fopen(source, "r");
+    if (!in) {
+        ESP_LOGW(TAG, "Metadata copy source open failed: %s errno=%d", source, errno);
+        return ESP_ERR_NOT_FOUND;
+    }
+    char temp[192];
+    snprintf(temp, sizeof(temp), "%s.tmp", target);
+    FILE *out = fopen(temp, "w");
+    if (!out) {
+        fclose(in);
+        ESP_LOGW(TAG, "Metadata copy target open failed: %s errno=%d", temp, errno);
+        return ESP_FAIL;
+    }
+    char buffer[4096];
+    size_t n;
+    bool ok = true;
+    while ((n = fread(buffer, 1, sizeof(buffer), in)) > 0) {
+        if (fwrite(buffer, 1, n, out) != n) {
+            ok = false;
+            break;
+        }
+    }
+    if (ferror(in)) ok = false;
+    if (fflush(out) != 0) ok = false;
+    int fd = fileno(out);
+    if (ok && fd >= 0 && fsync(fd) != 0) {
+        ESP_LOGW(TAG, "Metadata copy fsync unavailable: %s errno=%d", temp, errno);
+    }
+    fclose(in);
+    if (fclose(out) != 0) ok = false;
+    if (!ok || !_rename_replace(temp, target)) {
+        ESP_LOGW(TAG, "Metadata copy failed: %s -> %s errno=%d", source, target, errno);
+        unlink(temp);
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
+static void _track_cache_path(int32_t track_id, char *path, size_t path_len)
+{
+    snprintf(path, path_len, TRACK_CATALOG_DIR "/%ld.json", (long)track_id);
+}
+
+static cJSON *_catalog_track_entry(cJSON *tracks, int32_t track_id)
+{
+    if (!cJSON_IsArray(tracks)) return NULL;
+    cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, tracks) {
+        cJSON *id = cJSON_GetObjectItemCaseSensitive(entry, "track_id");
+        if (cJSON_IsNumber(id) && (int32_t)id->valuedouble == track_id) return entry;
+    }
+    return NULL;
+}
+
+static bool _catalog_cache_complete(cJSON *tracks)
+{
+    if (!cJSON_IsArray(tracks)) return false;
+    cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, tracks) {
+        cJSON *id = cJSON_GetObjectItemCaseSensitive(entry, "track_id");
+        if (!cJSON_IsNumber(id)) return false;
+        char path[96];
+        _track_cache_path((int32_t)id->valuedouble, path, sizeof(path));
+        if (access(path, F_OK) != 0) return false;
+    }
+    return true;
+}
+
+static int32_t _catalog_default_id(cJSON *root)
+{
+    cJSON *value = cJSON_GetObjectItemCaseSensitive(root, "default_track_id");
+    return cJSON_IsNumber(value) ? (int32_t)value->valuedouble : 0;
+}
+
+static esp_err_t _save_catalog_track(int32_t track_id, const char *body, size_t body_len)
+{
+    cJSON *root = cJSON_ParseWithLength(body, body_len);
+    if (!root) return ESP_FAIL;
+    cJSON *track = cJSON_GetObjectItemCaseSensitive(root, "track");
+    cJSON *start = cJSON_IsObject(track)
+                 ? cJSON_GetObjectItemCaseSensitive(track, "start_line") : NULL;
+    if (cJSON_IsObject(start) && !cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(start, "lat"))) {
+        cJSON *center = cJSON_GetObjectItemCaseSensitive(start, "center");
+        cJSON *center_lat = cJSON_IsObject(center)
+                          ? cJSON_GetObjectItemCaseSensitive(center, "lat") : NULL;
+        cJSON *center_lon = cJSON_IsObject(center)
+                          ? cJSON_GetObjectItemCaseSensitive(center, "lon") : NULL;
+        if (cJSON_IsNumber(center_lat) && cJSON_IsNumber(center_lon)) {
+            cJSON_AddItemToObject(start, "lat", cJSON_Duplicate(center_lat, true));
+            cJSON_AddItemToObject(start, "lon", cJSON_Duplicate(center_lon, true));
+        }
+    }
+    cJSON *sectors = cJSON_IsObject(track)
+                   ? cJSON_GetObjectItemCaseSensitive(track, "sectors") : NULL;
+    cJSON *name = cJSON_IsObject(track)
+                ? cJSON_GetObjectItemCaseSensitive(track, "name") : NULL;
+    if (!cJSON_IsObject(track) || !cJSON_IsObject(start) ||
+        !cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(start, "lat")) ||
+        !cJSON_IsNumber(cJSON_GetObjectItemCaseSensitive(start, "lon")) ||
+        !cJSON_IsString(name) || !name->valuestring || !name->valuestring[0] ||
+        !cJSON_IsArray(sectors) || cJSON_GetArraySize(sectors) > 16) {
+        ESP_LOGW(TAG, "Track payload rejected: id=%ld bytes=%zu start=%s name=%s sectors=%s count=%d",
+                 (long)track_id, body_len,
+                 cJSON_IsObject(start) ? "object" : "missing",
+                 cJSON_IsString(name) && name->valuestring ? name->valuestring : "missing",
+                 cJSON_IsArray(sectors) ? "array" : "missing",
+                 cJSON_IsArray(sectors) ? cJSON_GetArraySize(sectors) : -1);
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_ARG;
+    }
+    char *compact = cJSON_PrintUnformatted(track);
+    cJSON_Delete(root);
+    if (!compact) return ESP_ERR_NO_MEM;
+    char path[96];
+    _track_cache_path(track_id, path, sizeof(path));
+    esp_err_t ret = _atomic_write_text(path, compact, strlen(compact));
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Track payload cache write failed: id=%ld path=%s ret=%s",
+                 (long)track_id, path, esp_err_to_name(ret));
+    }
+    free(compact);
+    return ret;
+}
+
+static esp_err_t _load_catalog_root(cJSON **out_root)
+{
+    if (!out_root) return ESP_ERR_INVALID_ARG;
+    *out_root = NULL;
+    FILE *f = fopen(TRACK_CATALOG_PATH, "r");
+    if (!f) return ESP_ERR_NOT_FOUND;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+    if (size <= 0 || size > TRACK_MANIFEST_CAPACITY) {
+        fclose(f);
+        return ESP_FAIL;
+    }
+    char *buf = malloc((size_t)size + 1);
+    if (!buf) {
+        fclose(f);
+        return ESP_ERR_NO_MEM;
+    }
+    size_t read = fread(buf, 1, (size_t)size, f);
+    fclose(f);
+    buf[read] = '\0';
+    *out_root = cJSON_Parse(buf);
+    free(buf);
+    return *out_root ? ESP_OK : ESP_FAIL;
+}
+
+esp_err_t network_sync_track_catalog(const char *token, const char *api_url)
+{
+    network_device_config_t cfg = {0};
+    if (!token || !api_url) {
+        if (network_load_device_config(&cfg) != ESP_OK) return ESP_ERR_NOT_FOUND;
+        token = cfg.token;
+        api_url = cfg.api_url;
+    }
+
+    char url[256];
+    if (network_contract_build_url(api_url, "/api/device/track_catalog",
+                                   url, sizeof(url)) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    char *manifest_body = NULL;
+    size_t manifest_len = 0;
+    esp_err_t ret = _http_get_json(url, token, TRACK_MANIFEST_CAPACITY,
+                                   &manifest_body, &manifest_len);
+    if (ret != ESP_OK) return ret;
+
+    cJSON *manifest = cJSON_ParseWithLength(manifest_body, manifest_len);
+    if (!manifest) {
+        free(manifest_body);
+        return ESP_FAIL;
+    }
+    cJSON *tracks = cJSON_GetObjectItemCaseSensitive(manifest, "tracks");
+    cJSON *revision = cJSON_GetObjectItemCaseSensitive(manifest, "revision");
+    if (!cJSON_IsArray(tracks) || cJSON_GetArraySize(tracks) > NETWORK_TRACK_CATALOG_MAX_TRACKS ||
+        !cJSON_IsString(revision) || !revision->valuestring) {
+        cJSON_Delete(manifest);
+        free(manifest_body);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    cJSON *old = NULL;
+    _load_catalog_root(&old);
+    cJSON *old_revision = old ? cJSON_GetObjectItemCaseSensitive(old, "revision") : NULL;
+    int32_t default_id = _catalog_default_id(manifest);
+    int32_t old_default_id = old ? _catalog_default_id(old) : 0;
+    bool catalog_same = old && cJSON_IsString(old_revision) &&
+                        strcmp(old_revision->valuestring, revision->valuestring) == 0;
+    bool needs_active_repair = access("/data/metadata/track.json", F_OK) != 0;
+    if (catalog_same && !needs_active_repair && _catalog_cache_complete(tracks)) {
+        ESP_LOGI(TAG, "Track catalog current (%s); all %d payloads cached",
+                 revision->valuestring, cJSON_GetArraySize(tracks));
+        cJSON_Delete(old);
+        cJSON_Delete(manifest);
+        free(manifest_body);
+        return ESP_OK;
+    }
+    if (catalog_same) {
+        ESP_LOGI(TAG, "Track catalog manifest current but payload cache incomplete; repairing");
+    }
+
+    mkdir("/data", 0755);
+    mkdir("/data/metadata", 0755);
+    mkdir(TRACK_CATALOG_DIR, 0755);
+    cJSON *old_tracks = old ? cJSON_GetObjectItemCaseSensitive(old, "tracks") : NULL;
+    cJSON *entry = NULL;
+    cJSON_ArrayForEach(entry, tracks) {
+        cJSON *id_json = cJSON_GetObjectItemCaseSensitive(entry, "track_id");
+        cJSON *fingerprint = cJSON_GetObjectItemCaseSensitive(entry, "fingerprint");
+        if (!cJSON_IsNumber(id_json) || !cJSON_IsString(fingerprint)) {
+            ret = ESP_ERR_INVALID_ARG;
+            break;
+        }
+        int32_t track_id = (int32_t)id_json->valuedouble;
+        char track_path[96];
+        _track_cache_path(track_id, track_path, sizeof(track_path));
+        cJSON *old_entry = _catalog_track_entry(old_tracks, track_id);
+        cJSON *old_fp = old_entry
+                      ? cJSON_GetObjectItemCaseSensitive(old_entry, "fingerprint") : NULL;
+        bool current = old_fp && cJSON_IsString(old_fp) &&
+                       strcmp(old_fp->valuestring, fingerprint->valuestring) == 0 &&
+                       access(track_path, F_OK) == 0;
+        if (current) continue;
+
+        char item_path[256];
+        snprintf(item_path, sizeof(item_path), "/api/device/track_catalog/%ld", (long)track_id);
+        if (network_contract_build_url(api_url, item_path, url, sizeof(url)) != ESP_OK) {
+            ret = ESP_ERR_INVALID_ARG;
+            break;
+        }
+        char *track_body = NULL;
+        size_t track_len = 0;
+        ret = _http_get_json(url, token, TRACK_PAYLOAD_CAPACITY, &track_body, &track_len);
+        if (ret == ESP_OK) {
+            ret = _save_catalog_track(track_id, track_body, track_len);
+            free(track_body);
+        }
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Track catalog item failed: id=%ld ret=%s",
+                     (long)track_id, esp_err_to_name(ret));
+            break;
+        }
+        ESP_LOGI(TAG, "Cached track %ld", (long)track_id);
+    }
+
+    if (ret == ESP_OK) {
+        /* Remove tracks no longer present in the profile only after all new
+         * payloads have been validated and written successfully. */
+        if (old_tracks) {
+            cJSON *old_entry = NULL;
+            cJSON_ArrayForEach(old_entry, old_tracks) {
+                cJSON *id_json = cJSON_GetObjectItemCaseSensitive(old_entry, "track_id");
+                if (!cJSON_IsNumber(id_json)) continue;
+                int32_t old_id = (int32_t)id_json->valuedouble;
+                if (!_catalog_track_entry(tracks, old_id)) {
+                    char stale_path[96];
+                    _track_cache_path(old_id, stale_path, sizeof(stale_path));
+                    unlink(stale_path);
+                }
+            }
+        }
+        ret = _atomic_write_text(TRACK_CATALOG_PATH, manifest_body, manifest_len);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Track catalog manifest write failed: ret=%s", esp_err_to_name(ret));
+        }
+    }
+
+    if (ret == ESP_OK && (default_id != old_default_id || needs_active_repair)) {
+        if (default_id > 0) {
+            ret = network_select_cached_track(default_id);
+        } else {
+            unlink("/data/metadata/track.json");
+            unlink(TRACK_STATE_PATH);
+        }
+    }
+    ESP_LOGI(TAG, "Track catalog reconciliation: %s", esp_err_to_name(ret));
+    cJSON_Delete(old);
+    cJSON_Delete(manifest);
+    free(manifest_body);
+    return ret;
+}
+
+esp_err_t network_select_cached_track(int32_t track_id)
+{
+    if (track_id <= 0) return ESP_ERR_INVALID_ARG;
+    cJSON *root = NULL;
+    esp_err_t ret = _load_catalog_root(&root);
+    if (ret != ESP_OK) return ret;
+    cJSON *tracks = cJSON_GetObjectItemCaseSensitive(root, "tracks");
+    if (!_catalog_track_entry(tracks, track_id)) {
+        cJSON_Delete(root);
+        return ESP_ERR_NOT_FOUND;
+    }
+    char source[96];
+    _track_cache_path(track_id, source, sizeof(source));
+    ESP_LOGI(TAG, "Selecting cached track %ld from %s", (long)track_id, source);
+    mkdir("/data", 0755);
+    mkdir("/data/metadata", 0755);
+    ret = _copy_file_atomic(source, "/data/metadata/track.json");
+    if (ret == ESP_OK) {
+        cJSON *state = cJSON_CreateObject();
+        if (!state) ret = ESP_ERR_NO_MEM;
+        else {
+            cJSON_AddNumberToObject(state, "active_track_id", track_id);
+            char *text = cJSON_PrintUnformatted(state);
+            cJSON_Delete(state);
+            if (!text) ret = ESP_ERR_NO_MEM;
+            else {
+                ret = _atomic_write_text(TRACK_STATE_PATH, text, strlen(text));
+                free(text);
+            }
+        }
+    }
+    cJSON_Delete(root);
+    if (ret == ESP_OK) ESP_LOGI(TAG, "Selected cached track %ld", (long)track_id);
+    return ret;
+}
+
+esp_err_t network_list_cached_tracks(network_cached_track_t *tracks, int max_tracks,
+                                     int *out_count, int32_t *out_active_id)
+{
+    if (!tracks || max_tracks <= 0 || !out_count) return ESP_ERR_INVALID_ARG;
+    *out_count = 0;
+    if (out_active_id) *out_active_id = 0;
+    cJSON *root = NULL;
+    esp_err_t ret = _load_catalog_root(&root);
+    if (ret != ESP_OK) return ret;
+    int32_t active_id = 0;
+    FILE *state_file = fopen(TRACK_STATE_PATH, "r");
+    if (state_file) {
+        char state_buf[128] = {0};
+        size_t state_len = fread(state_buf, 1, sizeof(state_buf) - 1, state_file);
+        fclose(state_file);
+        cJSON *state = cJSON_ParseWithLength(state_buf, state_len);
+        if (state) {
+            cJSON *id = cJSON_GetObjectItemCaseSensitive(state, "active_track_id");
+            if (cJSON_IsNumber(id)) active_id = (int32_t)id->valuedouble;
+            cJSON_Delete(state);
+        }
+    }
+    cJSON *default_id = cJSON_GetObjectItemCaseSensitive(root, "default_track_id");
+    cJSON *items = cJSON_GetObjectItemCaseSensitive(root, "tracks");
+    cJSON *item = NULL;
+    cJSON_ArrayForEach(item, items) {
+        if (*out_count >= max_tracks) break;
+        cJSON *id = cJSON_GetObjectItemCaseSensitive(item, "track_id");
+        cJSON *name = cJSON_GetObjectItemCaseSensitive(item, "track_name");
+        if (!cJSON_IsNumber(id) || !cJSON_IsString(name)) continue;
+        network_cached_track_t *out = &tracks[*out_count];
+        memset(out, 0, sizeof(*out));
+        out->track_id = (int32_t)id->valuedouble;
+        strncpy(out->track_name, name->valuestring, sizeof(out->track_name) - 1);
+        out->is_server_default = cJSON_IsNumber(default_id) &&
+                                 (int32_t)default_id->valuedouble == out->track_id;
+        (*out_count)++;
+    }
+    if (out_active_id) *out_active_id = active_id;
+    cJSON_Delete(root);
     return ESP_OK;
 }

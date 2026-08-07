@@ -81,6 +81,18 @@ void ui_events_on_open_track_view(void)
     ui_events_dispatch(UI_EVENT_TRACK_VIEW_CLICKED, NULL);
 }
 
+void ui_events_on_open_track_selector(void)
+{
+    ESP_LOGI(TAG, "Touch Action: OFFLINE TRACK SELECTOR requested");
+    ui_events_dispatch(UI_EVENT_TRACK_SELECT_CLICKED, NULL);
+}
+
+void ui_events_on_select_track(int32_t track_id)
+{
+    ESP_LOGI(TAG, "Touch Action: cached track %ld selected", (long)track_id);
+    ui_events_dispatch(UI_EVENT_TRACK_SELECTED, (void *)(intptr_t)track_id);
+}
+
 void ui_events_on_start_captive_portal(void)
 {
     ESP_LOGI(TAG, "Touch Action: START CAPTIVE PORTAL (WiFi Setup) requested");

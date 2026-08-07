@@ -3,7 +3,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from api.models import AppSetting, db
-from src.analysis.core.playback_tuner import apply_tune_to_playback_payload, build_tune_preview_patch, get_default_playback_tune, normalize_playback_tune
+from core.core.playback_tuner import (
+    apply_tune_to_playback_payload,
+    build_tune_preview_patch,
+    get_default_playback_tune,
+    normalize_playback_tune,
+)
 
 
 PLAYBACK_TUNER_ENABLED_KEY = "playback_tuner_enabled"

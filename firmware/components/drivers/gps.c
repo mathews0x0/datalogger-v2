@@ -2,7 +2,7 @@
  * @file gps.c
  * @brief Neo-M8N GPS driver — UBX init + NMEA GPRMC/GPGGA parser
  *
- * Ported from the legacy MicroPython driver.
+ * Native GPS sensor driver.
  * Uses ESP-IDF UART driver with RX FIFO interrupts.
  */
 

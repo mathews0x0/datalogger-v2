@@ -536,7 +536,7 @@ esp_err_t bsp_touch_driver_init(void)
 #include "esp_lcd_touch_xpt2046.h"  /* Component: atanisoft/esp_lcd_touch_xpt2046 */
 #include "driver/spi_master.h"
 
-/* Proven MicroPython Vendor Init Sequence for generic ILI9341 modules */
+/* Proven vendor initialization sequence for generic ILI9341 modules */
 static const ili9341_lcd_init_cmd_t s_mpy_init_cmds[] = {
     {0xCF, (uint8_t []){0x00, 0xC1, 0x30}, 3, 0},
     {0xED, (uint8_t []){0x64, 0x03, 0x12, 0x81}, 4, 0},

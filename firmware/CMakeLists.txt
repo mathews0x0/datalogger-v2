@@ -11,6 +11,10 @@ set(RACESENSE_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../server/VERSION")
 if(NOT EXISTS "${RACESENSE_VERSION_FILE}")
     message(FATAL_ERROR "Missing shared Mark number: ${RACESENSE_VERSION_FILE}")
 endif()
+# Re-run CMake whenever the shared server/device Mark changes.  Without this,
+# an existing build directory can silently keep embedding the previous Mark.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${RACESENSE_VERSION_FILE}")
 file(READ "${RACESENSE_VERSION_FILE}" RACESENSE_MARK)
 string(STRIP "${RACESENSE_MARK}" RACESENSE_MARK)
 if(NOT RACESENSE_MARK MATCHES "^[0-9]+$")

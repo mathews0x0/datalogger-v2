@@ -122,8 +122,8 @@ Software responsiveness improvements currently in firmware:
 
 The display controller and touch driver are selected by the ESP-IDF target
 configuration. The native project uses LVGL for both the 800x480 Waveshare UI
-and the compact 320x240 UI; there is no MicroPython file-sync or runtime asset
-bundle to deploy.
+and the compact 320x240 UI; firmware deployment is handled by the native
+ESP-IDF build and flash workflow.
 
 
 ## Home and Touch Zones

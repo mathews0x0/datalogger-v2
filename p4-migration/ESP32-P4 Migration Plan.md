@@ -1,12 +1,15 @@
-# ESP32-P4 Migration Master Plan
+# Native Firmware Platform Plan
 
 ## Goal
 
-Migrate the existing ESP32-S3 MicroPython firmware to a native ESP-IDF C/C++ firmware project targeting the **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** hardware platform. 
+Maintain the native ESP-IDF C/C++ firmware project and its target-aware board
+support for the **Waveshare ESP32-P4-WIFI6-Touch-LCD-4.3** platform.
 
 The primary objective is to preserve existing backend API compatibility, server contracts, and core product behavior, while leveraging the new hardware (ESP32-P4 MCU, ESP32-C6 Wi-Fi 6 co-processor, 4.3" 480×800 IPS display, GT911 capacitive touch, and SDIO 3.0 storage).
 
-The migration followed a strict phased workflow: preserve the S3 baseline during discovery, define the architecture, and then port and verify feature parity in the native `firmware/` project. The legacy S3 MicroPython source has now been retired.
+The project uses one native `firmware/` codebase for supported hardware targets,
+with board-specific behavior isolated behind the BSP and ESP-IDF target
+configuration.
 
 ---
 
@@ -39,17 +42,18 @@ The migration followed a strict phased workflow: preserve the S3 baseline during
 ## Migration Workflow & Phases
 
 ### Phase 1: Repository Structure & Platform Isolation
-- Create two top-level platform directories in the project root:
-  - `firmware/` — Native ESP-IDF codebase, target-agnostic BSP, tests, and Waveshare/compact-board support.
+- Maintain the single top-level platform directory:
+  - `firmware/` — Native ESP-IDF codebase, target-aware BSP, tests, and
+    Waveshare/compact-board support.
 
 ### Phase 2: Complete Discovery & Feature Inventory
-- Audit all existing S3 firmware behavior end-to-end across actual source code and documentation:
+- Inventory the native firmware behavior end-to-end across source code and documentation:
   - Boot sequence, power hold, and safe boot window in the native application.
-  - Home screen, settings, mount calibration, and touch interaction (`lib/tft_ui.py`).
-  - Sensor ingestion: 100Hz IMU (`drivers/bmi323.py`) and 10Hz NMEA GPS (`drivers/gps.py`).
-  - Storage engine, CSV formatting, and marker rows `M` (`lib/session_manager.py`).
-  - Sync mode, captive portal, and resumable HTTP uploader (`lib/uploader.py`).
-  - Track engine and lap/sector LED feedback (`lib/track_engine.py`, `lib/led_manager.py`).
+  - Home screen, settings, mount calibration, and touch interaction in the native UI components.
+  - Sensor ingestion: 100Hz IMU and 10Hz NMEA GPS in the native driver components.
+  - Storage engine, CSV formatting, and marker rows `M` in the native storage components.
+  - Sync mode, captive portal, and resumable HTTP uploader in the native network components.
+  - Track engine and lap/sector LED feedback in the native application components.
 - Map all server-facing API contracts (`server/run.py`, HTTP headers `rsk_...`, upload offsets `X-Upload-Offset`) to guarantee 100% backend compatibility.
 
 ### Phase 3: Cross-Verification with Project History
@@ -59,7 +63,7 @@ The migration followed a strict phased workflow: preserve the S3 baseline during
 ### Phase 4: Feature Triage & Scope Decision
 - Categorize every feature from the inventory into three explicit buckets:
   1. **Must Preserve**: Essential product behaviors, data formats, server protocols, and safety features.
-  2. **Retire / Eliminate**: Obsolete workarounds (e.g., resistive 5-point touch calibration, MicroPython framebuf limitations, legacy debug paths).
+  2. **Retire / Eliminate**: Obsolete board-specific workarounds and legacy debug paths.
   3. **Target for Improvement**: Experience upgrades enabled by P4 (e.g., 60fps LVGL UI on 480×800 display, GT911 capacitive touch, zero-dropout SDIO 3.0 storage, deterministic FreeRTOS sensor tasks).
 - Produce a finalized Triage & Scope Matrix before writing P4 code.
 
@@ -101,7 +105,7 @@ The migration followed a strict phased workflow: preserve the S3 baseline during
 
 ## Reference Documentation
 
-- Legacy S3 MicroPython source: retired and removed; behavior is preserved in the native implementation.
+- Native firmware source: `firmware/`.
 - Hardware & Pinout Guide: `docs/hardware_firmware.md`
 - Project History & PM Notes: `docs/pm_diary.md`
 - Stack Architecture: `docs/tech_stack.md`

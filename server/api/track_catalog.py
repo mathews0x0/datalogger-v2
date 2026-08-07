@@ -1,14 +1,31 @@
 import base64
+import hashlib
 import json
 import math
 import re
 from pathlib import Path
 
 import api.config as config
-from api.models import db, GlobalTrack, TrackMeta
-from src.config import GLOBAL_TRACK_ID_MIN
-from src.analysis.processing.geo import haversine_distance
+from api.models import db, GlobalTrack, TrackMeta, User, SessionMeta
 GLOBAL_TRACK_TBL_PREFIX = "global_track_"
+
+# Keep track-catalog processing self-contained.  This module is part of the
+# server API path and must not depend on the retired analysis package layout.
+GLOBAL_TRACK_ID_MIN = config.GLOBAL_TRACK_ID_MIN
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Return great-circle distance in kilometres."""
+    radius_km = 6371.0
+    dlat = math.radians(float(lat2) - float(lat1))
+    dlon = math.radians(float(lon2) - float(lon1))
+    a = (
+        math.sin(dlat / 2.0) ** 2
+        + math.cos(math.radians(float(lat1)))
+        * math.cos(math.radians(float(lat2)))
+        * math.sin(dlon / 2.0) ** 2
+    )
+    return radius_km * 2.0 * math.atan2(math.sqrt(a), math.sqrt(max(0.0, 1.0 - a)))
 
 
 class TrackPackageError(ValueError):
@@ -671,6 +688,13 @@ def build_device_track_payload(track_data):
     ):
         if key in track_data:
             payload[key] = track_data.get(key)
+    # Older imported track files may store only start_line.center.  The
+    # device contract requires direct lat/lon, so normalize it in the actual
+    # payload rather than only using a temporary value while building layout.
+    if isinstance(track_data.get("start_line"), dict):
+        normalized_start = _normalize_start_line(dict(track_data["start_line"]))
+        if normalized_start:
+            payload["start_line"] = normalized_start
     payload["sectors"] = list(track_data.get("sectors") or [])
     payload["sector_count"] = len(payload["sectors"])
     # Keep a previously-normalized layout when the source track does not
@@ -702,15 +726,142 @@ def latlon_to_canonical(lat, lon, geo_reference, auto_align):
 
 
 def get_user_track_stats_dir(user_id, track_id, track_name=None):
-    from src.analysis.core.registry_manager import RegistryManager
-
     folder_name = f"{GLOBAL_TRACK_TBL_PREFIX}{track_id}"
     tracks_dir = config.get_user_tracks_dir(user_id)
-    registry = RegistryManager(registry_path=str(tracks_dir))
-    registry.register_track(track_id, track_name or f"Track {track_id}", folder_name=folder_name)
     track_dir = tracks_dir / folder_name
     track_dir.mkdir(parents=True, exist_ok=True)
     return track_dir
+
+
+def _device_track_payload_for_user(user_id, resolved):
+    """Build one complete, device-safe track payload for a user."""
+    track_data = {}
+    track_json_path = track_file_path(resolved, "track.json")
+    if track_json_path.exists():
+        try:
+            track_data = load_track_json(resolved) or {}
+        except Exception:
+            track_data = {}
+
+    if resolved["track_scope"] == "global":
+        tbl_json_path = get_user_track_stats_dir(
+            user_id, resolved["track_id"], resolved["track_name"]
+        ) / "tbl.json"
+    else:
+        tbl_json_path = track_file_path(resolved, "tbl.json")
+
+    if tbl_json_path.exists():
+        try:
+            raw_tbl = load_json_file(tbl_json_path)
+            sectors_data = raw_tbl.get("sectors", [])
+            if isinstance(sectors_data, list):
+                sorted_sectors = sorted(
+                    (item for item in sectors_data if isinstance(item, dict)),
+                    key=lambda item: item.get("sector_index", 0),
+                )
+                sectors_list = [
+                    item.get("best_time")
+                    if isinstance(item.get("best_time"), (int, float))
+                    and item.get("best_time") >= 0
+                    else 0.0
+                    for item in sorted_sectors
+                ]
+                tbl_payload = {"sectors": sectors_list}
+                lap_time = raw_tbl.get("total_best_time")
+                if not isinstance(lap_time, (int, float)):
+                    lap_time = raw_tbl.get("lap_time")
+                if not isinstance(lap_time, (int, float)):
+                    existing_tbl = track_data.get("tbl")
+                    if isinstance(existing_tbl, dict):
+                        lap_time = existing_tbl.get("lap_time")
+                if not isinstance(lap_time, (int, float)):
+                    known_times = [value for value in sectors_list if value > 0]
+                    if len(known_times) == len(sectors_list) and known_times:
+                        lap_time = sum(known_times)
+                if isinstance(lap_time, (int, float)) and lap_time >= 0:
+                    tbl_payload["lap_time"] = float(lap_time)
+                track_data["tbl"] = tbl_payload
+        except Exception as exc:
+            print(f"[device_track_catalog] TBL extraction error: {exc}")
+
+    if not track_data:
+        return None
+    return build_device_track_payload(track_data)
+
+
+def device_track_catalog(user_id):
+    """Return the user's complete device track catalog and stable revision."""
+    user = User.query.get(user_id)
+    if not user:
+        return {"schema_version": 1, "revision": "empty", "default_track_id": None, "tracks": []}
+
+    global_ids = {
+        track_id for (track_id,) in db.session.query(SessionMeta.track_id)
+        .filter_by(user_id=user_id)
+        .filter(SessionMeta.track_id.isnot(None))
+        .distinct().all()
+    }
+    if user.active_track_id:
+        global_ids.add(user.active_track_id)
+
+    global_tracks = (
+        GlobalTrack.query.filter(GlobalTrack.track_id.in_(global_ids))
+        .order_by(GlobalTrack.track_name.asc()).all()
+        if global_ids else []
+    )
+    resolved_tracks = []
+    for track in global_tracks:
+        resolved_tracks.append(resolve_track(track.track_id, user_id=user_id))
+    for track in TrackMeta.query.filter_by(user_id=user_id).order_by(TrackMeta.track_name.asc()).all():
+        resolved_tracks.append(resolve_track(track.track_id, user_id=user_id))
+
+    entries = []
+    for resolved in resolved_tracks:
+        if not resolved:
+            continue
+        payload = _device_track_payload_for_user(user_id, resolved)
+        if not payload:
+            continue
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        fingerprint = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24]
+        entries.append({
+            "track_id": int(resolved["track_id"]),
+            "track_name": payload.get("track_name") or payload.get("name") or resolved["track_name"],
+            "track_scope": resolved["track_scope"],
+            "fingerprint": fingerprint,
+        })
+
+    entries.sort(key=lambda item: (item["track_name"].lower(), item["track_id"]))
+    entry_ids = {item["track_id"] for item in entries}
+    default_track_id = int(user.active_track_id) if user.active_track_id in entry_ids else None
+    revision_source = {
+        "default_track_id": default_track_id,
+        "tracks": [(item["track_id"], item["fingerprint"]) for item in entries],
+    }
+    revision = hashlib.sha256(
+        json.dumps(revision_source, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).hexdigest()[:24]
+    return {
+        "schema_version": 1,
+        "revision": revision,
+        "default_track_id": default_track_id,
+        "tracks": entries,
+    }
+
+
+def device_track_payload(user_id, track_id):
+    resolved = resolve_track(int(track_id), user_id=user_id)
+    if not resolved:
+        return None
+    payload = _device_track_payload_for_user(user_id, resolved)
+    if not payload:
+        return None
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return {
+        "schema_version": 1,
+        "track": payload,
+        "fingerprint": hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:24],
+    }
 
 
 def load_json_file(path):

@@ -55,6 +55,7 @@ typedef enum {
     STATE_AUTO_COPY,         /* Internal:  Flash → SD session copy    */
     STATE_HOME_IDLE,         /* Screen 2:  Home                      */
     STATE_TRACK_VIEW,        /* Screen 15: Active track / TBL viewer  */
+    STATE_TRACK_SELECTOR,    /* Cached offline track selection        */
     STATE_LOGGING_ACTIVE,    /* Screen 3:  Live Logging              */
     STATE_STORAGE_FAULT,     /* Screen 14: Logging stopped safely    */
     STATE_IMU_VALIDATION,    /* Screen 4:  IMU Validation (first 5s) */
@@ -419,6 +420,32 @@ static void _on_ui_event_cb(ui_event_type_t event, void *param)
             s_state = STATE_TRACK_VIEW;
             ui_show_track_view();
             break;
+
+        case UI_EVENT_TRACK_SELECT_CLICKED:
+            ESP_LOGI(TAG, "[NAV] Opening CACHED TRACK selector");
+            s_state = STATE_TRACK_SELECTOR;
+            ui_show_track_selector();
+            break;
+
+        case UI_EVENT_TRACK_SELECTED: {
+            int32_t track_id = (int32_t)(intptr_t)param;
+            ESP_LOGI(TAG, "[NAV] Selecting cached track %ld", (long)track_id);
+            esp_err_t select_ret = network_select_cached_track(track_id);
+            if (select_ret == ESP_OK) {
+                esp_err_t load_ret = track_engine_load_track(NULL);
+                ui_track_refresh_layout();
+                ESP_LOGI(TAG, "[NAV] Cached track reload: %s; active='%s'",
+                         esp_err_to_name(load_ret), track_engine_get_track_name());
+                if (load_ret != ESP_OK) {
+                    ESP_LOGW(TAG, "[NAV] Track file was selected but could not be loaded");
+                }
+            } else {
+                ESP_LOGW(TAG, "[NAV] Cached track selection failed: %s",
+                         esp_err_to_name(select_ret));
+            }
+            _show_home_dashboard();
+            break;
+        }
 
         case UI_EVENT_STOP_LOG_HELD:
         case UI_EVENT_BACK_CLICKED:
@@ -848,6 +875,7 @@ void app_main(void)
 
             case STATE_SETTINGS:
             case STATE_IMU_CALIBRATION:
+            case STATE_TRACK_SELECTOR:
             case STATE_CAPTIVE_PORTAL:
                 /* TODO Phase 7C/8: Settings sub-screens, calibration, portal */
                 vTaskDelay(pdMS_TO_TICKS(100));

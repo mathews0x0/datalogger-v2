@@ -95,3 +95,24 @@ esp_err_t network_fetch_active_track(const char *token, const char *api_url)
     (void)token; (void)api_url;
     return ESP_ERR_NOT_SUPPORTED;
 }
+
+esp_err_t network_sync_track_catalog(const char *token, const char *api_url)
+{
+    (void)token; (void)api_url;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t network_select_cached_track(int32_t track_id)
+{
+    (void)track_id;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t network_list_cached_tracks(network_cached_track_t *tracks, int max_tracks,
+                                     int *out_count, int32_t *out_active_id)
+{
+    (void)tracks; (void)max_tracks;
+    if (out_count) *out_count = 0;
+    if (out_active_id) *out_active_id = 0;
+    return ESP_ERR_NOT_SUPPORTED;
+}
