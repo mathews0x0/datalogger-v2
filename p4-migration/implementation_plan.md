@@ -61,21 +61,21 @@ Build and verify the complete 12-screen UI/UX suite for the RaceSense telemetry 
 
 ## Proposed Component Architecture
 
-### Component 1: Adaptive LVGL Core & Theme (`firmware_p4/firmware/components/ui/`)
+### Component 1: Adaptive LVGL Core & Theme (`firmware/components/ui/`)
 
-#### [NEW] [ui_layout.h](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/include/ui_layout.h)
+#### [NEW] [ui_layout.h](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/include/ui_layout.h)
 - Centralized adaptive layout engine. Defines display resolution detection (`LV_HOR_RES`, `LV_VER_RES`), scaling macros (`UI_SCALE_X`, `UI_SCALE_Y`), font size aliases (`UI_FONT_HERO`, `UI_FONT_TITLE`, `UI_FONT_BODY`), and flexible flex layout rules.
 
-#### [NEW] [ui_events.h](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/include/ui_events.h) & [ui_events.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_events.c)
+#### [NEW] [ui_events.h](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/include/ui_events.h) & [ui_events.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_events.c)
 - Resolution-agnostic touch event dispatchers. Decouples UI buttons from system state transitions, NVS config updates, storage flushing, and sensor tasks.
 
-#### [MODIFY] [ui.h](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/include/ui.h)
+#### [MODIFY] [ui.h](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/include/ui.h)
 - Public rendering API for all 12 screens. Incorporates `ui_layout.h` and target driver initialization.
 
-#### [NEW] [ui_theme.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_theme.c)
+#### [NEW] [ui_theme.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_theme.c)
 - Motorsport Dark Theme color tokens (`#0D0D11` background, `#FF6B35` orange, `#00D26A` green, `#FF3B30` red, `#007AFF` blue) and glassmorphic card styles.
 
-#### [MODIFY] [ui.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui.c)
+#### [MODIFY] [ui.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui.c)
 - Multi-driver initialization (ST7701 MIPI-DSI default for P4, expandable to SPI/RGB for S3). GT911 / capacitive touch registration via `esp_lvgl_port`.
 
 ---
@@ -83,31 +83,31 @@ Build and verify the complete 12-screen UI/UX suite for the RaceSense telemetry 
 ### Component 2: Screen Implementation Waves
 
 #### Wave 1: Boot & Home
-- #### [MODIFY] [ui_home.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_home.c)
+- #### [MODIFY] [ui_home.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_home.c)
   - Screen 1 (Boot Splash) and Screen 2 (Adaptive Home Dashboard).
   - Uses `ui_layout.h` flex rules to render 2-column on 800×480 or stacked column on 320×240/480×320.
   - Connects `ui_events.c` callbacks for `START LOG`, `SYNC`, `SETTINGS`.
 
 #### Wave 2: Telemetry & Trackside Feedback
-- #### [MODIFY] [ui_logging.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_logging.c)
+- #### [MODIFY] [ui_logging.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_logging.c)
   - Screen 3 (v4 Hero Live Logging), Screen 4 (IMU Validation), Screen 5 (3s Sector Flash Overlay).
   - Dynamic 140pt/72pt/48pt lap clock scaling, 30Hz IMU lean angle arc, and 2-second hold `STOP LOG` target.
 
 #### Wave 3: Settings & Calibration
-- #### [MODIFY] [ui_settings.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_settings.c)
+- #### [MODIFY] [ui_settings.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_settings.c)
   - Screen 10 (Settings Grid) with Auto-Log switch mapped to `ui_events.c` → `device.json`.
-- #### [MODIFY] [ui_calibration.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_calibration.c)
+- #### [MODIFY] [ui_calibration.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_calibration.c)
   - Screen 11 (5-Stage IMU Mount Calibration Wizard).
 
 #### Wave 4: Sync & Provisioning
-- #### [MODIFY] [ui_sync.c](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_sync.c)
+- #### [MODIFY] [ui_sync.c](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_sync.c)
   - Screen 6 (WiFi Search), Screen 7 (Heartbeat), Screen 8 (Upload Progress), Screen 9 (Sync Complete), Screen 12 (Captive Portal with QR code widget).
 
 ---
 
 ### Component 3: Multi-Resolution Web Simulator Harness
 
-#### [NEW] [ui_simulator.html](file:///Users/mj/Documents/datalogger-v2/firmware_p4/firmware/components/ui/ui_simulator.html)
+#### [NEW] [ui_simulator.html](file:///Users/mj/Documents/datalogger-v2/firmware/components/ui/ui_simulator.html)
 - Interactive HTML5 Canvas / SVG simulator harness for all 12 screens.
 - **Features a Live Resolution Switcher**:
   - `[800×480 - 4.3" P4]`

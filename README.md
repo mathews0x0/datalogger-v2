@@ -6,10 +6,11 @@ A lightweight GPS datalogger system with ESP32 firmware and a web-based companio
 
 ```
 dataloggerV2/
-├── firmware/          # ESP32 MicroPython firmware
-│   ├── main.py        # Main entry point
-│   ├── lib/           # Modules (GPS, WiFi, LED, Session, Track)
-│   └── deploy.sh      # Deployment script
+├── firmware/          # Native ESP-IDF firmware (multi-target)
+│   ├── main/          # Application entry point
+│   ├── components/    # BSP, sensors, storage, networking, and UI
+│   ├── tests/         # Host-side firmware contract tests
+│   └── display_test_harness/
 ├── server/            # Backend + UI
 │   ├── api/           # Flask REST API
 │   ├── core/          # Analysis engine
@@ -32,11 +33,15 @@ python run.py
 ```
 Server runs at http://localhost:5000
 
-### 2. Deploy Firmware
+### 2. Build Firmware
 ```bash
 cd firmware
-./deploy.sh --sync
+idf.py build
 ```
+
+The primary production target is the Waveshare ESP32-P4 4.3-inch board. The
+same native project also contains the target abstraction used by the compact
+2.8-inch custom boards; select the ESP-IDF target with `idf.py set-target`.
 
 ## Cloud IoT API (Direct-to-Cloud)
 | Endpoint | Method | Description |
@@ -44,4 +49,3 @@ cd firmware
 | `/api/device/ping` | POST | Heartbeat endpoint (15s interval). Validates device activity. |
 | `/api/upload` | POST | Streamed CSV upload for logging data. |
 | `/api/devices` | GET | (Frontend) Pulls latest device heartbeats to show "Connected" status. |
-

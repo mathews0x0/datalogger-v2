@@ -6,7 +6,7 @@ Migrate the existing ESP32-S3 MicroPython firmware to a native ESP-IDF C/C++ fir
 
 The primary objective is to preserve existing backend API compatibility, server contracts, and core product behavior, while leveraging the new hardware (ESP32-P4 MCU, ESP32-C6 Wi-Fi 6 co-processor, 4.3" 480×800 IPS display, GT911 capacitive touch, and SDIO 3.0 storage).
 
-The migration follows a strict phased workflow: preserve S3 as a baseline in `firmware_s3/`, conduct full discovery and triage before writing code, define the architecture, and then port and verify feature parity in `firmware_p4/`.
+The migration followed a strict phased workflow: preserve the S3 baseline during discovery, define the architecture, and then port and verify feature parity in the native `firmware/` project. The legacy S3 MicroPython source has now been retired.
 
 ---
 
@@ -24,8 +24,8 @@ The migration follows a strict phased workflow: preserve S3 as a baseline in `fi
 
 | Phase | Phase Name | Primary Recommended Model | Focus |
 |---|---|---|---|
-| **Phase 1** | **Repository Structure & Isolation** | **Gemini 3.6 Flash** | Folder creation (`firmware_s3/`, `firmware_p4/`), asset movement, script reference updates. |
-| **Phase 2** | **Discovery & Feature Inventory** | **Gemini 3.6 Flash (Medium/High)** | Ingesting all `firmware_s3/firmware/*.py` files, `docs/`, and server routes to map every feature & API contract. |
+| **Phase 1** | **Repository Structure & Isolation** | **Gemini 3.6 Flash** | Native `firmware/` project structure and asset movement. |
+| **Phase 2** | **Discovery & Feature Inventory** | **Gemini 3.6 Flash (Medium/High)** | Inventorying the retired S3 behavior, `docs/`, and server routes to map every feature & API contract. |
 | **Phase 3** | **PM Diary Cross-Verification** | **Gemini 3.1 Pro / 3.6 Flash** | Deep document cross-referencing against `docs/pm_diary.md` to ensure no historical requirements are missed. |
 | **Phase 4** | **Feature Triage & Scope Decision** | **Gemini 3.1 Pro / Claude Opus** | High-level trade-off analysis (Keep vs Retire vs Improve). |
 | **Phase 5** | **ESP-IDF Target Architecture** | **Claude Sonnet / Gemini 3.1 Pro** | C/C++ FreeRTOS module design, `esp-hosted` link, SDIO 3.0 queues, and LVGL PPA architecture. |
@@ -40,12 +40,11 @@ The migration follows a strict phased workflow: preserve S3 as a baseline in `fi
 
 ### Phase 1: Repository Structure & Platform Isolation
 - Create two top-level platform directories in the project root:
-  - `firmware_s3/` — Contains existing S3 `firmware/` and `hardware/` assets (frozen reference baseline).
-  - `firmware_p4/` — Dedicated workspace with `firmware/` (ESP-IDF codebase) and `hardware/` (Waveshare BSP, 480×800 UI assets, CAD files, P4 tooling).
+  - `firmware/` — Native ESP-IDF codebase, target-agnostic BSP, tests, and Waveshare/compact-board support.
 
 ### Phase 2: Complete Discovery & Feature Inventory
 - Audit all existing S3 firmware behavior end-to-end across actual source code and documentation:
-  - Boot sequence, power hold, and safe boot window (`boot.py`, `main.py`).
+  - Boot sequence, power hold, and safe boot window in the native application.
   - Home screen, settings, mount calibration, and touch interaction (`lib/tft_ui.py`).
   - Sensor ingestion: 100Hz IMU (`drivers/bmi323.py`) and 10Hz NMEA GPS (`drivers/gps.py`).
   - Storage engine, CSV formatting, and marker rows `M` (`lib/session_manager.py`).
@@ -65,7 +64,7 @@ The migration follows a strict phased workflow: preserve S3 as a baseline in `fi
 - Produce a finalized Triage & Scope Matrix before writing P4 code.
 
 ### Phase 5: Define ESP-IDF Target Architecture
-- Design the modular C/C++ architecture inside `firmware_p4/firmware`:
+- Design the modular C/C++ architecture inside `firmware/`:
   - Board Support Package (BSP): display (GT911 + 480×800 IPS), SDIO 3.0 FATFS, power/battery ADC.
   - Wireless Link: `esp-hosted` component integration for ESP32-C6 Wi-Fi 6 networking.
   - Telemetry Pipeline: FreeRTOS Core 0 hard real-time task pinning for 100Hz BMI323 (I2C DMA) and 10Hz GPS (UART DMA).
@@ -102,7 +101,7 @@ The migration follows a strict phased workflow: preserve S3 as a baseline in `fi
 
 ## Reference Documentation
 
-- S3 Firmware Source: `firmware_s3/firmware`
+- Legacy S3 MicroPython source: retired and removed; behavior is preserved in the native implementation.
 - Hardware & Pinout Guide: `docs/hardware_firmware.md`
 - Project History & PM Notes: `docs/pm_diary.md`
 - Stack Architecture: `docs/tech_stack.md`

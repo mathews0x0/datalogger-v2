@@ -1,6 +1,6 @@
 # 🏍️ RaceSense Hardware & Firmware (RS-Core)
 
-This document details the physical data acquisition hardware (**RS-Core V4.2 / V2 & ESP32-P4**) and the **Native C/C++ ESP-IDF 5.x Firmware** (currently validated with ESP-IDF v5.5.5, with historical MicroPython reference) that powers it.
+This document details the physical data acquisition hardware (**RS-Core V4.2 / V2 & ESP32-P4**) and the **Native C/C++ ESP-IDF 5.x Firmware** (currently validated with ESP-IDF v5.5.5) that powers it.
 
 ---
 
@@ -51,8 +51,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
         *   `LED/BL` -> `3V3`
         *   panel reset is now driven from **IO42**, not tied high
     *   This display path is currently used for boot / Home / sync / settings / calibration / first-time setup UX while the original button / onboard NeoPixel are temporarily repurposed.
-    *   TFT typography uses generated MicroPython font assets under `firmware/lib/tft_fonts/` instead of scaled `framebuf.text()`.
-    *   The boot wordmark is stored as a raw RGB565 asset at `/lib/tft_wordmark.raw` and streamed directly to the ILI9341 window for faster startup.
+    *   The native UI uses LVGL typography and the same full RaceSense logo asset as the server landing page (`server/ui/assets/RS full logo.png`), converted to an embedded RGB565 panel image.
     *   The active firmware baseline is now **TFT-only**; the older OLED status path has been removed from the current runtime.
 *   **Connectivity**: 
     *   Native USB-C (IO19/20) for flashing/debugging.
@@ -65,7 +64,7 @@ The RaceSense V2 module is built on the **ESP32-S3** platform, designed for high
 The RaceSense firmware has transitioned from legacy MicroPython to **Native C/C++ under ESP-IDF 5.x with FreeRTOS SMP**. This architectural upgrade resolves historical cadence limitations and introduces dual-target support across hardware platforms.
 
 ### **Dual-Target Hardware Abstraction (`bsp.h` / `bsp_display_target.h`)**
-The codebase compiled under `firmware_p4/firmware/` operates as a unified target-agnostic repository:
+The codebase compiled under `firmware/` operates as a unified target-agnostic repository:
 *   **ESP32-S3 (`idf.py set-target esp32s3`)**: Target 2 configuration for RS-Core V4.2 PCB. Automatically routes I2C0 to IO21/39, UART1 to IO17/18, Battery ADC to IO7 (CH6, 100k/100k divider @ 2.0x scale), and configures the 2.8" SPI ILI9341 (320x240) + XPT2046 resistive touch controller on dedicated SPI pins. Supports soft-power self-hold latch on **IO41** (`PWR_HOLD`) and button intent sense on **IO8** (`PWR_SENSE`).
 *   **ESP32-P4 (`idf.py set-target esp32p4`)**: Target 0 configuration for the Waveshare 4.3" development board. It routes GT911 touch on I²C0 IO7/8, the external BMI323 on I²C1 IO21/22, Neo-M8N UART1 on IO3/4, and battery ADC to IO20 / ADC1 channel 4 with the schematic's 200 kΩ/100 kΩ divider (3.0× scale). SDMMC uses slot 0 on IO39–44, the active-low IO45 card switch, and the P4 LDO_VO4 I/O supply. The card currently mounts through the verified 1-bit/20 MHz fallback because the fitted board/card path fails its 4-bit SSR transfer. Display output is the 4.3" MIPI-DSI ST7701 at 800×480 landscape with GT911 capacitive touch.
 
@@ -115,23 +114,15 @@ traceability.
 *   **Core 0 (Hard Real-Time Telemetry)**: Dedicated to high-frequency sensor acquisition via `sensors.c`. The FreeRTOS timer/task loop is configured for a **100 Hz** BMI323 target and **10 Hz** Neo-M8N processing. GPS cadence has been measured at approximately 10 Hz on the P4; exact 100 Hz IMU cadence and worst-case jitter under simultaneous display, SD, and future Wi-Fi load remain validation items.
 *   **Core 1 (Application, UI & Storage Flush)**: Houses the top-level application state machine (`main.c`), the SDMMC storage flush task (`storage.c`), networking, and the LVGL UI. The sensor-owned queue is consumed by the storage flush task through an explicit drain barrier; live CSV-session validation remains open, and P4 networking still selects `network_stub.c`.
 
-### **Legacy MicroPython Reference (Firmware V2)**
-Historically, firmware operated under an exclusive two-mode structure in MicroPython v1.22 on the ESP32_GENERIC_S3 "spiram-oct" variant:
-*   Preferred legacy archive: `firmware/esp32s3-micropython-psram-oct.bin`
-*   Accepted local fallbacks: `firmware/esp32s3-micropython.bin`, `firmware/micropython.bin`
-*   After flashing, legacy builds printed a boot-time memory line with `PSRAM=yes`.
-*(Note: For current development and deployment, native ESP-IDF binaries compiled via `idf.py build` replace these legacy runtimes.)*
+### **Firmware Status**
+The legacy ESP32-S3 MicroPython tree and bundled MicroPython binaries have been
+removed. All supported boards now use the native ESP-IDF project in
+`firmware/`; choose the board-specific ESP-IDF target with `idf.py set-target`.
 
 ### **Boot Sequence**
-1.  **Power-hold assertion**: `boot.py` drives **IO41** high immediately so the soft-latched V4.2 board stays on after the momentary power button is released.
-2.  If `/data/metadata/display.json` exists, `boot.py` renders the TFT boot wordmark using the saved panel config. If not, the boot splash is skipped and first-boot display selection happens later in `main.py`.
-3.  5-second safe boot window (Ctrl-C to halt via mpremote).
-4.  Hardware initialization (NeoPixels, SD, IMU, GPS, WDT).
-4.  **Halt Opportunity**: 3 Blue Pulses confirm boot. (Ctrl-C via mpremote works here).
-5.  **Auto-Copy Check**: If SD is mounted AND sessions exist on Flash:
-    *   **White Flashing** LEDs.
-    *   Files are moved to `/sd/sessions/` (with collision protection: `_1.csv`).
-    *   Device reboots automatically after completion.
+1.  **Power-hold assertion**: native startup drives **IO41** so the soft-latched V4.2 board stays on after the momentary power button is released.
+2.  The native application initializes the selected BSP, persistent storage, SD, IMU, GPS, watchdog, display, and touch controller.
+3.  The application restores display/touch calibration and renders the RaceSense splash before entering Home.
 6.  **Home / 10-Second Auto Log Window**: Granular hardware status feedback:
     *   **Fast Green Blink**: (DECISION_ALL_OK) SD, IMU, and GPS are all OK.
     *   **Fast Red Blink**: (DECISION_IMU_SD_FAILED) IMU or SD (or both) have failed.
@@ -154,7 +145,7 @@ Historically, firmware operated under an exclusive two-mode structure in MicroPy
 *   **Track Engine** provides lap/sector crossing events which are overlaid via `led.trigger_event()`.
 *   **Integrity markers**: The logger emits lightweight `M` rows (`LOG_OPEN`, periodic `CHECKPOINT`, `LOG_STOP`) so partial sessions are easier to recover and diagnose after resets or storage faults.
 *   **Protective shutdown behavior**: Storage-critical conditions are latched. At a hard threshold the logger stops file growth deliberately instead of continuing blindly into full-disk failure.
-*   **Soft-power hold**: The firmware reasserts `IO41` during `main.py` startup so normal runtime code preserves the V4.2 power latch after early boot.
+*   **Soft-power hold**: The firmware reasserts `IO41` during native startup so normal runtime code preserves the V4.2 power latch after early boot.
 *   **Single-switch shutdown path**: The firmware monitors **IO8** as the protected power-button sense input. If the same power button is held for roughly 3 seconds, the logger can display `SHUTDOWN`, flush storage, and release `IO41` for a controlled power-off.
 *   **Single-switch user model**: There is no separate external power-off control in V4.2. The rider-facing contract is one short press to power on and one deliberate long press to power off safely.
 *   **Display baseline**: Boot, Home, Sync, Settings, calibration, and logging UI are all routed through the TFT stack. There is no active OLED runtime path in the current firmware baseline.
@@ -187,7 +178,7 @@ Historically, firmware operated under an exclusive two-mode structure in MicroPy
     *   mount-profile screen for `tank`, `tail`, `stem`, and `generic`
     *   pairing and WiFi screens showing saved SSID or setup AP name where applicable
     *   WiFi search animation with SSID at the bottom and `EXIT` back to Home
-    *   heartbeat screen shown as rider-facing red/green heart status
+    *   heartbeat screen shows a continuous red pulse while `/api/device/ping` is in flight, then switches to a green pulse for at least two beats only after the server acknowledges with `success: true`
     *   queue, single-screen upload, result, idle, and logging summary screens
     *   upload screen shows one overall progress bar, large percentage, ETA with h/m/s units, current file, file index, and chunk count
     *   per-file archive messages are suppressed on TFT; archive remains background behavior
@@ -202,7 +193,7 @@ Historically, firmware operated under an exclusive two-mode structure in MicroPy
     *   Uses five points: top-left, top-right, bottom-right, bottom-left, center.
     *   Calibration is per-device and should be preserved with other metadata.
     *   Display preset selection is also per-device and is stored in `/data/metadata/display.json`.
-    *   If `drivers/xpt2046.py` is missing after a partial sync, TFT display initialization continues but touch/calibration are disabled until the driver is restored.
+    *   Touch and calibration are initialized by the selected native BSP target; there is no partial Python-file sync state to repair.
 *   **IMU mount profile calibration**:
     *   Stored under device metadata and intended to persist across normal firmware sync.
     *   Current flow captures `STATIC`, `ENGINE`, `LEAN LEFT`, `LEAN RIGHT`, and `PUSH`.
@@ -283,41 +274,24 @@ Header: `tick_ms,row_type,acc_x,acc_y,acc_z,gyro_x,gyro_y,gyro_z,lat,lon,alt,spe
 
 ## ⚡ Flashing & Updates
 
-### **1. Manual Flashing (via Tool)**
-In the `firmware/` directory, use the supplied shell script:
-```bash
-./flashtool.sh --port /dev/cu.usbmodem* --firmware micropython.bin
-```
-**Download Mode**: Hold **BOOT**, press **RESET**, release **BOOT**.
-
-For the `ESP32-S3-WROOM-1-N16R8`, the repository flashing flow prefers `esp32s3-micropython-psram-oct.bin` and only uses local firmware files already present in `firmware/`.
-
-### **2. Script Deployment**
-To update just the Python logic (`main.py`, `lib/`, etc.):
-```bash
-./deploy.sh --sync
-```
-
-### **3. Web OTA (Over-The-Air)**
-The production server can push updates to local devices via the **UpdateManager**.
-*   Server holds the latest `micropython.bin` in the `firmware/` root.
-*   Device pulls the update over WiFi when triggered from the **Settings -> Update** menu in the web app.
-*   Backend hosting is now a self-managed public VPS behind DNS + Nginx; this infrastructure change does **not** change the device-side sync or OTA protocol, but it makes cloud endpoint management explicit in operations.
-
-### **4. PSRAM Validation**
-After flashing, validate the memory layout before trusting the build in the field:
+### **1. Build and flash the native image**
+From the repository root:
 
 ```bash
 cd firmware
-./flashtool.sh
+idf.py set-target esp32p4
+idf.py build
+idf.py flash monitor
 ```
 
-Choose `Run PSRAM Probe`.
+Use `idf.py set-target esp32s3` when working with a compact custom board. See
+[`firmware/FLASHING_GUIDE.md`](../firmware/FLASHING_GUIDE.md) for the manual
+flash procedure and target-specific notes.
 
-Pass criteria:
-*   Boot log shows `[Memory] Boot: ... PSRAM=yes`
-*   `tools/psram_probe.py` reports `PSRAM inference: DETECTED`
-*   Large contiguous `bytearray` allocations succeed into the multi-megabyte range
+### **2. OTA status**
+The former Python-file OTA path has been removed with the MicroPython runtime.
+Native binary OTA can be added independently once the ESP-IDF device-side OTA
+contract is finalized.
 
 ---
 

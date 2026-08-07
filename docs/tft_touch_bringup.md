@@ -1,8 +1,11 @@
-# TFT + Touch Bring-Up
+# Compact TFT + Touch Bring-Up
 
-This board can bring up a generic 2.8" 240x320 SPI TFT (`ILI9341`) with resistive touch (`XPT2046`) on a dedicated TFT/touch SPI bus.
+The native ESP-IDF firmware supports the compact 2.8" 240x320 SPI TFT
+(`ILI9341`) with resistive touch (`XPT2046`) as its secondary target. The
+production baseline remains the Waveshare 4.3" board; both targets use the
+same firmware project under `firmware/`.
 
-## Current Firmware Wiring
+## Compact-Board Wiring
 
 This is the current validated mapping used by the firmware runtime:
 
@@ -28,7 +31,7 @@ Control lines:
 
 Battery sense is temporarily remapped to `IO14` during this TFT bring-up phase.
 
-## Legacy Bench Wiring
+## Bench Wiring
 
 Older standalone workbench scripts used the SD-card SPI bus and spare high GPIOs:
 
@@ -115,21 +118,13 @@ Software responsiveness improvements currently in firmware:
 
 `TOUCH_IRQ` is now part of the validated production wiring. It reduces idle polling, but calibration quality, pressure threshold, shared SPI redraw blocking, and debounce still matter.
 
-## Current TFT UX Assets
+## Native Firmware Assets
 
-The rider-facing TFT path now uses generated assets instead of scaled `framebuf.text()` for polished screens.
+The display controller and touch driver are selected by the ESP-IDF target
+configuration. The native project uses LVGL for both the 800x480 Waveshare UI
+and the compact 320x240 UI; there is no MicroPython file-sync or runtime asset
+bundle to deploy.
 
-- `firmware/lib/tft_fonts/renderer.py` renders generated MicroPython font assets.
-- `firmware/lib/tft_fonts/ui.py` is the general UI font.
-- `firmware/lib/tft_fonts/data.py` is the numeric/telemetry font.
-- `firmware/lib/tft_wordmark.raw` is the RaceSense boot wordmark as full-screen RGB565 data.
-- `firmware/tools/generate_tft_wordmark.swift` regenerates the wordmark raw asset and preview PNG.
-
-The boot wordmark is streamed directly to the ILI9341 window for speed once a display preset has been selected. `main.py` does not redraw it after TFT UI construction; the main UI transitions from the early wordmark to Home. Do not convert it back to a thresholded 1-bit mask; that loses the edge quality and turns the artwork into a blob.
-
-Firmware sync must copy nested font packages, `.raw` files, and all drivers. Use the current `firmware/flashtool.sh` or `firmware/push_to_device.sh`, which copy `lib/*.py`, `lib/*.raw`, `lib/*/*.py`, and `drivers/*.py`.
-
-If `drivers/xpt2046.py` is missing on-device, the TFT display should still initialize, but touch and calibration will be disabled until a complete firmware sync restores the driver.
 
 ## Home and Touch Zones
 
@@ -144,9 +139,11 @@ Current primary touch regions:
 - Settings -> WiFi: `CHANGE` starts re-pairing, `EXIT` returns to Home
 - Sync WiFi/search/idle/result: `EXIT` returns to Home where shown
 
-## Test Script
+## Test Coverage
 
-Use [hardware/workbench/tft_touch_test.py](/Users/mj/Documents/datalogger-v2/hardware/workbench/tft_touch_test.py).
+Use the native firmware target and host tests under
+[`firmware/tests/`](../firmware/tests/) for regression checks. The old Python
+workbench script is retained only as historical wiring documentation.
 
 It currently expects:
 

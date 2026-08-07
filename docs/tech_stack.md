@@ -22,7 +22,7 @@ This document provides a deep dive into the technology stack, deployment process
 *   **Rendering**: Custom DOM/SVG/canvas rendering for telemetry, charts, and playback. There is no React/Vite/Webpack build pipeline in the current repo.
 *   **Direct-to-Cloud + Local Ops**:
     *   The UI polls backend APIs for heartbeats and sync/device state.
-    *   Local-network device operations still exist (`/api/device/scan`, `/api/device/check`, `/api/device/configure`, `/api/device/update-ota`), but are server-side gated with `@local_only`.
+    *   Local-network device operations still exist (`/api/device/scan`, `/api/device/check`, `/api/device/configure`), but are server-side gated with `@local_only`.
 *   **Target**: Browser-first web app served directly by Flask from `server/ui/`.
 
 ### **Infrastructure**
@@ -38,7 +38,7 @@ This document provides a deep dive into the technology stack, deployment process
 *   **MCU (Dual-Target)**: 
     *   **ESP32-S3**: RS-Core V4.2 PCB (Dual-core Xtensa 240MHz, 16MB Flash, 8MB Octal PSRAM).
     *   **ESP32-P4**: Waveshare 4.3" MIPI-DSI (Dual-core RISC-V 400MHz, 16MB Flash, 32MB PSRAM).
-*   **OS / Framework**: **Native C/C++ on ESP-IDF v5.3 / FreeRTOS SMP** (migrated from legacy MicroPython v1.22 for deterministic real-time sampling).
+*   **OS / Framework**: **Native C/C++ on ESP-IDF v5.3 / FreeRTOS SMP** for deterministic real-time sampling.
 *   **Core Allocation**: Core 0 strictly reserved for hard real-time telemetry (100Hz BMI323 IMU + 10Hz Neo-M8N GPS). Core 1 assigned to LVGL rendering, SD card buffer draining, and Wi-Fi 6/SSL networking.
 *   **Display & UI**: LVGL 8.4 responsive UI engine supporting 12 modular rider screens across both 2.8" SPI ILI9341 (320x240) and 4.3" MIPI-DSI ST7701 (800x480) panels with zero code changes.
 *   **High-Speed Uplink**: Consolidated native HTTPS uploader (`network.c`) utilizing persistent SSL sessions, adaptive buffering, and resumable transfers (`X-Upload-Offset`).

@@ -1,6 +1,5 @@
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt_identity, verify_jwt_in_request
-import os
 import uuid
 import requests
 from datetime import datetime
@@ -245,8 +244,6 @@ def get_device_active_track():
 from api.helpers import get_local_firmware_version, is_compatible, MIN_ESP_VERSION
 from api.decorators import local_only
 from api.helpers import robust_get_json
-from api.update_manager import UpdateManager
-update_mgr = UpdateManager(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../firmware')))
 import socket
 import subprocess
 @devices_bp.route('/api/device/configure', methods=['POST'])
@@ -490,19 +487,3 @@ def device_version_check():
             })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-@devices_bp.route('/api/device/update-ota', methods=['POST'])
-@local_only
-@jwt_required()
-def device_update_ota():
-    """Trigger WiFi OTA update for a device"""
-    data = request.get_json()
-    ip = data.get('ip')
-    if not ip:
-        return jsonify({"error": "No IP provided"}), 400
-        
-    print(f"[OTA] Starting update for {ip}...")
-    result = update_mgr.push_update(ip)
-    print(f"[OTA] Result: {result}")
-    
-    return jsonify(result)
